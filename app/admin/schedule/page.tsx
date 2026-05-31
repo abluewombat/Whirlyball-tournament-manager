@@ -1,6 +1,7 @@
 import { generateScheduleAction } from "@/app/actions";
 import { requireAdmin } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { displayDateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -110,7 +111,7 @@ export default async function SchedulePage() {
               <tbody>
                 {games.map((game) => (
                   <tr key={game.id}>
-                    <td>{new Date(game.starts_at).toLocaleString()}</td>
+                    <td>{displayDateTime(game.starts_at)}</td>
                     <td>{game.court}</td>
                     <td>{game.phase}</td>
                     <td>{game.division}</td>

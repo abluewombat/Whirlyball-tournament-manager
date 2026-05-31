@@ -9,6 +9,7 @@ import {
   updateTeamAction
 } from "@/app/actions";
 import { DIVISIONS, query, SHIRT_SIZES } from "@/lib/db";
+import { dateInputValue } from "@/lib/format";
 import { requireCenterId } from "@/lib/auth";
 import { listPlayersByTeams, listShirtOrdersByPlayers, listTeamsForCenter } from "@/lib/queries";
 
@@ -121,7 +122,7 @@ export default async function CenterDashboardPage() {
                             <input name="entry_paid" form={`player-${player.id}`} type="checkbox" defaultChecked={Boolean(player.entry_paid)} />
                           </label>
                           <input name="entry_amount" form={`player-${player.id}`} type="number" step="0.01" placeholder="Amount" defaultValue={player.entry_amount || ""} />
-                          <input name="entry_paid_date" form={`player-${player.id}`} type="date" defaultValue={player.entry_paid_date || ""} />
+                          <input name="entry_paid_date" form={`player-${player.id}`} type="date" defaultValue={dateInputValue(player.entry_paid_date)} />
                           <input name="entry_payment_method" form={`player-${player.id}`} placeholder="Method" defaultValue={player.entry_payment_method || ""} />
                         </td>
                         <td>

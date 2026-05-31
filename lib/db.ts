@@ -120,7 +120,7 @@ export async function initDb() {
 export async function query<T extends QueryResultRow = QueryResultRow>(sql: string, params: unknown[] = []) {
   if (!initPromise && !sql.includes("CREATE TABLE")) await initDb();
   const result = await getPool().query<T>(sql, params);
-  return result.rows;
+  return result.rows.map(normalizeRow) as T[];
 }
 
 export async function exec(sql: string, params: unknown[] = []) {
@@ -146,6 +146,19 @@ export async function withTransaction<T>(callback: (client: PoolClient) => Promi
 
 export async function listCenters() {
   return query<{ id: number; name: string }>("SELECT id, name FROM centers ORDER BY name");
+}
+
+function normalizeValue(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(normalizeValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, normalizeValue(nested)]));
+  }
+  return value;
+}
+
+function normalizeRow<T extends QueryResultRow>(row: T): T {
+  return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, normalizeValue(value)])) as T;
 }
 
 export async function getFullState() {

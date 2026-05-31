@@ -14,6 +14,7 @@ import {
 } from "@/app/actions";
 import { requireAdmin } from "@/lib/auth";
 import { DIVISIONS, listCenters, query, SHIRT_SIZES } from "@/lib/db";
+import { dateInputValue, displayDateTime } from "@/lib/format";
 import { listPlayersByTeams, listShirtOrdersByPlayers, listTeams } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
@@ -107,7 +108,7 @@ export default async function AdminDashboardPage() {
               <form action={restoreSnapshotAction} className="inline-form" key={snapshot.id}>
                 <input name="snapshot_id" type="hidden" value={snapshot.id} />
                 <span>
-                  {snapshot.label} <span className="muted">{snapshot.created_at}</span>
+                  {snapshot.label} <span className="muted">{displayDateTime(snapshot.created_at)}</span>
                 </span>
                 <button className="button danger">Restore</button>
               </form>
@@ -199,7 +200,7 @@ export default async function AdminDashboardPage() {
                                   <input name="entry_paid" form={`admin-player-${player.id}`} type="checkbox" defaultChecked={Boolean(player.entry_paid)} />
                                 </label>
                                 <input name="entry_amount" form={`admin-player-${player.id}`} type="number" step="0.01" defaultValue={player.entry_amount || ""} />
-                                <input name="entry_paid_date" form={`admin-player-${player.id}`} type="date" defaultValue={player.entry_paid_date || ""} />
+                                <input name="entry_paid_date" form={`admin-player-${player.id}`} type="date" defaultValue={dateInputValue(player.entry_paid_date)} />
                                 <input name="entry_payment_method" form={`admin-player-${player.id}`} placeholder="Method" defaultValue={player.entry_payment_method || ""} />
                               </td>
                               <td>
