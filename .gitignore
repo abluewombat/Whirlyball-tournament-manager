@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+artifacts
+tsconfig.tsbuildinfo
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+exports

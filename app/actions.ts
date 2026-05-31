@@ -1,0 +1,260 @@
+"use server";
+
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { createSnapshot, DIVISIONS, exec, query, restoreSnapshot, SHIRT_SIZES, withTransaction } from "@/lib/db";
+import { loginAdmin, loginCenter, logoutAdmin, logoutCenter, requireAdmin, requireCenterId } from "@/lib/auth";
+import { hashSecret } from "@/lib/security";
+import { generateSchedule } from "@/lib/schedule";
+
+function text(formData: FormData, key: string) {
+  return String(formData.get(key) || "").trim();
+}
+
+function num(formData: FormData, key: string, fallback = 0) {
+  const value = Number(formData.get(key));
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function checkbox(formData: FormData, key: string) {
+  return formData.get(key) === "on";
+}
+
+function safeDivision(value: string) {
+  return DIVISIONS.includes(value as never) ? value : "D";
+}
+
+function safeSize(value: string) {
+  return SHIRT_SIZES.includes(value as never) ? value : "L";
+}
+
+export async function centerLoginAction(formData: FormData) {
+  const ok = await loginCenter(num(formData, "center_id"), text(formData, "passcode"));
+  if (!ok) redirect("/center?error=1");
+  redirect("/center/dashboard");
+}
+
+export async function centerLogoutAction() {
+  await logoutCenter();
+  redirect("/center");
+}
+
+export async function adminLoginAction(formData: FormData) {
+  const ok = await loginAdmin(text(formData, "password"));
+  if (!ok) redirect("/admin?error=1");
+  redirect("/admin/dashboard");
+}
+
+export async function adminLogoutAction() {
+  await logoutAdmin();
+  redirect("/admin");
+}
+
+export async function addTeamAction(formData: FormData) {
+  const centerId = formData.has("center_id") ? num(formData, "center_id") : await requireCenterId();
+  if (formData.has("center_id")) await requireAdmin();
+  const name = text(formData, "name");
+  if (!name) return;
+  await exec(
+    `INSERT INTO teams (center_id, division, name, early_available)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (center_id, division, name) DO NOTHING`,
+    [centerId, safeDivision(text(formData, "division")), name, checkbox(formData, "early_available")]
+  );
+  revalidatePath("/");
+  revalidatePath("/center/dashboard");
+  revalidatePath("/admin/dashboard");
+}
+
+export async function updateTeamAction(formData: FormData) {
+  const adminEdit = formData.has("admin");
+  if (adminEdit) await requireAdmin();
+  const centerId = adminEdit ? null : await requireCenterId();
+  const teamId = num(formData, "team_id");
+  await exec(
+    `UPDATE teams
+     SET name = $1, division = $2, early_available = $3, updated_at = NOW()
+     WHERE id = $4 ${adminEdit ? "" : "AND center_id = $5"}`,
+    adminEdit
+      ? [text(formData, "name"), safeDivision(text(formData, "division")), checkbox(formData, "early_available"), teamId]
+      : [text(formData, "name"), safeDivision(text(formData, "division")), checkbox(formData, "early_available"), teamId, centerId]
+  );
+  revalidatePath("/");
+  revalidatePath("/center/dashboard");
+  revalidatePath("/admin/dashboard");
+}
+
+export async function softDeleteTeamAction(formData: FormData) {
+  const adminEdit = formData.has("admin");
+  if (adminEdit) await requireAdmin();
+  const centerId = adminEdit ? null : await requireCenterId();
+  const teamId = num(formData, "team_id");
+  await exec(
+    `UPDATE teams SET deleted_at = NOW() WHERE id = $1 ${adminEdit ? "" : "AND center_id = $2"}`,
+    adminEdit ? [teamId] : [teamId, centerId]
+  );
+  revalidatePath("/");
+  revalidatePath("/center/dashboard");
+  revalidatePath("/admin/dashboard");
+}
+
+export async function restoreTeamAction(formData: FormData) {
+  await requireAdmin();
+  await exec("UPDATE teams SET deleted_at = NULL WHERE id = $1", [num(formData, "team_id")]);
+  revalidatePath("/");
+  revalidatePath("/admin/dashboard");
+}
+
+export async function addPlayerAction(formData: FormData) {
+  const adminEdit = formData.has("admin");
+  if (adminEdit) await requireAdmin();
+  const centerId = adminEdit ? null : await requireCenterId();
+  const teamId = num(formData, "team_id");
+  if (!adminEdit) {
+    const team = await query("SELECT id FROM teams WHERE id = $1 AND center_id = $2 AND deleted_at IS NULL", [teamId, centerId]);
+    if (!team.length) return;
+  }
+  const [existing] = await query<{ count: string }>("SELECT COUNT(*) as count FROM players WHERE team_id = $1 AND deleted_at IS NULL", [teamId]);
+  if (Number(existing?.count || 0) >= 5) return;
+  await exec("INSERT INTO players (team_id, name, shirt_size, notes) VALUES ($1, $2, $3, $4)", [
+    teamId,
+    text(formData, "name"),
+    safeSize(text(formData, "shirt_size")),
+    text(formData, "notes") || null
+  ]);
+  revalidatePath("/");
+  revalidatePath("/center/dashboard");
+  revalidatePath("/admin/dashboard");
+}
+
+export async function updatePlayerAction(formData: FormData) {
+  const adminEdit = formData.has("admin");
+  if (adminEdit) await requireAdmin();
+  const requiredCenterId = adminEdit ? null : await requireCenterId();
+  const playerId = num(formData, "player_id");
+  if (!adminEdit) {
+    const owned = await query(
+      `SELECT players.id FROM players
+       JOIN teams ON teams.id = players.team_id
+       WHERE players.id = $1 AND teams.center_id = $2`,
+      [playerId, requiredCenterId]
+    );
+    if (!owned.length) return;
+  }
+  await exec(
+    `UPDATE players
+     SET name = $1, shirt_size = $2, entry_paid = $3, entry_amount = $4, entry_paid_date = $5,
+         entry_payment_method = $6, notes = $7, updated_at = NOW()
+     WHERE id = $8`,
+    [
+      text(formData, "name"),
+      safeSize(text(formData, "shirt_size")),
+      checkbox(formData, "entry_paid"),
+      num(formData, "entry_amount"),
+      text(formData, "entry_paid_date") || null,
+      text(formData, "entry_payment_method") || null,
+      text(formData, "notes") || null,
+      playerId
+    ]
+  );
+  revalidatePath("/");
+  revalidatePath("/center/dashboard");
+  revalidatePath("/admin/dashboard");
+}
+
+export async function softDeletePlayerAction(formData: FormData) {
+  const adminEdit = formData.has("admin");
+  if (adminEdit) await requireAdmin();
+  const centerId = adminEdit ? null : await requireCenterId();
+  const playerId = num(formData, "player_id");
+  if (!adminEdit) {
+    const owned = await query("SELECT players.id FROM players JOIN teams ON teams.id = players.team_id WHERE players.id = $1 AND teams.center_id = $2", [
+      playerId,
+      centerId
+    ]);
+    if (!owned.length) return;
+  }
+  await exec("UPDATE players SET deleted_at = NOW() WHERE id = $1", [playerId]);
+  revalidatePath("/");
+  revalidatePath("/center/dashboard");
+  revalidatePath("/admin/dashboard");
+}
+
+export async function addShirtOrderAction(formData: FormData) {
+  const adminEdit = formData.has("admin");
+  if (adminEdit) await requireAdmin();
+  const centerId = adminEdit ? null : await requireCenterId();
+  const playerId = num(formData, "player_id");
+  if (!adminEdit) {
+    const owned = await query("SELECT players.id FROM players JOIN teams ON teams.id = players.team_id WHERE players.id = $1 AND teams.center_id = $2", [
+      playerId,
+      centerId
+    ]);
+    if (!owned.length) return;
+  }
+  await exec(
+    `INSERT INTO shirt_orders (player_id, size, quantity, paid, amount, paid_date, payment_method, notes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      playerId,
+      safeSize(text(formData, "size")),
+      Math.max(1, num(formData, "quantity", 1)),
+      checkbox(formData, "paid"),
+      num(formData, "amount"),
+      text(formData, "paid_date") || null,
+      text(formData, "payment_method") || null,
+      text(formData, "notes") || null
+    ]
+  );
+  revalidatePath("/center/dashboard");
+  revalidatePath("/admin/dashboard");
+}
+
+export async function setCenterPasscodeAction(formData: FormData) {
+  await requireAdmin();
+  const passcode = text(formData, "passcode");
+  if (passcode) {
+    await exec("UPDATE centers SET passcode_hash = $1 WHERE id = $2", [hashSecret(passcode), num(formData, "center_id")]);
+  }
+  revalidatePath("/admin/dashboard");
+}
+
+export async function snapshotAction(formData: FormData) {
+  await requireAdmin();
+  await createSnapshot(text(formData, "label") || "Manual snapshot");
+  revalidatePath("/admin/dashboard");
+}
+
+export async function restoreSnapshotAction(formData: FormData) {
+  await requireAdmin();
+  await restoreSnapshot(num(formData, "snapshot_id"));
+  revalidatePath("/");
+  revalidatePath("/admin/dashboard");
+}
+
+export async function generateScheduleAction(formData: FormData) {
+  await requireAdmin();
+  const result = await generateSchedule({
+    startDate: text(formData, "start_date"),
+    endDate: text(formData, "end_date"),
+    dayStart: text(formData, "day_start") || "08:00",
+    dayEnd: text(formData, "day_end") || "23:59",
+    courts: Math.max(1, num(formData, "courts", 2)),
+    seedingMinutes: Math.max(10, num(formData, "seeding_minutes", 20)),
+    tournamentMinutes: Math.max(10, num(formData, "tournament_minutes", 40)),
+    roundsPerPair: Math.max(1, num(formData, "rounds_per_pair", 2)),
+    includeTuesday: checkbox(formData, "include_tuesday"),
+    tournamentMix: text(formData, "tournament_mix") || "A,C|B,D"
+  });
+  await withTransaction(async (client) => {
+    await client.query("DELETE FROM games");
+    for (const game of result) {
+      await client.query(
+        `INSERT INTO games (phase, division, court, starts_at, team_1_id, team_2_id, ref_team_id, label)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [game.phase, game.division, game.court, game.startsAt, game.team1Id, game.team2Id, game.refTeamId, game.label]
+      );
+    }
+  });
+  revalidatePath("/admin/schedule");
+}
