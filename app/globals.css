@@ -118,6 +118,20 @@ a {
   margin: 0 0 14px;
 }
 
+.section-heading {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.section-heading h2,
+.section-heading p {
+  margin: 0;
+}
+
 .grid {
   display: grid;
   gap: 14px;
@@ -234,6 +248,12 @@ th {
   gap: 14px;
 }
 
+.picker-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(180px, 260px) minmax(260px, 1fr);
+}
+
 .team-subsection {
   border-top: 1px solid var(--line);
   margin-top: 16px;
@@ -255,12 +275,16 @@ th {
 
 @media (max-width: 680px) {
   .topbar {
-    align-items: start;
+    align-items: flex-start;
     flex-direction: column;
   }
 
   .hero {
     min-height: 260px;
     padding: 24px;
+  }
+
+  .picker-grid {
+    grid-template-columns: 1fr;
   }
 }
