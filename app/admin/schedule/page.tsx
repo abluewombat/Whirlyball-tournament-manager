@@ -5,7 +5,7 @@ import { displayDateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-export default async function SchedulePage({ searchParams }: { searchParams: Promise<{ generated?: string }> }) {
+export default async function SchedulePage({ searchParams }: { searchParams: Promise<{ generated?: string; unscheduled?: string }> }) {
   await requireAdmin();
   const params = await searchParams;
   const games = await query<{
@@ -31,6 +31,7 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
   );
   const activeTeamCount = teamCounts.reduce((sum, row) => sum + Number(row.count), 0);
   const generatedCount = params.generated === undefined ? null : Number(params.generated);
+  const unscheduledCount = params.unscheduled === undefined ? 0 : Number(params.unscheduled);
 
   return (
     <main className="content">
@@ -51,7 +52,9 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
         </p>
         {generatedCount !== null ? (
           generatedCount > 0 ? (
-            <p className="pill ok">Generated {generatedCount} games.</p>
+            <p className={unscheduledCount > 0 ? "pill warn" : "pill ok"}>
+              Generated {generatedCount} games{unscheduledCount > 0 ? `, with ${unscheduledCount} seeding games left unscheduled due to time limits.` : "."}
+            </p>
           ) : (
             <p className="pill warn">Generated 0 games. Add at least two active teams in a division before generating.</p>
           )
@@ -74,6 +77,10 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
             <input name="day_start" type="time" defaultValue="08:00" />
           </label>
           <label>
+            Early opt-in day start
+            <input name="early_day_start" type="time" defaultValue="17:00" />
+          </label>
+          <label>
             Daily end
             <input name="day_end" type="time" defaultValue="23:59" />
           </label>
@@ -92,6 +99,14 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
           <label>
             Round-robin count
             <input name="rounds_per_pair" type="number" min="1" defaultValue="2" />
+          </label>
+          <label>
+            Seeding block order
+            <input name="block_order" defaultValue="C,B,D,A,Unlimited" />
+          </label>
+          <label>
+            Rows per division block
+            <input name="block_rows" type="number" min="1" defaultValue="6" />
           </label>
           <label>
             Tournament mix

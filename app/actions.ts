@@ -238,17 +238,20 @@ export async function generateScheduleAction(formData: FormData) {
     startDate: text(formData, "start_date"),
     endDate: text(formData, "end_date"),
     dayStart: text(formData, "day_start") || "08:00",
+    earlyDayStart: text(formData, "early_day_start") || "17:00",
     dayEnd: text(formData, "day_end") || "23:59",
     courts: Math.max(1, num(formData, "courts", 2)),
     seedingMinutes: Math.max(10, num(formData, "seeding_minutes", 20)),
     tournamentMinutes: Math.max(10, num(formData, "tournament_minutes", 40)),
     roundsPerPair: Math.max(1, num(formData, "rounds_per_pair", 2)),
     includeTuesday: checkbox(formData, "include_tuesday"),
-    tournamentMix: text(formData, "tournament_mix") || "A,C|B,D"
+    tournamentMix: text(formData, "tournament_mix") || "A,C|B,D",
+    blockOrder: text(formData, "block_order") || "C,B,D,A,Unlimited",
+    blockRows: Math.max(1, num(formData, "block_rows", 6))
   });
   await withTransaction(async (client) => {
     await client.query("DELETE FROM games");
-    for (const game of result) {
+    for (const game of result.games) {
       await client.query(
         `INSERT INTO games (phase, division, court, starts_at, team_1_id, team_2_id, ref_team_id, label)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -257,5 +260,5 @@ export async function generateScheduleAction(formData: FormData) {
     }
   });
   revalidatePath("/admin/schedule");
-  redirect(`/admin/schedule?generated=${result.length}`);
+  redirect(`/admin/schedule?generated=${result.games.length}&unscheduled=${result.unscheduledSeedingGames}`);
 }

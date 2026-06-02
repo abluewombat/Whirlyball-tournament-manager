@@ -38,11 +38,24 @@ export async function GET() {
      LEFT JOIN teams tr ON tr.id = games.ref_team_id
      ORDER BY games.starts_at, games.court`
   );
+  const scheduleGrid = buildScheduleGrid(
+    games as Array<{
+      phase: string;
+      division: string;
+      court: number;
+      starts_at: string;
+      team_1: string | null;
+      team_2: string | null;
+      ref_team: string | null;
+      label: string | null;
+    }>
+  );
 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(teams), "Teams");
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(players), "Players");
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(shirts), "Extra Shirts");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(scheduleGrid), "Schedule Grid");
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(games), "Schedule");
   const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
 
@@ -52,4 +65,45 @@ export async function GET() {
       "Content-Disposition": 'attachment; filename="whirlyball-export.xlsx"'
     }
   });
+}
+
+function buildScheduleGrid(
+  games: Array<{
+    phase: string;
+    division: string;
+    court: number;
+    starts_at: string;
+    team_1: string | null;
+    team_2: string | null;
+    ref_team: string | null;
+    label: string | null;
+  }>
+) {
+  const rows = new Map<string, Record<string, string>>();
+  const courts = [...new Set(games.map((game) => game.court))].sort((a, b) => a - b);
+
+  for (const game of games) {
+    const date = new Date(game.starts_at);
+    const day = Number.isNaN(date.getTime()) ? game.starts_at.slice(0, 10) : date.toLocaleDateString();
+    const time = Number.isNaN(date.getTime()) ? game.starts_at.slice(11, 16) : date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const key = `${game.starts_at}`;
+    const row = rows.get(key) || { Day: day, Time: time };
+    const prefix = `Court ${game.court}`;
+    row[`${prefix} Division`] = game.division;
+    row[`${prefix} Game`] =
+      game.team_1 && game.team_2 ? `${game.team_1} vs. ${game.team_2}` : game.label || `${game.division} ${game.phase}`;
+    row[`${prefix} Ref`] = game.ref_team || "";
+    rows.set(key, row);
+  }
+
+  return [...rows.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, row]) => {
+      for (const court of courts) {
+        row[`Court ${court} Division`] ||= "";
+        row[`Court ${court} Game`] ||= "";
+        row[`Court ${court} Ref`] ||= "";
+      }
+      return row;
+    });
 }
