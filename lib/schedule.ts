@@ -166,21 +166,6 @@ function buildTargetGamesByTeam(byDivision: Map<string, TeamRow[]>, divisionTarg
   return targetGamesByTeam;
 }
 
-function pruneSatisfiedMatchups(
-  queues: Map<string, Matchup[]>,
-  targetGamesByTeam: Map<number, number>,
-  teamGameCounts: Map<number, number>,
-  pairPlayCounts: Map<string, number>
-) {
-  if (!targetGamesByTeam.size) return;
-  for (const [division, queue] of queues.entries()) {
-    queues.set(
-      division,
-      queue.filter((matchup) => matchupPlayCount(matchup, pairPlayCounts) === 0 || !bothTeamsAtTarget(matchup, targetGamesByTeam, teamGameCounts))
-    );
-  }
-}
-
 function unscheduledTargetGames(targetGamesByTeam: Map<number, number>, teamGameCounts: Map<number, number>) {
   if (!targetGamesByTeam.size) return null;
   let missingTeamGames = 0;
@@ -197,10 +182,6 @@ function teamGameCount(team: TeamRow, teamGameCounts: Map<number, number>) {
 function teamAtTarget(team: TeamRow, targetGamesByTeam: Map<number, number>, teamGameCounts: Map<number, number>) {
   const target = targetGamesByTeam.get(team.id);
   return target !== undefined && teamGameCount(team, teamGameCounts) >= target;
-}
-
-function bothTeamsAtTarget(matchup: Matchup, targetGamesByTeam: Map<number, number>, teamGameCounts: Map<number, number>) {
-  return teamAtTarget(matchup.a, targetGamesByTeam, teamGameCounts) && teamAtTarget(matchup.b, targetGamesByTeam, teamGameCounts);
 }
 
 function matchupPlayCount(matchup: Matchup, pairPlayCounts: Map<string, number>) {
@@ -319,6 +300,39 @@ function takeTeamFirstMatchup(
   };
 }
 
+function courtScoreForMatchup(
+  matchup: Matchup,
+  court: number,
+  courtCountsByTeam: Map<number, Map<number, number>>,
+  matchupCourtCounts: Map<string, Map<number, number>>
+) {
+  const key = matchupKey(matchup.a, matchup.b);
+  const aCourt = courtCountsByTeam.get(matchup.a.id)?.get(court) || 0;
+  const bCourt = courtCountsByTeam.get(matchup.b.id)?.get(court) || 0;
+  const sameCourtRepeat = matchupCourtCounts.get(key)?.get(court) || 0;
+  return (aCourt + bCourt) * 100 + Math.abs(aCourt - bCourt) * 10 + sameCourtRepeat * 1000 + court;
+}
+
+function takeBestCourtForMatchup(
+  matchup: Matchup,
+  availableCourts: number[],
+  courtCountsByTeam: Map<number, Map<number, number>>,
+  matchupCourtCounts: Map<string, Map<number, number>>
+) {
+  if (!availableCourts.length) return null;
+  let bestCourtIndex = 0;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let courtIndex = 0; courtIndex < availableCourts.length; courtIndex++) {
+    const score = courtScoreForMatchup(matchup, availableCourts[courtIndex], courtCountsByTeam, matchupCourtCounts);
+    if (score < bestScore) {
+      bestCourtIndex = courtIndex;
+      bestScore = score;
+    }
+  }
+  const [court] = availableCourts.splice(bestCourtIndex, 1);
+  return court;
+}
+
 function assignCourts(
   rowMatchups: Matchup[],
   courtCount: number,
@@ -326,25 +340,27 @@ function assignCourts(
   matchupCourtCounts: Map<string, Map<number, number>>
 ) {
   const unassigned = [...rowMatchups];
+  const availableCourts = Array.from({ length: courtCount }, (_, index) => index + 1);
   const assignments: Array<{ matchup: Matchup; court: number }> = [];
 
-  for (let court = 1; court <= courtCount; court++) {
-    if (!unassigned.length) break;
-    let bestIndex = 0;
+  while (unassigned.length && availableCourts.length) {
+    let bestMatchupIndex = 0;
+    let bestCourtIndex = 0;
     let bestScore = Number.POSITIVE_INFINITY;
-    for (let index = 0; index < unassigned.length; index++) {
-      const matchup = unassigned[index];
-      const key = matchupKey(matchup.a, matchup.b);
-      const aCourt = courtCountsByTeam.get(matchup.a.id)?.get(court) || 0;
-      const bCourt = courtCountsByTeam.get(matchup.b.id)?.get(court) || 0;
-      const sameCourtRepeat = matchupCourtCounts.get(key)?.get(court) || 0;
-      const score = aCourt + bCourt + sameCourtRepeat * 10;
-      if (score < bestScore) {
-        bestIndex = index;
-        bestScore = score;
+    for (let matchupIndex = 0; matchupIndex < unassigned.length; matchupIndex++) {
+      const matchup = unassigned[matchupIndex];
+      for (let courtIndex = 0; courtIndex < availableCourts.length; courtIndex++) {
+        const court = availableCourts[courtIndex];
+        const score = courtScoreForMatchup(matchup, court, courtCountsByTeam, matchupCourtCounts);
+        if (score < bestScore) {
+          bestMatchupIndex = matchupIndex;
+          bestCourtIndex = courtIndex;
+          bestScore = score;
+        }
       }
     }
-    const [matchup] = unassigned.splice(bestIndex, 1);
+    const [matchup] = unassigned.splice(bestMatchupIndex, 1);
+    const [court] = availableCourts.splice(bestCourtIndex, 1);
     assignments.push({ matchup, court });
     incrementNested(courtCountsByTeam, matchup.a.id, court);
     incrementNested(courtCountsByTeam, matchup.b.id, court);
@@ -451,9 +467,9 @@ function repairSeedingSlots({
     if (occupiedCourts.size >= input.courts) continue;
 
     const usedTeamIds = scheduledTeamIdsAt(games, slot.startsAt);
+    const availableCourts = Array.from({ length: input.courts }, (_, index) => index + 1).filter((court) => !occupiedCourts.has(court));
     const divisionTeams = byDivision.get(slot.division) || [];
     const eligible = (matchup: Matchup) => {
-      if (bothTeamsAtTarget(matchup, targetGamesByTeam, teamGameCounts) && matchupPlayCount(matchup, pairPlayCounts) > 0) return false;
       if (input.includeTuesday && slot.dayIndex === 0 && (!matchup.a.early_available || !matchup.b.early_available)) return false;
       if (teamBlockedAt(matchup.a.id, slot.startsAt, input.seedingMinutes, availability)) return false;
       if (teamBlockedAt(matchup.b.id, slot.startsAt, input.seedingMinutes, availability)) return false;
@@ -468,8 +484,7 @@ function repairSeedingSlots({
       return true;
     };
 
-    for (let court = 1; court <= input.courts; court++) {
-      if (occupiedCourts.has(court)) continue;
+    while (availableCourts.length) {
       const result = takeTeamFirstMatchup(
         queue,
         usedTeamIds,
@@ -480,7 +495,9 @@ function repairSeedingSlots({
         teamCursorsByDivision.get(slot.division) || 0,
         eligible
       );
-      if (!result) continue;
+      if (!result) break;
+      const court = takeBestCourtForMatchup(result.matchup, availableCourts, courtCountsByTeam, matchupCourtCounts);
+      if (court === null) break;
 
       teamCursorsByDivision.set(slot.division, result.nextCursor);
       const unavailableTeamIds = blockedTeamIdsAt(teams, slot.startsAt, input.seedingMinutes, availability);
@@ -610,7 +627,6 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
     const nextDayTournamentDivisions = new Set(nextTournamentDayIndex >= 0 ? tournamentDivisionsForDay(nextTournamentDayIndex) : []);
 
     for (let row = 0; row < rowCapacity && hasQueuedGames(queues); ) {
-      pruneSatisfiedMatchups(queues, targetGamesByTeam, teamGameCounts, pairPlayCounts);
       const next = nextDivisionWithGames(blockOrder.length ? blockOrder : defaultBlockOrder, queues, blockCursor);
       if (!next) break;
       blockCursor = next.cursor;
@@ -630,7 +646,6 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
           nextDayTournamentDivisions
         });
         const eligible = (matchup: Matchup) => {
-          if (bothTeamsAtTarget(matchup, targetGamesByTeam, teamGameCounts) && matchupPlayCount(matchup, pairPlayCounts) > 0) return false;
           if (input.includeTuesday && dayIndex === 0 && (!matchup.a.early_available || !matchup.b.early_available)) return false;
           if (teamBlockedAt(matchup.a.id, rowStartsAt, input.seedingMinutes, availability)) return false;
           if (teamBlockedAt(matchup.b.id, rowStartsAt, input.seedingMinutes, availability)) return false;
@@ -700,7 +715,6 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
     previousDayLateTeamIds = currentDayLateTeamIds;
   }
   for (let pass = 0; pass < 3; pass++) {
-    pruneSatisfiedMatchups(queues, targetGamesByTeam, teamGameCounts, pairPlayCounts);
     const added = repairSeedingSlots({
       slots: seedingSlots,
       games,
@@ -721,7 +735,6 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
     });
     if (added === 0) break;
   }
-  pruneSatisfiedMatchups(queues, targetGamesByTeam, teamGameCounts, pairPlayCounts);
 
   let unscheduledTournamentGames = 0;
   for (const [dayIndex, day] of tournamentDays.entries()) {
