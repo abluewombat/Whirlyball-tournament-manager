@@ -1,5 +1,6 @@
 import { query } from "./db";
 import { TeamAvailabilityBlockRow, TeamRow } from "./queries";
+import { scheduleDefaults } from "./schedule-defaults";
 
 type ScheduleInput = {
   startDate: string;
@@ -67,6 +68,11 @@ function isoDate(date: Date) {
 function minutes(time: string) {
   const [h, m] = time.split(":").map(Number);
   return h * 60 + m;
+}
+
+function endMinutes(time: string) {
+  const value = minutes(time);
+  return time.endsWith(":59") ? value + 1 : value;
 }
 
 function at(date: Date, minute: number) {
@@ -405,14 +411,14 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
   const tournamentDays = days.slice(Math.max(0, days.length - 2));
   const start = minutes(input.dayStart);
   const earlyStart = minutes(input.earlyDayStart || input.dayStart);
-  const end = minutes(input.dayEnd);
+  const end = endMinutes(input.dayEnd);
   const tournamentStart = minutes(input.tournamentDayStart || input.dayStart);
-  const tournamentEnd = minutes(input.tournamentDayEnd || input.dayEnd);
-  const finalDayEnd = minutes(input.finalDayEnd || input.tournamentDayEnd || input.dayEnd);
-  const preTournamentCutoff = minutes(input.preTournamentCutoff || "18:00");
-  const morningRestRows = Math.max(0, input.morningRestRows ?? 2);
-  const lateNightRows = Math.max(0, input.lateNightRows ?? 2);
-  const blockRows = Math.max(1, input.blockRows || 6);
+  const tournamentEnd = endMinutes(input.tournamentDayEnd || input.dayEnd);
+  const finalDayEnd = endMinutes(input.finalDayEnd || input.tournamentDayEnd || input.dayEnd);
+  const preTournamentCutoff = minutes(input.preTournamentCutoff || scheduleDefaults.preTournamentCutoff);
+  const morningRestRows = Math.max(0, input.morningRestRows ?? scheduleDefaults.morningRestRows);
+  const lateNightRows = Math.max(0, input.lateNightRows ?? scheduleDefaults.lateNightRows);
+  const blockRows = Math.max(1, input.blockRows || scheduleDefaults.blockRows);
   const blockOrder = parseBlockOrder(input.blockOrder).filter((division) => byDivision.has(division));
   const tournamentDayCapacities = tournamentDays.map((_, dayIndex) => {
     const dayEnd = dayIndex === tournamentDays.length - 1 ? finalDayEnd : tournamentEnd;
@@ -420,13 +426,13 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
   });
   const mixes = buildTournamentMix(input.tournamentMix, byDivision, tournamentDayCapacities);
   const games: GeneratedGame[] = [];
-  const seedingMode = input.seedingMode || "balanced";
+  const seedingMode = input.seedingMode || scheduleDefaults.seedingMode;
   const maxPairRepeats = Math.max(1, input.roundsPerPair);
   const targetGamesByTeam =
     seedingMode === "balanced"
       ? buildTargetGamesByTeam(
           byDivision,
-          parseDivisionTargets(input.divisionTargetGames, Math.max(1, input.targetGamesPerTeam || 8), [...byDivision.keys()]),
+          parseDivisionTargets(input.divisionTargetGames, Math.max(1, input.targetGamesPerTeam || scheduleDefaults.targetGamesPerTeam), [...byDivision.keys()]),
           maxPairRepeats
         )
       : new Map<number, number>();

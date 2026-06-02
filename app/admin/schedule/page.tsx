@@ -2,6 +2,7 @@ import { generateScheduleAction } from "@/app/actions";
 import { requireAdmin } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { displayDateTime } from "@/lib/format";
+import { scheduleDefaults } from "@/lib/schedule-defaults";
 
 export const dynamic = "force-dynamic";
 
@@ -104,58 +105,58 @@ export default async function SchedulePage({
         <form action={generateScheduleAction} className="form-grid">
           <label>
             Start date
-            <input name="start_date" type="date" required />
+            <input name="start_date" type="date" required defaultValue={scheduleDefaults.startDate} />
           </label>
           <label>
             End date
-            <input name="end_date" type="date" required />
+            <input name="end_date" type="date" required defaultValue={scheduleDefaults.endDate} />
           </label>
           <label>
             Daily start
-            <input name="day_start" type="time" defaultValue="08:00" />
+            <input name="day_start" type="time" defaultValue={scheduleDefaults.dayStart} />
           </label>
           <label>
             Early opt-in day start
-            <input name="early_day_start" type="time" defaultValue="17:00" />
+            <input name="early_day_start" type="time" defaultValue={scheduleDefaults.earlyDayStart} />
           </label>
           <label>
             Daily end
-            <input name="day_end" type="time" defaultValue="23:59" />
+            <input name="day_end" type="time" defaultValue={scheduleDefaults.dayEnd} />
           </label>
           <label>
             Courts
-            <input name="courts" type="number" min="1" defaultValue="2" />
+            <input name="courts" type="number" min="1" defaultValue={scheduleDefaults.courts} />
           </label>
           <label>
             Seeding block minutes
-            <input name="seeding_minutes" type="number" min="10" defaultValue="20" />
+            <input name="seeding_minutes" type="number" min="10" defaultValue={scheduleDefaults.seedingMinutes} />
           </label>
           <label>
             Tournament block minutes
-            <input name="tournament_minutes" type="number" min="10" defaultValue="40" />
+            <input name="tournament_minutes" type="number" min="10" defaultValue={scheduleDefaults.tournamentMinutes} />
           </label>
           <label>
             Tournament start
-            <input name="tournament_day_start" type="time" defaultValue="08:00" />
+            <input name="tournament_day_start" type="time" defaultValue={scheduleDefaults.tournamentDayStart} />
           </label>
           <label>
             Tournament day end
-            <input name="tournament_day_end" type="time" defaultValue="23:30" />
+            <input name="tournament_day_end" type="time" defaultValue={scheduleDefaults.tournamentDayEnd} />
           </label>
           <label>
             Final day end
-            <input name="final_day_end" type="time" defaultValue="20:00" />
+            <input name="final_day_end" type="time" defaultValue={scheduleDefaults.finalDayEnd} />
           </label>
           <label>
             Seeding mode
-            <select name="seeding_mode" defaultValue="balanced">
+            <select name="seeding_mode" defaultValue={scheduleDefaults.seedingMode}>
               <option value="balanced">Balanced target games/team</option>
               <option value="round_robin">Full round robin</option>
             </select>
           </label>
           <label>
             Target games/team
-            <input name="target_games_per_team" type="number" min="1" defaultValue="8" />
+            <input name="target_games_per_team" type="number" min="1" defaultValue={scheduleDefaults.targetGamesPerTeam} />
           </label>
           <label>
             Division targets
@@ -163,31 +164,31 @@ export default async function SchedulePage({
           </label>
           <label>
             Pair repeat limit
-            <input name="rounds_per_pair" type="number" min="1" defaultValue="2" />
+            <input name="rounds_per_pair" type="number" min="1" defaultValue={scheduleDefaults.roundsPerPair} />
           </label>
           <label>
             Seeding block order
-            <input name="block_order" defaultValue="C,B,D,A,Unlimited" />
+            <input name="block_order" defaultValue={scheduleDefaults.blockOrder} />
           </label>
           <label>
             Rows per division block
-            <input name="block_rows" type="number" min="1" defaultValue="6" />
+            <input name="block_rows" type="number" min="1" defaultValue={scheduleDefaults.blockRows} />
           </label>
           <label>
             Tournament mix
-            <input name="tournament_mix" defaultValue="auto" placeholder="auto or A,B|C,D" />
+            <input name="tournament_mix" defaultValue={scheduleDefaults.tournamentMix} placeholder="auto or A,B|C,D" />
           </label>
           <label>
             Next-day tournament cutoff
-            <input name="pre_tournament_cutoff" type="time" defaultValue="18:00" />
+            <input name="pre_tournament_cutoff" type="time" defaultValue={scheduleDefaults.preTournamentCutoff} />
           </label>
           <label>
             Late-night rows
-            <input name="late_night_rows" type="number" min="0" defaultValue="2" />
+            <input name="late_night_rows" type="number" min="0" defaultValue={scheduleDefaults.lateNightRows} />
           </label>
           <label>
             Morning rest rows
-            <input name="morning_rest_rows" type="number" min="0" defaultValue="2" />
+            <input name="morning_rest_rows" type="number" min="0" defaultValue={scheduleDefaults.morningRestRows} />
           </label>
           <label>
             First day is early opt-in only

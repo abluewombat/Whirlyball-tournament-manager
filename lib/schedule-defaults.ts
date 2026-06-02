@@ -1,0 +1,22 @@
+export const scheduleDefaults = {
+  startDate: "2026-06-22",
+  endDate: "2026-06-28",
+  dayStart: "08:00",
+  earlyDayStart: "14:00",
+  dayEnd: "23:59",
+  courts: 2,
+  seedingMinutes: 20,
+  tournamentMinutes: 40,
+  tournamentDayStart: "08:00",
+  tournamentDayEnd: "19:00",
+  finalDayEnd: "19:00",
+  seedingMode: "balanced",
+  targetGamesPerTeam: 8,
+  roundsPerPair: 2,
+  blockOrder: "C,B,D,A,Unlimited",
+  blockRows: 6,
+  tournamentMix: "C,B|D,A",
+  preTournamentCutoff: "18:00",
+  lateNightRows: 6,
+  morningRestRows: 8
+} as const;
