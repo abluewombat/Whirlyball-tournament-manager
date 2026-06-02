@@ -75,6 +75,13 @@ type TournamentPlacement = {
   court: number;
 };
 
+type TournamentDayPlan = {
+  divisions: string[];
+  placements: TournamentPlacement[];
+  overflowEntries: TournamentEntry[];
+  unscheduledEntries: TournamentEntry[];
+};
+
 type WarmupPlacement = {
   matchup: Matchup;
   startsAt: string;
@@ -154,14 +161,29 @@ function tournamentDivisionsForDay(dayIndex: number) {
   return dayIndex === 0 ? ["C", "B"] : ["A", "D"];
 }
 
-function buildTournamentEntries(divisions: string[], byDivision: Map<string, TeamRow[]>) {
-  const entries: TournamentEntry[] = [];
+function buildTournamentEntriesByDivision(divisions: string[], byDivision: Map<string, TeamRow[]>) {
+  const entriesByDivision = new Map<string, TournamentEntry[]>();
   for (const division of divisions) {
-    for (const label of bracketLabels((byDivision.get(division) || []).length)) {
-      entries.push({ division, label });
-    }
+    entriesByDivision.set(
+      division,
+      bracketLabels((byDivision.get(division) || []).length).map((label) => ({ division, label }))
+    );
   }
-  return entries;
+  return entriesByDivision;
+}
+
+function flattenTournamentEntries(divisions: string[], entriesByDivision: Map<string, TournamentEntry[]>) {
+  return divisions.flatMap((division) => entriesByDivision.get(division) || []);
+}
+
+function canMoveBeforeTournamentDay(entry: TournamentEntry) {
+  return entry.label.startsWith("Winners R1 Game ");
+}
+
+function countTournamentEntriesByDivision(entries: TournamentEntry[]) {
+  const counts = new Map<string, number>();
+  for (const entry of entries) counts.set(entry.division, (counts.get(entry.division) || 0) + 1);
+  return counts;
 }
 
 function buildOverflowTournamentSlots(
@@ -287,6 +309,50 @@ function tournamentSlotsNeeded(entries: TournamentEntry[], courts: number, prefe
     if (!placeTournamentEntriesInSlots(entries, slots, preferredOrder).unscheduledEntries.length) return slots.length;
   }
   return (entries.length + 2) * courts;
+}
+
+function planTournamentDay(day: Date, divisions: string[], entriesByDivision: Map<string, TournamentEntry[]>, slots: TournamentSlot[]) {
+  const overflowEntries: TournamentEntry[] = [];
+  const currentEntriesByDivision = new Map<string, TournamentEntry[]>();
+  for (const division of divisions) currentEntriesByDivision.set(division, [...(entriesByDivision.get(division) || [])]);
+
+  let plan = placeTournamentEntriesInSlots(flattenTournamentEntries(divisions, currentEntriesByDivision), slots, divisions);
+
+  while (plan.unscheduledEntries.length) {
+    const unscheduledCounts = countTournamentEntriesByDivision(plan.unscheduledEntries);
+    const candidates = divisions
+      .map((division, index) => {
+        const entries = currentEntriesByDivision.get(division) || [];
+        return {
+          division,
+          index,
+          firstEntry: entries[0],
+          remainingEntries: entries.length,
+          unscheduledCount: unscheduledCounts.get(division) || 0
+        };
+      })
+      .filter((candidate) => candidate.firstEntry && canMoveBeforeTournamentDay(candidate.firstEntry))
+      .sort((left, right) => {
+        if (left.unscheduledCount !== right.unscheduledCount) return right.unscheduledCount - left.unscheduledCount;
+        if (left.remainingEntries !== right.remainingEntries) return right.remainingEntries - left.remainingEntries;
+        return left.index - right.index;
+      });
+
+    const chosen = candidates[0];
+    if (!chosen) break;
+
+    const entries = currentEntriesByDivision.get(chosen.division) || [];
+    const [entry] = entries.splice(0, 1);
+    overflowEntries.push(entry);
+    plan = placeTournamentEntriesInSlots(flattenTournamentEntries(divisions, currentEntriesByDivision), slots, divisions);
+  }
+
+  return {
+    divisions,
+    placements: plan.placements,
+    overflowEntries,
+    unscheduledEntries: plan.unscheduledEntries
+  } satisfies TournamentDayPlan;
 }
 
 function equalizeSeedingGameCounts(games: GeneratedGame[], byDivision: Map<string, TeamRow[]>) {
@@ -1044,10 +1110,9 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
   });
   const tournamentPlans = tournamentDays.map((day, dayIndex) => {
     const divisions = tournamentDivisionsForDay(dayIndex).filter((division) => byDivision.has(division));
-    const entries = buildTournamentEntries(divisions, byDivision);
+    const entriesByDivision = buildTournamentEntriesByDivision(divisions, byDivision);
     const slots = buildTournamentDaySlots(day, tournamentStart, tournamentRowsByDay[dayIndex] || 0, input.tournamentMinutes, input.courts);
-    const { placements, unscheduledEntries } = placeTournamentEntriesInSlots(entries, slots, divisions);
-    return { divisions, placements, overflowEntries: unscheduledEntries };
+    return planTournamentDay(day, divisions, entriesByDivision, slots);
   });
   const overflowTournamentEntries = tournamentPlans.flatMap((plan) => plan.overflowEntries);
   const overflowTournamentDivisions = tournamentDivisionOrder(overflowTournamentEntries);
@@ -1250,7 +1315,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
   }
 
   const overflowTournamentPlan = placeTournamentEntriesInSlots(overflowTournamentEntries, overflowTournamentSlots, overflowTournamentDivisions);
-  let unscheduledTournamentGames = overflowTournamentPlan.unscheduledEntries.length;
+  let unscheduledTournamentGames = overflowTournamentPlan.unscheduledEntries.length + tournamentPlans.reduce((sum, plan) => sum + plan.unscheduledEntries.length, 0);
   for (const placement of overflowTournamentPlan.placements) {
     games.push({
       phase: "tournament",
