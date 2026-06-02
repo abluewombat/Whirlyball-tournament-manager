@@ -6,13 +6,36 @@ import { unsign } from "@/lib/security";
 export const dynamic = "force-dynamic";
 
 type GameExportRow = {
+  phase: string;
   division: string;
   court: number;
   starts_at: string;
+  team_1_id: number | null;
+  team_2_id: number | null;
   team_1: string | null;
+  team_1_center: string | null;
   team_2: string | null;
+  team_2_center: string | null;
   ref_team: string | null;
   label: string | null;
+};
+
+type TeamExportRow = {
+  id: number;
+  center: string;
+  division: string;
+  name: string;
+  early_available: boolean;
+  deleted_at: string | null;
+};
+
+type ScheduleTeamStats = {
+  team: TeamExportRow;
+  seedingGames: number;
+  opponents: Map<number, number>;
+  courts: Map<number, number>;
+  firstSeeding: string | null;
+  lastSeeding: string | null;
 };
 
 const divisionColors: Record<string, string> = {
@@ -28,8 +51,8 @@ export async function GET() {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const teams = await query(
-    `SELECT centers.name as center, teams.division, teams.name, teams.early_available, teams.deleted_at
+  const teams = await query<TeamExportRow>(
+    `SELECT teams.id, centers.name as center, teams.division, teams.name, teams.early_available, teams.deleted_at
      FROM teams JOIN centers ON centers.id = teams.center_id ORDER BY teams.division, center, teams.name`
   );
   const players = await query(
@@ -56,11 +79,16 @@ export async function GET() {
      ORDER BY team_availability_blocks.starts_at, center, team`
   );
   const games = await query<GameExportRow>(
-    `SELECT games.division, games.court, games.starts_at,
-            t1.name as team_1, t2.name as team_2, tr.name as ref_team, games.label
+    `SELECT games.phase, games.division, games.court, games.starts_at,
+            games.team_1_id, games.team_2_id,
+            t1.name as team_1, c1.name as team_1_center,
+            t2.name as team_2, c2.name as team_2_center,
+            tr.name as ref_team, games.label
      FROM games
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
+     LEFT JOIN centers c1 ON c1.id = t1.center_id
      LEFT JOIN teams t2 ON t2.id = games.team_2_id
+     LEFT JOIN centers c2 ON c2.id = t2.center_id
      LEFT JOIN teams tr ON tr.id = games.ref_team_id
      ORDER BY games.starts_at, games.court`
   );
@@ -70,6 +98,8 @@ export async function GET() {
   workbook.created = new Date();
 
   addScheduleGridSheet(workbook, games);
+  addScheduleSummarySheet(workbook, teams, games);
+  addOpponentMatrixSheet(workbook, teams, games);
   addScheduleDetailSheet(workbook, games);
   addObjectSheet(workbook, "Teams", teams);
   addObjectSheet(workbook, "Players", players);
@@ -157,6 +187,100 @@ function addScheduleDetailSheet(workbook: ExcelJS.Workbook, games: GameExportRow
   styleBody(sheet);
 }
 
+function addScheduleSummarySheet(workbook: ExcelJS.Workbook, teams: TeamExportRow[], games: GameExportRow[]) {
+  const { statsByTeamId, teams: activeTeams, teamById } = buildScheduleQuality(teams, games);
+  const divisionAverages = buildDivisionAverages(statsByTeamId);
+  const sheet = workbook.addWorksheet("Schedule Summary", {
+    views: [{ state: "frozen", ySplit: 1 }]
+  });
+
+  sheet.columns = [
+    { header: "Division", key: "division", width: 10 },
+    { header: "Center", key: "center", width: 14 },
+    { header: "Team", key: "team", width: 26 },
+    { header: "Seeding Games", key: "seedingGames", width: 15 },
+    { header: "Unique Opponents", key: "uniqueOpponents", width: 17 },
+    { header: "Max Repeat", key: "maxRepeat", width: 12 },
+    { header: "Most Repeated Opponent", key: "mostRepeatedOpponent", width: 30 },
+    { header: "Court 1", key: "court1", width: 10 },
+    { header: "Court 2", key: "court2", width: 10 },
+    { header: "Court Balance", key: "courtBalance", width: 18 },
+    { header: "First Seeding", key: "firstSeeding", width: 18 },
+    { header: "Last Seeding", key: "lastSeeding", width: 18 }
+  ];
+  sheet.autoFilter = "A1:L1";
+  styleHeader(sheet.getRow(1));
+
+  for (const team of activeTeams) {
+    const stats = statsByTeamId.get(team.id);
+    if (!stats) continue;
+    const court1 = stats.courts.get(1) || 0;
+    const court2 = stats.courts.get(2) || 0;
+    const maxRepeat = maxOpponentRepeat(stats);
+    const divisionAverage = divisionAverages.get(team.division) || 0;
+    const row = sheet.addRow({
+      division: team.division,
+      center: team.center,
+      team: team.name,
+      seedingGames: stats.seedingGames,
+      uniqueOpponents: stats.opponents.size,
+      maxRepeat,
+      mostRepeatedOpponent: mostRepeatedOpponent(stats, teamById),
+      court1,
+      court2,
+      courtBalance: formatCourtBalance(court1, court2),
+      firstSeeding: formatDateTime(stats.firstSeeding),
+      lastSeeding: formatDateTime(stats.lastSeeding)
+    });
+
+    colorGameCell(row.getCell("division"), team.division);
+    colorSummaryCells(row, stats.seedingGames, divisionAverage, maxRepeat, Math.abs(court1 - court2));
+  }
+
+  styleBody(sheet);
+}
+
+function addOpponentMatrixSheet(workbook: ExcelJS.Workbook, teams: TeamExportRow[], games: GameExportRow[]) {
+  const { pairCounts, teams: activeTeams } = buildScheduleQuality(teams, games);
+  const sheet = workbook.addWorksheet("Opponent Matrix", {
+    views: [{ state: "frozen", xSplit: 1, ySplit: 1 }]
+  });
+
+  sheet.columns = [
+    { header: "Team", key: "team", width: 38 },
+    ...activeTeams.map((team) => ({ header: matrixTeamLabel(team), key: matrixTeamKey(team), width: 8 }))
+  ];
+  styleHeader(sheet.getRow(1));
+  sheet.getRow(1).height = 88;
+  sheet.getRow(1).eachCell((cell, columnNumber) => {
+    cell.alignment = {
+      horizontal: columnNumber === 1 ? "left" : "center",
+      vertical: columnNumber === 1 ? "middle" : "bottom",
+      textRotation: columnNumber === 1 ? 0 : 90,
+      wrapText: true
+    };
+  });
+
+  for (const rowTeam of activeTeams) {
+    const values: Record<string, string | number> = { team: teamLabel(rowTeam) };
+    for (const columnTeam of activeTeams) {
+      values[matrixTeamKey(columnTeam)] = matrixCellValue(rowTeam, columnTeam, pairCounts);
+    }
+
+    const row = sheet.addRow(values);
+    row.height = 24;
+    row.getCell(1).font = { bold: true };
+    row.getCell(1).fill = solidFill(divisionColors[rowTeam.division] || "FFFFFF");
+    row.getCell(1).alignment = { vertical: "middle", wrapText: true };
+    row.getCell(1).border = thinBorder();
+
+    activeTeams.forEach((columnTeam, index) => {
+      const cell = row.getCell(index + 2);
+      styleMatrixCell(cell, rowTeam, columnTeam, pairCounts);
+    });
+  }
+}
+
 function addObjectSheet(workbook: ExcelJS.Workbook, name: string, rows: Record<string, unknown>[]) {
   const sheet = workbook.addWorksheet(name, {
     views: [{ state: "frozen", ySplit: 1 }]
@@ -214,6 +338,152 @@ function buildScheduleGrid(games: GameExportRow[]) {
   }
 
   return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row);
+}
+
+function buildScheduleQuality(teams: TeamExportRow[], games: GameExportRow[]) {
+  const activeTeams = teams.filter((team) => !team.deleted_at).sort(compareTeams);
+  const teamById = new Map(activeTeams.map((team) => [team.id, team]));
+  const statsByTeamId = new Map<number, ScheduleTeamStats>(
+    activeTeams.map((team) => [
+      team.id,
+      {
+        team,
+        seedingGames: 0,
+        opponents: new Map<number, number>(),
+        courts: new Map<number, number>(),
+        firstSeeding: null,
+        lastSeeding: null
+      }
+    ])
+  );
+  const pairCounts = new Map<string, number>();
+
+  for (const game of games) {
+    if (game.phase !== "seeding" || game.team_1_id === null || game.team_2_id === null) continue;
+    const team1Stats = statsByTeamId.get(game.team_1_id);
+    const team2Stats = statsByTeamId.get(game.team_2_id);
+    if (!team1Stats || !team2Stats) continue;
+
+    recordSeedingGame(team1Stats, game.team_2_id, game);
+    recordSeedingGame(team2Stats, game.team_1_id, game);
+    const key = pairKey(game.team_1_id, game.team_2_id);
+    pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+  }
+
+  return { pairCounts, statsByTeamId, teamById, teams: activeTeams };
+}
+
+function recordSeedingGame(stats: ScheduleTeamStats, opponentId: number, game: GameExportRow) {
+  stats.seedingGames += 1;
+  stats.opponents.set(opponentId, (stats.opponents.get(opponentId) || 0) + 1);
+  stats.courts.set(game.court, (stats.courts.get(game.court) || 0) + 1);
+  if (!stats.firstSeeding || game.starts_at.localeCompare(stats.firstSeeding) < 0) stats.firstSeeding = game.starts_at;
+  if (!stats.lastSeeding || game.starts_at.localeCompare(stats.lastSeeding) > 0) stats.lastSeeding = game.starts_at;
+}
+
+function buildDivisionAverages(statsByTeamId: Map<number, ScheduleTeamStats>) {
+  const totals = new Map<string, { games: number; teams: number }>();
+  for (const stats of statsByTeamId.values()) {
+    const current = totals.get(stats.team.division) || { games: 0, teams: 0 };
+    current.games += stats.seedingGames;
+    current.teams += 1;
+    totals.set(stats.team.division, current);
+  }
+
+  return new Map([...totals.entries()].map(([division, total]) => [division, total.teams ? total.games / total.teams : 0]));
+}
+
+function colorSummaryCells(row: ExcelJS.Row, seedingGames: number, divisionAverage: number, maxRepeat: number, courtImbalance: number) {
+  if (Math.abs(seedingGames - divisionAverage) > 1) {
+    row.getCell("seedingGames").fill = solidFill("FCE4D6");
+  }
+  if (maxRepeat === 2) {
+    row.getCell("maxRepeat").fill = solidFill("E2F0D9");
+  } else if (maxRepeat > 2) {
+    row.getCell("maxRepeat").fill = solidFill("F8CBAD");
+    row.getCell("mostRepeatedOpponent").fill = solidFill("F8CBAD");
+  }
+  if (courtImbalance > 1) {
+    row.getCell("courtBalance").fill = solidFill("FFF2CC");
+  }
+}
+
+function maxOpponentRepeat(stats: ScheduleTeamStats) {
+  return Math.max(0, ...stats.opponents.values());
+}
+
+function mostRepeatedOpponent(stats: ScheduleTeamStats, teamById: Map<number, TeamExportRow>) {
+  const maxRepeat = maxOpponentRepeat(stats);
+  if (maxRepeat <= 1) return "";
+  return [...stats.opponents.entries()]
+    .filter(([, count]) => count === maxRepeat)
+    .map(([teamId]) => {
+      const team = teamById.get(teamId);
+      return team ? `${team.center} - ${team.name}` : `Team ${teamId}`;
+    })
+    .join(", ");
+}
+
+function matrixCellValue(rowTeam: TeamExportRow, columnTeam: TeamExportRow, pairCounts: Map<string, number>) {
+  if (rowTeam.id === columnTeam.id || rowTeam.division !== columnTeam.division) return "";
+  return pairCounts.get(pairKey(rowTeam.id, columnTeam.id)) || 0;
+}
+
+function styleMatrixCell(cell: ExcelJS.Cell, rowTeam: TeamExportRow, columnTeam: TeamExportRow, pairCounts: Map<string, number>) {
+  cell.border = thinBorder();
+  cell.alignment = { horizontal: "center", vertical: "middle" };
+  if (rowTeam.id === columnTeam.id) {
+    cell.fill = solidFill("666666");
+    return;
+  }
+  if (rowTeam.division !== columnTeam.division) {
+    cell.fill = solidFill("E7E6E6");
+    return;
+  }
+
+  const count = pairCounts.get(pairKey(rowTeam.id, columnTeam.id)) || 0;
+  if (count === 1) {
+    cell.fill = solidFill("DDEBF7");
+  } else if (count === 2) {
+    cell.fill = solidFill("E2F0D9");
+  } else if (count > 2) {
+    cell.fill = solidFill("F8CBAD");
+  }
+}
+
+function formatDateTime(value: string | null) {
+  return value ? `${formatDay(value)} ${formatTime(value)}` : "";
+}
+
+function formatCourtBalance(court1: number, court2: number) {
+  const difference = court1 - court2;
+  if (difference === 0) return "Even";
+  return `${Math.abs(difference)} more on Court ${difference > 0 ? "1" : "2"}`;
+}
+
+function pairKey(leftTeamId: number, rightTeamId: number) {
+  return [leftTeamId, rightTeamId].sort((left, right) => left - right).join(":");
+}
+
+function teamLabel(team: TeamExportRow) {
+  return `${team.division} - ${team.center} - ${team.name}`;
+}
+
+function matrixTeamLabel(team: TeamExportRow) {
+  return `${team.division} ${team.center} ${team.name}`;
+}
+
+function matrixTeamKey(team: TeamExportRow) {
+  return `team_${team.id}`;
+}
+
+function compareTeams(left: TeamExportRow, right: TeamExportRow) {
+  return divisionRank(left.division) - divisionRank(right.division) || left.center.localeCompare(right.center) || left.name.localeCompare(right.name);
+}
+
+function divisionRank(division: string) {
+  const rank = ["A", "B", "C", "D", "Unlimited"].indexOf(division);
+  return rank === -1 ? 99 : rank;
 }
 
 function formatDay(value: string) {
