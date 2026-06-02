@@ -17,6 +17,7 @@ type GameExportRow = {
   team_2: string | null;
   team_2_center: string | null;
   ref_team: string | null;
+  ref_team_division: string | null;
   label: string | null;
 };
 
@@ -39,11 +40,19 @@ type ScheduleTeamStats = {
 };
 
 const divisionColors: Record<string, string> = {
-  A: "F4B183",
-  B: "9DC3E6",
-  C: "A9D18E",
-  D: "FFD966",
-  Unlimited: "C9B6E4"
+  A: "C65911",
+  B: "2F75B5",
+  C: "548235",
+  D: "BF9000",
+  Unlimited: "8064A2"
+};
+
+const refDivisionColors: Record<string, string> = {
+  A: "FCE4D6",
+  B: "DDEBF7",
+  C: "E2F0D9",
+  D: "FFF2CC",
+  Unlimited: "EADCF8"
 };
 
 export async function GET() {
@@ -83,7 +92,7 @@ export async function GET() {
             games.team_1_id, games.team_2_id,
             t1.name as team_1, c1.name as team_1_center,
             t2.name as team_2, c2.name as team_2_center,
-            tr.name as ref_team, games.label
+            tr.name as ref_team, tr.division as ref_team_division, games.label
      FROM games
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
      LEFT JOIN centers c1 ON c1.id = t1.center_id
@@ -153,10 +162,10 @@ function addScheduleGridSheet(workbook: ExcelJS.Workbook, games: GameExportRow[]
     });
     colorGameCell(excelRow.getCell(4), row.court1Division);
     colorGameCell(excelRow.getCell(5), row.court2Division);
+    colorRefCell(excelRow.getCell(3), row.court1RefDivision);
+    colorRefCell(excelRow.getCell(6), row.court2RefDivision);
     excelRow.getCell(1).font = { bold: true };
     excelRow.getCell(2).font = { bold: true };
-    excelRow.getCell(3).fill = solidFill("E7ECE7");
-    excelRow.getCell(6).fill = solidFill("E7ECE7");
   }
 }
 
@@ -183,6 +192,7 @@ function addScheduleDetailSheet(workbook: ExcelJS.Workbook, games: GameExportRow
       ref: game.ref_team || ""
     });
     colorGameCell(row.getCell("game"), game.division);
+    colorRefCell(row.getCell("ref"), game.ref_team_division || "");
   }
   styleBody(sheet);
 }
@@ -269,7 +279,7 @@ function addOpponentMatrixSheet(workbook: ExcelJS.Workbook, teams: TeamExportRow
 
     const row = sheet.addRow(values);
     row.height = 24;
-    row.getCell(1).font = { bold: true };
+    row.getCell(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
     row.getCell(1).fill = solidFill(divisionColors[rowTeam.division] || "FFFFFF");
     row.getCell(1).alignment = { vertical: "middle", wrapText: true };
     row.getCell(1).border = thinBorder();
@@ -302,11 +312,13 @@ function buildScheduleGrid(games: GameExportRow[]) {
       day: string;
       time: string;
       court1Ref: string;
+      court1RefDivision: string;
       court1Game: string;
       court1Division: string;
       court2Game: string;
       court2Division: string;
       court2Ref: string;
+      court2RefDivision: string;
     }
   >();
 
@@ -318,21 +330,25 @@ function buildScheduleGrid(games: GameExportRow[]) {
         day: formatDay(game.starts_at),
         time: formatTime(game.starts_at),
         court1Ref: "",
+        court1RefDivision: "",
         court1Game: "",
         court1Division: "",
         court2Game: "",
         court2Division: "",
-        court2Ref: ""
+        court2Ref: "",
+        court2RefDivision: ""
       };
     const gameText = game.team_1 && game.team_2 ? `${game.division}: ${game.team_1} vs. ${game.team_2}` : `${game.division}: ${game.label || "Game"}`;
     if (game.court === 1) {
       row.court1Ref = game.ref_team || "";
+      row.court1RefDivision = game.ref_team_division || "";
       row.court1Game = gameText;
       row.court1Division = game.division;
     } else if (game.court === 2) {
       row.court2Game = gameText;
       row.court2Division = game.division;
       row.court2Ref = game.ref_team || "";
+      row.court2RefDivision = game.ref_team_division || "";
     }
     rows.set(key, row);
   }
@@ -533,7 +549,13 @@ function titleCase(value: string) {
 
 function colorGameCell(cell: ExcelJS.Cell, division: string) {
   cell.fill = solidFill(divisionColors[division] || "FFFFFF");
-  cell.font = { bold: true };
+  cell.font = { bold: true, color: { argb: divisionColors[division] ? "FFFFFFFF" : "FF202124" } };
+  cell.alignment = { vertical: "middle", wrapText: true };
+}
+
+function colorRefCell(cell: ExcelJS.Cell, division: string) {
+  cell.fill = solidFill(refDivisionColors[division] || "E7ECE7");
+  cell.font = { bold: true, color: { argb: "FF202124" } };
   cell.alignment = { vertical: "middle", wrapText: true };
 }
 
