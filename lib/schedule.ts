@@ -247,18 +247,50 @@ function minGamesForDivision(matchups: Matchup[], teamGameCounts: Map<number, nu
   return Math.min(...[...teamIds].map((teamId) => teamGameCounts.get(teamId) || 0));
 }
 
-function scoreMatchup(matchup: Matchup, usedTeamIds: Set<number>, teamGameCounts: Map<number, number>, eligible: (matchup: Matchup) => boolean) {
+function matchupPlayCount(matchup: Matchup, pairPlayCounts: Map<string, number>) {
+  return pairPlayCounts.get(matchupKey(matchup.a, matchup.b)) || 0;
+}
+
+function teamHasLowerCountOpponent(team: TeamRow, currentPairCount: number, divisionTeams: TeamRow[], pairPlayCounts: Map<string, number>) {
+  if (currentPairCount === 0) return false;
+  return divisionTeams.some((opponent) => opponent.id !== team.id && (pairPlayCounts.get(matchupKey(team, opponent)) || 0) < currentPairCount);
+}
+
+function preservesPairCoverage(matchup: Matchup, divisionTeams: TeamRow[], pairPlayCounts: Map<string, number>) {
+  const currentPairCount = matchupPlayCount(matchup, pairPlayCounts);
+  return (
+    !teamHasLowerCountOpponent(matchup.a, currentPairCount, divisionTeams, pairPlayCounts) &&
+    !teamHasLowerCountOpponent(matchup.b, currentPairCount, divisionTeams, pairPlayCounts)
+  );
+}
+
+function scoreMatchup(
+  matchup: Matchup,
+  usedTeamIds: Set<number>,
+  teamGameCounts: Map<number, number>,
+  pairPlayCounts: Map<string, number>,
+  divisionTeams: TeamRow[],
+  eligible: (matchup: Matchup) => boolean
+) {
   if (!eligible(matchup)) return Number.POSITIVE_INFINITY;
+  if (!preservesPairCoverage(matchup, divisionTeams, pairPlayCounts)) return Number.POSITIVE_INFINITY;
   if (usedTeamIds.has(matchup.a.id) || usedTeamIds.has(matchup.b.id)) return Number.POSITIVE_INFINITY;
   const aCount = teamGameCounts.get(matchup.a.id) || 0;
   const bCount = teamGameCounts.get(matchup.b.id) || 0;
-  return aCount + bCount + Math.abs(aCount - bCount) * 2;
+  return matchupPlayCount(matchup, pairPlayCounts) * 1000 + aCount + bCount + Math.abs(aCount - bCount) * 2;
 }
 
-function takeBestMatchup(queue: Matchup[], usedTeamIds: Set<number>, teamGameCounts: Map<number, number>, eligible: (matchup: Matchup) => boolean) {
+function takeBestMatchup(
+  queue: Matchup[],
+  usedTeamIds: Set<number>,
+  teamGameCounts: Map<number, number>,
+  pairPlayCounts: Map<string, number>,
+  divisionTeams: TeamRow[],
+  eligible: (matchup: Matchup) => boolean
+) {
   let bestIndex = -1;
   let bestScore = Number.POSITIVE_INFINITY;
-  const eligibleQueue = queue.filter(eligible);
+  const eligibleQueue = queue.filter((matchup) => eligible(matchup) && preservesPairCoverage(matchup, divisionTeams, pairPlayCounts));
   if (!eligibleQueue.length) return null;
   const earliestRound = Math.min(...eligibleQueue.map((matchup) => matchup.round));
   const minGames = minGamesForDivision(queue, teamGameCounts);
@@ -268,7 +300,7 @@ function takeBestMatchup(queue: Matchup[], usedTeamIds: Set<number>, teamGameCou
     const bCount = teamGameCounts.get(queue[index].b.id) || 0;
     const touchesLeastPlayedTeam = aCount === minGames || bCount === minGames;
     if (!touchesLeastPlayedTeam) continue;
-    const score = scoreMatchup(queue[index], usedTeamIds, teamGameCounts, eligible);
+    const score = scoreMatchup(queue[index], usedTeamIds, teamGameCounts, pairPlayCounts, divisionTeams, eligible);
     if (score < bestScore) {
       bestIndex = index;
       bestScore = score;
@@ -277,7 +309,7 @@ function takeBestMatchup(queue: Matchup[], usedTeamIds: Set<number>, teamGameCou
   if (bestIndex < 0) {
     for (let index = 0; index < queue.length; index++) {
       if (queue[index].round !== earliestRound) continue;
-      const score = scoreMatchup(queue[index], usedTeamIds, teamGameCounts, eligible);
+      const score = scoreMatchup(queue[index], usedTeamIds, teamGameCounts, pairPlayCounts, divisionTeams, eligible);
       if (score < bestScore) {
         bestIndex = index;
         bestScore = score;
@@ -443,6 +475,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
   }
 
   const teamGameCounts = new Map<number, number>();
+  const pairPlayCounts = new Map<string, number>();
   const courtCountsByTeam = new Map<number, Map<number, number>>();
   const matchupCourtCounts = new Map<string, Map<number, number>>();
   const refCounts = new Map<number, number>();
@@ -490,8 +523,9 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
         };
         const usedTeamIds = new Set<number>();
         const rowMatchups: Matchup[] = [];
+        const divisionTeams = byDivision.get(next.division) || [];
         for (let court = 0; court < input.courts; court++) {
-          const matchup = takeBestMatchup(queue, usedTeamIds, teamGameCounts, eligible);
+          const matchup = takeBestMatchup(queue, usedTeamIds, teamGameCounts, pairPlayCounts, divisionTeams, eligible);
           if (!matchup) break;
           rowMatchups.push(matchup);
           usedTeamIds.add(matchup.a.id);
@@ -511,6 +545,8 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
         for (const { matchup, court } of assignments) {
           teamGameCounts.set(matchup.a.id, (teamGameCounts.get(matchup.a.id) || 0) + 1);
           teamGameCounts.set(matchup.b.id, (teamGameCounts.get(matchup.b.id) || 0) + 1);
+          const pairKey = matchupKey(matchup.a, matchup.b);
+          pairPlayCounts.set(pairKey, (pairPlayCounts.get(pairKey) || 0) + 1);
           if (rowMinute >= lateCutoff) {
             currentDayLateTeamIds.add(matchup.a.id);
             currentDayLateTeamIds.add(matchup.b.id);
