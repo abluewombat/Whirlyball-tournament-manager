@@ -5,7 +5,11 @@ import { displayDateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-export default async function SchedulePage({ searchParams }: { searchParams: Promise<{ generated?: string; unscheduled?: string }> }) {
+export default async function SchedulePage({
+  searchParams
+}: {
+  searchParams: Promise<{ generated?: string; unscheduled?: string; unscheduled_tournament?: string }>;
+}) {
   await requireAdmin();
   const params = await searchParams;
   const games = await query<{
@@ -52,8 +56,13 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
     return sum + (count * Math.max(0, count - 1)) / 2 * 2;
   }, 0);
   const balancedEightDemand = teamCounts.reduce((sum, row) => sum + Math.ceil((Number(row.count) * 8) / 2), 0);
+  const tournamentDemand = teamCounts.reduce((sum, row) => {
+    const count = Number(row.count);
+    return sum + (count > 1 ? 2 * count - 1 : 0);
+  }, 0);
   const generatedCount = params.generated === undefined ? null : Number(params.generated);
   const unscheduledCount = params.unscheduled === undefined ? 0 : Number(params.unscheduled);
+  const unscheduledTournamentCount = params.unscheduled_tournament === undefined ? 0 : Number(params.unscheduled_tournament);
 
   return (
     <main className="content">
@@ -74,8 +83,11 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
         </p>
         {generatedCount !== null ? (
           generatedCount > 0 ? (
-            <p className={unscheduledCount > 0 ? "pill warn" : "pill ok"}>
-              Generated {generatedCount} games{unscheduledCount > 0 ? `, with ${unscheduledCount} seeding games left unscheduled due to time limits or constraints.` : "."}
+            <p className={unscheduledCount > 0 || unscheduledTournamentCount > 0 ? "pill warn" : "pill ok"}>
+              Generated {generatedCount} games
+              {unscheduledCount > 0 || unscheduledTournamentCount > 0
+                ? `, with ${unscheduledCount} seeding and ${unscheduledTournamentCount} tournament games left unscheduled due to time limits or constraints.`
+                : "."}
             </p>
           ) : (
             <p className="pill warn">Generated 0 games. Add at least two active teams in a division before generating.</p>
@@ -87,6 +99,7 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
         </p>
         <p className="muted">
           Current demand check: full 2x round robin needs about {fullTwoRoundDemand} seeding games. Balanced 8 games/team needs about {balancedEightDemand}.
+          Double-elimination placeholders need about {tournamentDemand} tournament games before division/day cutoffs.
         </p>
         <form action={generateScheduleAction} className="form-grid">
           <label>
@@ -122,6 +135,18 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
             <input name="tournament_minutes" type="number" min="10" defaultValue="40" />
           </label>
           <label>
+            Tournament start
+            <input name="tournament_day_start" type="time" defaultValue="08:00" />
+          </label>
+          <label>
+            Tournament day end
+            <input name="tournament_day_end" type="time" defaultValue="23:30" />
+          </label>
+          <label>
+            Final day end
+            <input name="final_day_end" type="time" defaultValue="20:00" />
+          </label>
+          <label>
             Seeding mode
             <select name="seeding_mode" defaultValue="balanced">
               <option value="balanced">Balanced target games/team</option>
@@ -150,7 +175,7 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
           </label>
           <label>
             Tournament mix
-            <input name="tournament_mix" defaultValue="A,C|B,D" />
+            <input name="tournament_mix" defaultValue="auto" placeholder="auto or A,B|C,D" />
           </label>
           <label>
             Next-day tournament cutoff

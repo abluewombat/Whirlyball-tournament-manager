@@ -69,4 +69,6 @@ The database tables and default centers are created automatically on first reque
 - Admin state snapshots with restore.
 - Draft seeding and double-elimination placeholder schedule generator.
 - Schedule generator can use full round robin or balanced target games per team when full round robin exceeds available court time.
+- Tournament generation has separate tournament-day and final-day end times so Sunday can stop earlier than seeding nights.
+- Tournament divisions can be assigned automatically by bracket size so the largest brackets are split across tournament days.
 - Excel export includes teams, players, extra shirts, and schedule.

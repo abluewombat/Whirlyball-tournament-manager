@@ -297,12 +297,15 @@ export async function generateScheduleAction(formData: FormData) {
     courts: Math.max(1, num(formData, "courts", 2)),
     seedingMinutes: Math.max(10, num(formData, "seeding_minutes", 20)),
     tournamentMinutes: Math.max(10, num(formData, "tournament_minutes", 40)),
+    tournamentDayStart: text(formData, "tournament_day_start") || text(formData, "day_start") || "08:00",
+    tournamentDayEnd: text(formData, "tournament_day_end") || "23:30",
+    finalDayEnd: text(formData, "final_day_end") || "20:00",
     roundsPerPair: Math.max(1, num(formData, "rounds_per_pair", 2)),
     seedingMode: text(formData, "seeding_mode") === "round_robin" ? "round_robin" : "balanced",
     targetGamesPerTeam: Math.max(1, num(formData, "target_games_per_team", 8)),
     divisionTargetGames: text(formData, "division_target_games"),
     includeTuesday: checkbox(formData, "include_tuesday"),
-    tournamentMix: text(formData, "tournament_mix") || "A,C|B,D",
+    tournamentMix: text(formData, "tournament_mix") || "auto",
     blockOrder: text(formData, "block_order") || "C,B,D,A,Unlimited",
     blockRows: Math.max(1, num(formData, "block_rows", 6)),
     preTournamentCutoff: text(formData, "pre_tournament_cutoff") || "18:00",
@@ -320,5 +323,7 @@ export async function generateScheduleAction(formData: FormData) {
     }
   });
   revalidatePath("/admin/schedule");
-  redirect(`/admin/schedule?generated=${result.games.length}&unscheduled=${result.unscheduledSeedingGames}`);
+  redirect(
+    `/admin/schedule?generated=${result.games.length}&unscheduled=${result.unscheduledSeedingGames}&unscheduled_tournament=${result.unscheduledTournamentGames}`
+  );
 }
