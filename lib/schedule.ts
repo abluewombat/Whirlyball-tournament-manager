@@ -56,6 +56,18 @@ type SeedingSlot = {
   nextDayTournamentDivisions: Set<string>;
 };
 
+type TournamentEntry = {
+  division: string;
+  label: string;
+};
+
+type TournamentSlot = {
+  day: Date;
+  startsAt: string;
+  rowMinute: number;
+  court: number;
+};
+
 const rank: Record<string, number> = { A: 1, B: 2, C: 3, D: 4, Unlimited: 2 };
 const defaultBlockOrder = ["C", "B", "D", "A", "Unlimited"];
 
@@ -127,6 +139,85 @@ function parseBlockOrder(value: string | undefined) {
 
 function tournamentDivisionsForDay(dayIndex: number) {
   return dayIndex === 0 ? ["C", "B"] : ["A", "D"];
+}
+
+function buildTournamentEntries(divisions: string[], byDivision: Map<string, TeamRow[]>) {
+  const entries: TournamentEntry[] = [];
+  for (const division of divisions) {
+    for (const label of bracketLabels((byDivision.get(division) || []).length)) {
+      entries.push({ division, label });
+    }
+  }
+  return entries;
+}
+
+function buildOverflowTournamentSlots(
+  seedingDays: Date[],
+  neededSlots: number,
+  dayStartMinutes: number,
+  earlyStartMinutes: number,
+  dayEndMinutes: number,
+  tournamentMinutes: number,
+  seedingMinutes: number,
+  courts: number,
+  includeTuesday: boolean
+) {
+  const slots: TournamentSlot[] = [];
+  const reservedSeedingStarts = new Set<string>();
+  for (let dayIndex = seedingDays.length - 1; dayIndex >= 0 && slots.length < neededSlots; dayIndex--) {
+    const day = seedingDays[dayIndex];
+    const startsAtMinute = includeTuesday && dayIndex === 0 ? earlyStartMinutes : dayStartMinutes;
+    const rowCapacity = Math.max(0, Math.floor((dayEndMinutes - startsAtMinute) / tournamentMinutes));
+    for (let row = rowCapacity - 1; row >= 0 && slots.length < neededSlots; row--) {
+      const rowMinute = startsAtMinute + row * tournamentMinutes;
+      for (let court = courts; court >= 1 && slots.length < neededSlots; court--) {
+        const startsAt = at(day, rowMinute);
+        slots.push({ day, startsAt, rowMinute, court });
+        for (let offset = 0; offset < tournamentMinutes; offset += seedingMinutes) {
+          reservedSeedingStarts.add(at(day, rowMinute + offset));
+        }
+      }
+    }
+  }
+  return { slots: slots.reverse(), reservedSeedingStarts };
+}
+
+function equalizeSeedingGameCounts(games: GeneratedGame[], byDivision: Map<string, TeamRow[]>) {
+  const counts = new Map<number, number>();
+  for (const teams of byDivision.values()) {
+    for (const team of teams) counts.set(team.id, 0);
+  }
+  for (const game of games) {
+    if (game.phase !== "seeding" || game.team1Id === null || game.team2Id === null) continue;
+    counts.set(game.team1Id, (counts.get(game.team1Id) || 0) + 1);
+    counts.set(game.team2Id, (counts.get(game.team2Id) || 0) + 1);
+  }
+
+  for (const [division, teams] of byDivision.entries()) {
+    if (!teams.length) continue;
+    let equalTarget = Math.min(...teams.map((team) => counts.get(team.id) || 0));
+    if (teams.length % 2 === 1 && equalTarget % 2 === 1) equalTarget -= 1;
+    if (equalTarget < 0) equalTarget = 0;
+
+    while (teams.some((team) => (counts.get(team.id) || 0) > equalTarget)) {
+      let removed = false;
+      for (let index = games.length - 1; index >= 0; index--) {
+        const game = games[index];
+        if (game.phase !== "seeding" || game.division !== division || game.team1Id === null || game.team2Id === null) continue;
+        if ((counts.get(game.team1Id) || 0) <= equalTarget || (counts.get(game.team2Id) || 0) <= equalTarget) continue;
+        games.splice(index, 1);
+        counts.set(game.team1Id, (counts.get(game.team1Id) || 0) - 1);
+        counts.set(game.team2Id, (counts.get(game.team2Id) || 0) - 1);
+        removed = true;
+      }
+      if (removed) continue;
+      if (equalTarget === 0) break;
+      equalTarget -= teams.length % 2 === 1 ? 2 : 1;
+      if (equalTarget < 0) equalTarget = 0;
+    }
+  }
+
+  return counts;
 }
 
 function matchupKey(a: TeamRow, b: TeamRow) {
@@ -470,6 +561,7 @@ function repairSeedingSlots({
     const availableCourts = Array.from({ length: input.courts }, (_, index) => index + 1).filter((court) => !occupiedCourts.has(court));
     const divisionTeams = byDivision.get(slot.division) || [];
     const eligible = (matchup: Matchup) => {
+      if (teamAtTarget(matchup.a, targetGamesByTeam, teamGameCounts) || teamAtTarget(matchup.b, targetGamesByTeam, teamGameCounts)) return false;
       if (input.includeTuesday && slot.dayIndex === 0 && (!matchup.a.early_available || !matchup.b.early_available)) return false;
       if (teamBlockedAt(matchup.a.id, slot.startsAt, input.seedingMinutes, availability)) return false;
       if (teamBlockedAt(matchup.b.id, slot.startsAt, input.seedingMinutes, availability)) return false;
@@ -590,6 +682,29 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
   const blockRows = Math.max(1, input.blockRows || scheduleDefaults.blockRows);
   const blockOrder = parseBlockOrder(input.blockOrder).filter((division) => byDivision.has(division));
   const games: GeneratedGame[] = [];
+  const tournamentRowsByDay = tournamentDays.map((_, dayIndex) => {
+    const dayEnd = dayIndex === tournamentDays.length - 1 ? finalDayEnd : tournamentEnd;
+    return Math.max(0, Math.floor((dayEnd - tournamentStart) / input.tournamentMinutes));
+  });
+  const tournamentEntriesByDay = tournamentDays.map((_, dayIndex) => buildTournamentEntries(tournamentDivisionsForDay(dayIndex), byDivision));
+  const overflowTournamentEntries: TournamentEntry[] = [];
+  const tournamentEntriesToScheduleByDay = tournamentEntriesByDay.map((entries, dayIndex) => {
+    const capacity = tournamentRowsByDay[dayIndex] * input.courts;
+    const overflowCount = Math.max(0, entries.length - capacity);
+    overflowTournamentEntries.push(...entries.slice(0, overflowCount));
+    return entries.slice(overflowCount);
+  });
+  const { slots: overflowTournamentSlots, reservedSeedingStarts } = buildOverflowTournamentSlots(
+    seedingDays,
+    overflowTournamentEntries.length,
+    start,
+    earlyStart,
+    end,
+    input.tournamentMinutes,
+    input.seedingMinutes,
+    input.courts,
+    input.includeTuesday
+  );
   const seedingMode = input.seedingMode || scheduleDefaults.seedingMode;
   const maxPairRepeats = Math.max(1, input.roundsPerPair);
   const targetGamesByTeam =
@@ -636,6 +751,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
         if (!queue.length) break;
         const rowMinute = dayStart + row * input.seedingMinutes;
         const rowStartsAt = at(day, rowMinute);
+        if (reservedSeedingStarts.has(rowStartsAt)) continue;
         seedingSlots.push({
           division: next.division,
           startsAt: rowStartsAt,
@@ -646,6 +762,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
           nextDayTournamentDivisions
         });
         const eligible = (matchup: Matchup) => {
+          if (teamAtTarget(matchup.a, targetGamesByTeam, teamGameCounts) || teamAtTarget(matchup.b, targetGamesByTeam, teamGameCounts)) return false;
           if (input.includeTuesday && dayIndex === 0 && (!matchup.a.early_available || !matchup.b.early_available)) return false;
           if (teamBlockedAt(matchup.a.id, rowStartsAt, input.seedingMinutes, availability)) return false;
           if (teamBlockedAt(matchup.b.id, rowStartsAt, input.seedingMinutes, availability)) return false;
@@ -735,34 +852,47 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
     });
     if (added === 0) break;
   }
+  const equalizedSeedingCounts = equalizeSeedingGameCounts(games, byDivision);
+  teamGameCounts.clear();
+  for (const [teamId, count] of equalizedSeedingCounts.entries()) teamGameCounts.set(teamId, count);
 
-  let unscheduledTournamentGames = 0;
+  let unscheduledTournamentGames = Math.max(0, overflowTournamentEntries.length - overflowTournamentSlots.length);
+  for (let index = 0; index < Math.min(overflowTournamentEntries.length, overflowTournamentSlots.length); index++) {
+    const entry = overflowTournamentEntries[index];
+    const slot = overflowTournamentSlots[index];
+    games.push({
+      phase: "tournament",
+      division: entry.division,
+      court: slot.court,
+      startsAt: slot.startsAt,
+      team1Id: null,
+      team2Id: null,
+      refTeamId: chooseRefTeam(entry.division, teams, null, null, blockedTeamIdsAt(teams, slot.startsAt, input.tournamentMinutes, availability), refCounts),
+      label: entry.label
+    });
+  }
+
   for (const [dayIndex, day] of tournamentDays.entries()) {
-    const divisions = tournamentDivisionsForDay(dayIndex);
-    const dayEnd = dayIndex === tournamentDays.length - 1 ? finalDayEnd : tournamentEnd;
-    const rowCapacity = Math.max(0, Math.floor((dayEnd - tournamentStart) / input.tournamentMinutes));
-    let tournamentSlot = 0;
-    for (const division of divisions) {
-      const divTeams = byDivision.get(division) || [];
-      for (const label of bracketLabels(divTeams.length)) {
-        const daySlot = Math.floor(tournamentSlot / input.courts);
-        if (daySlot >= rowCapacity) {
-          unscheduledTournamentGames++;
-          continue;
-        }
-        const startsAt = at(day, tournamentStart + daySlot * input.tournamentMinutes);
-        games.push({
-          phase: "tournament",
-          division,
-          court: (tournamentSlot % input.courts) + 1,
-          startsAt,
-          team1Id: null,
-          team2Id: null,
-          refTeamId: chooseRefTeam(division, teams, null, null, blockedTeamIdsAt(teams, startsAt, input.tournamentMinutes, availability), refCounts),
-          label
-        });
-        tournamentSlot++;
+    const entries = tournamentEntriesToScheduleByDay[dayIndex] || [];
+    const rowCapacity = tournamentRowsByDay[dayIndex] || 0;
+    for (let tournamentSlot = 0; tournamentSlot < entries.length; tournamentSlot++) {
+      const entry = entries[tournamentSlot];
+      const daySlot = Math.floor(tournamentSlot / input.courts);
+      if (daySlot >= rowCapacity) {
+        unscheduledTournamentGames++;
+        continue;
       }
+      const startsAt = at(day, tournamentStart + daySlot * input.tournamentMinutes);
+      games.push({
+        phase: "tournament",
+        division: entry.division,
+        court: (tournamentSlot % input.courts) + 1,
+        startsAt,
+        team1Id: null,
+        team2Id: null,
+        refTeamId: chooseRefTeam(entry.division, teams, null, null, blockedTeamIdsAt(teams, startsAt, input.tournamentMinutes, availability), refCounts),
+        label: entry.label
+      });
     }
   }
 
