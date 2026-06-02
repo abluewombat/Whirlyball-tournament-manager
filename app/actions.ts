@@ -257,4 +257,5 @@ export async function generateScheduleAction(formData: FormData) {
     }
   });
   revalidatePath("/admin/schedule");
+  redirect(`/admin/schedule?generated=${result.length}`);
 }

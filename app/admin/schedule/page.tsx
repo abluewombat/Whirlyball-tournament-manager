@@ -5,8 +5,9 @@ import { displayDateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-export default async function SchedulePage() {
+export default async function SchedulePage({ searchParams }: { searchParams: Promise<{ generated?: string }> }) {
   await requireAdmin();
+  const params = await searchParams;
   const games = await query<{
       id: number;
       phase: string;
@@ -25,6 +26,11 @@ export default async function SchedulePage() {
        LEFT JOIN teams tr ON tr.id = games.ref_team_id
        ORDER BY games.starts_at, games.court`
     );
+  const teamCounts = await query<{ division: string; count: string }>(
+    "SELECT division, COUNT(*) as count FROM teams WHERE deleted_at IS NULL GROUP BY division ORDER BY division"
+  );
+  const activeTeamCount = teamCounts.reduce((sum, row) => sum + Number(row.count), 0);
+  const generatedCount = params.generated === undefined ? null : Number(params.generated);
 
   return (
     <main className="content">
@@ -42,6 +48,17 @@ export default async function SchedulePage() {
         <h2>Generate</h2>
         <p className="muted">
           This creates a practical draft: seeding round-robin games first, then double-elimination bracket placeholders for the final two event days.
+        </p>
+        {generatedCount !== null ? (
+          generatedCount > 0 ? (
+            <p className="pill ok">Generated {generatedCount} games.</p>
+          ) : (
+            <p className="pill warn">Generated 0 games. Add at least two active teams in a division before generating.</p>
+          )
+        ) : null}
+        <p className="muted">
+          Active teams: {activeTeamCount || 0}
+          {teamCounts.length ? ` (${teamCounts.map((row) => `${row.division}: ${row.count}`).join(", ")})` : ""}
         </p>
         <form action={generateScheduleAction} className="form-grid">
           <label>
