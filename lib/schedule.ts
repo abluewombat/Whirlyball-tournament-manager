@@ -328,8 +328,36 @@ function equalizeSeedingGameCounts(games: GeneratedGame[], byDivision: Map<strin
   return counts;
 }
 
+function rebuildSeedingTracking(
+  games: GeneratedGame[],
+  teamGameCounts: Map<number, number>,
+  pairPlayCounts: Map<string, number>,
+  courtCountsByTeam: Map<number, Map<number, number>>,
+  matchupCourtCounts: Map<string, Map<number, number>>
+) {
+  teamGameCounts.clear();
+  pairPlayCounts.clear();
+  courtCountsByTeam.clear();
+  matchupCourtCounts.clear();
+
+  for (const game of games) {
+    if (game.phase !== "seeding" || game.team1Id === null || game.team2Id === null) continue;
+    teamGameCounts.set(game.team1Id, (teamGameCounts.get(game.team1Id) || 0) + 1);
+    teamGameCounts.set(game.team2Id, (teamGameCounts.get(game.team2Id) || 0) + 1);
+    const pairKey = matchupKeyFromIds(game.team1Id, game.team2Id);
+    pairPlayCounts.set(pairKey, (pairPlayCounts.get(pairKey) || 0) + 1);
+    incrementNested(courtCountsByTeam, game.team1Id, game.court);
+    incrementNested(courtCountsByTeam, game.team2Id, game.court);
+    incrementNested(matchupCourtCounts, pairKey, game.court);
+  }
+}
+
 function matchupKey(a: TeamRow, b: TeamRow) {
-  return [a.id, b.id].sort((x, y) => x - y).join("-");
+  return matchupKeyFromIds(a.id, b.id);
+}
+
+function matchupKeyFromIds(aId: number, bId: number) {
+  return [aId, bId].sort((x, y) => x - y).join("-");
 }
 
 function buildDivisionMatchups(teams: TeamRow[], rounds: number) {
@@ -406,6 +434,25 @@ function matchupPlayCount(matchup: Matchup, pairPlayCounts: Map<string, number>)
   return pairPlayCounts.get(matchupKey(matchup.a, matchup.b)) || 0;
 }
 
+function uniqueOpponentCount(team: TeamRow, divisionTeams: TeamRow[], pairPlayCounts: Map<string, number>) {
+  return divisionTeams.filter((opponent) => opponent.id !== team.id && (pairPlayCounts.get(matchupKey(team, opponent)) || 0) > 0).length;
+}
+
+function repeatPairAllowed(matchup: Matchup, divisionTeams: TeamRow[], targetGamesByTeam: Map<number, number>, pairPlayCounts: Map<string, number>) {
+  if (matchupPlayCount(matchup, pairPlayCounts) === 0) return true;
+  if (!targetGamesByTeam.size) return true;
+
+  const uniqueOpponentTarget = (team: TeamRow) => {
+    const target = targetGamesByTeam.get(team.id);
+    return Math.min(target ?? divisionTeams.length - 1, Math.max(0, divisionTeams.length - 1));
+  };
+
+  return (
+    uniqueOpponentCount(matchup.a, divisionTeams, pairPlayCounts) >= uniqueOpponentTarget(matchup.a) &&
+    uniqueOpponentCount(matchup.b, divisionTeams, pairPlayCounts) >= uniqueOpponentTarget(matchup.b)
+  );
+}
+
 function teamHasLowerCountEligibleMatchup(
   team: TeamRow,
   currentPairCount: number,
@@ -474,6 +521,7 @@ function bestMatchupForAnchor(
     const opponent = matchupOpponent(matchup, anchor);
     if (!opponent) continue;
     if (usedTeamIds.has(anchor.id) || usedTeamIds.has(opponent.id)) continue;
+    if (!repeatPairAllowed(matchup, divisionTeams, targetGamesByTeam, pairPlayCounts)) continue;
     if (!eligible(matchup) || !preservesPairCoverage(matchup, queue, usedTeamIds, pairPlayCounts, eligible)) continue;
     const score = scoreAnchorMatchup(matchup, anchor, opponent, teamGameCounts, pairPlayCounts, targetGamesByTeam);
     if (score < bestScore) {
@@ -768,8 +816,18 @@ function findWarmupPairing(
     if (remaining.size === 0) return [];
 
     const anchor = [...remaining.values()].sort((left, right) => {
-      const leftOptions = queue.filter((matchup) => matchupOpponent(matchup, left) && remaining.has(matchupOpponent(matchup, left)?.id || -1)).length;
-      const rightOptions = queue.filter((matchup) => matchupOpponent(matchup, right) && remaining.has(matchupOpponent(matchup, right)?.id || -1)).length;
+      const leftOptions = queue.filter(
+        (matchup) =>
+          matchupOpponent(matchup, left) &&
+          remaining.has(matchupOpponent(matchup, left)?.id || -1) &&
+          repeatPairAllowed(matchup, divisionTeams, targetGamesByTeam, pairPlayCounts)
+      ).length;
+      const rightOptions = queue.filter(
+        (matchup) =>
+          matchupOpponent(matchup, right) &&
+          remaining.has(matchupOpponent(matchup, right)?.id || -1) &&
+          repeatPairAllowed(matchup, divisionTeams, targetGamesByTeam, pairPlayCounts)
+      ).length;
       if (leftOptions !== rightOptions) return leftOptions - rightOptions;
       return teamGameCount(left, teamGameCounts) - teamGameCount(right, teamGameCounts);
     })[0];
@@ -777,7 +835,7 @@ function findWarmupPairing(
     const candidates = queue
       .filter((matchup) => {
         const opponent = matchupOpponent(matchup, anchor);
-        return opponent && remaining.has(opponent.id);
+        return opponent && remaining.has(opponent.id) && repeatPairAllowed(matchup, divisionTeams, targetGamesByTeam, pairPlayCounts);
       })
       .sort((left, right) => {
         const leftOpponent = matchupOpponent(left, anchor);
@@ -1167,9 +1225,8 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
     });
     if (added === 0) break;
   }
-  const equalizedSeedingCounts = equalizeSeedingGameCounts(games, byDivision);
-  teamGameCounts.clear();
-  for (const [teamId, count] of equalizedSeedingCounts.entries()) teamGameCounts.set(teamId, count);
+  equalizeSeedingGameCounts(games, byDivision);
+  rebuildSeedingTracking(games, teamGameCounts, pairPlayCounts, courtCountsByTeam, matchupCourtCounts);
 
   for (const [dayIndex, day] of tournamentDays.entries()) {
     addTournamentMorningWarmups({
