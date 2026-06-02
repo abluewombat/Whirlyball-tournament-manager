@@ -219,11 +219,7 @@ function pruneSatisfiedMatchups(queues: Map<string, Matchup[]>, targetGamesByTea
   for (const [division, queue] of queues.entries()) {
     queues.set(
       division,
-      queue.filter((matchup) => {
-        const aTarget = targetGamesByTeam.get(matchup.a.id) ?? Number.POSITIVE_INFINITY;
-        const bTarget = targetGamesByTeam.get(matchup.b.id) ?? Number.POSITIVE_INFINITY;
-        return (teamGameCounts.get(matchup.a.id) || 0) < aTarget && (teamGameCounts.get(matchup.b.id) || 0) < bTarget;
-      })
+      queue.filter((matchup) => !bothTeamsAtTarget(matchup, targetGamesByTeam, teamGameCounts))
     );
   }
 }
@@ -237,14 +233,17 @@ function unscheduledTargetGames(targetGamesByTeam: Map<number, number>, teamGame
   return Math.ceil(missingTeamGames / 2);
 }
 
-function minGamesForDivision(matchups: Matchup[], teamGameCounts: Map<number, number>) {
-  const teamIds = new Set<number>();
-  for (const matchup of matchups) {
-    teamIds.add(matchup.a.id);
-    teamIds.add(matchup.b.id);
-  }
-  if (!teamIds.size) return 0;
-  return Math.min(...[...teamIds].map((teamId) => teamGameCounts.get(teamId) || 0));
+function teamGameCount(team: TeamRow, teamGameCounts: Map<number, number>) {
+  return teamGameCounts.get(team.id) || 0;
+}
+
+function teamAtTarget(team: TeamRow, targetGamesByTeam: Map<number, number>, teamGameCounts: Map<number, number>) {
+  const target = targetGamesByTeam.get(team.id);
+  return target !== undefined && teamGameCount(team, teamGameCounts) >= target;
+}
+
+function bothTeamsAtTarget(matchup: Matchup, targetGamesByTeam: Map<number, number>, teamGameCounts: Map<number, number>) {
+  return teamAtTarget(matchup.a, targetGamesByTeam, teamGameCounts) && teamAtTarget(matchup.b, targetGamesByTeam, teamGameCounts);
 }
 
 function matchupPlayCount(matchup: Matchup, pairPlayCounts: Map<string, number>) {
@@ -264,61 +263,85 @@ function preservesPairCoverage(matchup: Matchup, divisionTeams: TeamRow[], pairP
   );
 }
 
-function scoreMatchup(
-  matchup: Matchup,
-  usedTeamIds: Set<number>,
-  teamGameCounts: Map<number, number>,
-  pairPlayCounts: Map<string, number>,
-  divisionTeams: TeamRow[],
-  eligible: (matchup: Matchup) => boolean
-) {
-  if (!eligible(matchup)) return Number.POSITIVE_INFINITY;
-  if (!preservesPairCoverage(matchup, divisionTeams, pairPlayCounts)) return Number.POSITIVE_INFINITY;
-  if (usedTeamIds.has(matchup.a.id) || usedTeamIds.has(matchup.b.id)) return Number.POSITIVE_INFINITY;
-  const aCount = teamGameCounts.get(matchup.a.id) || 0;
-  const bCount = teamGameCounts.get(matchup.b.id) || 0;
-  return matchupPlayCount(matchup, pairPlayCounts) * 1000 + aCount + bCount + Math.abs(aCount - bCount) * 2;
+function rotateTeams(teams: TeamRow[], cursor: number) {
+  if (!teams.length) return [];
+  const start = cursor % teams.length;
+  return [...teams.slice(start), ...teams.slice(0, start)].map((team, offset) => ({ team, index: (start + offset) % teams.length }));
 }
 
-function takeBestMatchup(
+function matchupOpponent(matchup: Matchup, team: TeamRow) {
+  if (matchup.a.id === team.id) return matchup.b;
+  if (matchup.b.id === team.id) return matchup.a;
+  return null;
+}
+
+function scoreAnchorMatchup(matchup: Matchup, anchor: TeamRow, opponent: TeamRow, teamGameCounts: Map<number, number>, pairPlayCounts: Map<string, number>, targetGamesByTeam: Map<number, number>) {
+  const pairCount = matchupPlayCount(matchup, pairPlayCounts);
+  const opponentTargetPenalty = teamAtTarget(opponent, targetGamesByTeam, teamGameCounts) ? 10_000 : 0;
+  const anchorCount = teamGameCount(anchor, teamGameCounts);
+  const opponentCount = teamGameCount(opponent, teamGameCounts);
+  return pairCount * 100_000 + opponentTargetPenalty + opponentCount * 100 + Math.abs(anchorCount - opponentCount) * 10 + matchup.round;
+}
+
+function bestMatchupForAnchor(
   queue: Matchup[],
   usedTeamIds: Set<number>,
+  anchor: TeamRow,
   teamGameCounts: Map<number, number>,
   pairPlayCounts: Map<string, number>,
   divisionTeams: TeamRow[],
+  targetGamesByTeam: Map<number, number>,
   eligible: (matchup: Matchup) => boolean
 ) {
   let bestIndex = -1;
   let bestScore = Number.POSITIVE_INFINITY;
-  const eligibleQueue = queue.filter((matchup) => eligible(matchup) && preservesPairCoverage(matchup, divisionTeams, pairPlayCounts));
-  if (!eligibleQueue.length) return null;
-  const earliestRound = Math.min(...eligibleQueue.map((matchup) => matchup.round));
-  const minGames = minGamesForDivision(queue, teamGameCounts);
   for (let index = 0; index < queue.length; index++) {
-    if (queue[index].round !== earliestRound) continue;
-    const aCount = teamGameCounts.get(queue[index].a.id) || 0;
-    const bCount = teamGameCounts.get(queue[index].b.id) || 0;
-    const touchesLeastPlayedTeam = aCount === minGames || bCount === minGames;
-    if (!touchesLeastPlayedTeam) continue;
-    const score = scoreMatchup(queue[index], usedTeamIds, teamGameCounts, pairPlayCounts, divisionTeams, eligible);
+    const matchup = queue[index];
+    const opponent = matchupOpponent(matchup, anchor);
+    if (!opponent) continue;
+    if (usedTeamIds.has(anchor.id) || usedTeamIds.has(opponent.id)) continue;
+    if (!eligible(matchup) || !preservesPairCoverage(matchup, divisionTeams, pairPlayCounts)) continue;
+    const score = scoreAnchorMatchup(matchup, anchor, opponent, teamGameCounts, pairPlayCounts, targetGamesByTeam);
     if (score < bestScore) {
       bestIndex = index;
       bestScore = score;
     }
   }
-  if (bestIndex < 0) {
-    for (let index = 0; index < queue.length; index++) {
-      if (queue[index].round !== earliestRound) continue;
-      const score = scoreMatchup(queue[index], usedTeamIds, teamGameCounts, pairPlayCounts, divisionTeams, eligible);
-      if (score < bestScore) {
-        bestIndex = index;
-        bestScore = score;
-      }
-    }
-  }
   if (bestIndex < 0 || bestScore === Number.POSITIVE_INFINITY) return null;
-  const [matchup] = queue.splice(bestIndex, 1);
-  return matchup;
+  return { index: bestIndex, matchup: queue[bestIndex] };
+}
+
+function takeTeamFirstMatchup(
+  queue: Matchup[],
+  usedTeamIds: Set<number>,
+  teamGameCounts: Map<number, number>,
+  pairPlayCounts: Map<string, number>,
+  divisionTeams: TeamRow[],
+  targetGamesByTeam: Map<number, number>,
+  cursor: number,
+  eligible: (matchup: Matchup) => boolean
+) {
+  const candidates = rotateTeams(divisionTeams, cursor)
+    .filter(({ team }) => !usedTeamIds.has(team.id))
+    .map(({ team, index }) => ({
+      team,
+      index,
+      result: bestMatchupForAnchor(queue, usedTeamIds, team, teamGameCounts, pairPlayCounts, divisionTeams, targetGamesByTeam, eligible)
+    }))
+    .filter((candidate): candidate is { team: TeamRow; index: number; result: { index: number; matchup: Matchup } } => candidate.result !== null);
+  if (!candidates.length) return null;
+
+  const underTargetCandidates = candidates.filter((candidate) => !teamAtTarget(candidate.team, targetGamesByTeam, teamGameCounts));
+  const pool = underTargetCandidates.length ? underTargetCandidates : candidates;
+  const minGames = Math.min(...pool.map((candidate) => teamGameCount(candidate.team, teamGameCounts)));
+  const chosen = pool.find((candidate) => teamGameCount(candidate.team, teamGameCounts) === minGames);
+  if (!chosen) return null;
+
+  const [matchup] = queue.splice(chosen.result.index, 1);
+  return {
+    matchup,
+    nextCursor: divisionTeams.length ? (chosen.index + 1) % divisionTeams.length : 0
+  };
 }
 
 function assignCourts(
@@ -479,6 +502,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
   const courtCountsByTeam = new Map<number, Map<number, number>>();
   const matchupCourtCounts = new Map<string, Map<number, number>>();
   const refCounts = new Map<number, number>();
+  const teamCursorsByDivision = new Map<string, number>();
   let blockCursor = 0;
   let previousDayLateTeamIds = new Set<number>();
 
@@ -504,10 +528,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
         const rowMinute = dayStart + row * input.seedingMinutes;
         const rowStartsAt = at(day, rowMinute);
         const eligible = (matchup: Matchup) => {
-          const aTarget = targetGamesByTeam.get(matchup.a.id);
-          const bTarget = targetGamesByTeam.get(matchup.b.id);
-          if (aTarget !== undefined && (teamGameCounts.get(matchup.a.id) || 0) >= aTarget) return false;
-          if (bTarget !== undefined && (teamGameCounts.get(matchup.b.id) || 0) >= bTarget) return false;
+          if (bothTeamsAtTarget(matchup, targetGamesByTeam, teamGameCounts)) return false;
           if (input.includeTuesday && dayIndex === 0 && (!matchup.a.early_available || !matchup.b.early_available)) return false;
           if (teamBlockedAt(matchup.a.id, rowStartsAt, input.seedingMinutes, availability)) return false;
           if (teamBlockedAt(matchup.b.id, rowStartsAt, input.seedingMinutes, availability)) return false;
@@ -525,11 +546,21 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
         const rowMatchups: Matchup[] = [];
         const divisionTeams = byDivision.get(next.division) || [];
         for (let court = 0; court < input.courts; court++) {
-          const matchup = takeBestMatchup(queue, usedTeamIds, teamGameCounts, pairPlayCounts, divisionTeams, eligible);
-          if (!matchup) break;
-          rowMatchups.push(matchup);
-          usedTeamIds.add(matchup.a.id);
-          usedTeamIds.add(matchup.b.id);
+          const result = takeTeamFirstMatchup(
+            queue,
+            usedTeamIds,
+            teamGameCounts,
+            pairPlayCounts,
+            divisionTeams,
+            targetGamesByTeam,
+            teamCursorsByDivision.get(next.division) || 0,
+            eligible
+          );
+          if (!result) break;
+          teamCursorsByDivision.set(next.division, result.nextCursor);
+          rowMatchups.push(result.matchup);
+          usedTeamIds.add(result.matchup.a.id);
+          usedTeamIds.add(result.matchup.b.id);
         }
 
         if (!rowMatchups.length) {
