@@ -1,24 +1,15 @@
 import {
-  addTeamAvailabilityBlockAction,
-  addPlayerAction,
-  addShirtOrderAction,
   addTeamAction,
   adminLogoutAction,
-  deleteTeamAvailabilityBlockAction,
   restoreSnapshotAction,
-  restoreTeamAction,
   setCenterPasscodeAction,
-  snapshotAction,
-  softDeletePlayerAction,
-  softDeleteTeamAction,
-  updatePlayerAction,
-  updateTeamAction
+  snapshotAction
 } from "@/app/actions";
 import { requireAdmin } from "@/lib/auth";
 import { DIVISIONS, listCenters, query, SHIRT_SIZES } from "@/lib/db";
-import { dateInputValue, displayDateTime } from "@/lib/format";
+import { displayDateTime } from "@/lib/format";
 import { listAvailabilityBlocksByTeams, listPlayersByTeams, listShirtOrdersByPlayers, listTeams } from "@/lib/queries";
-import { AdminTeamPicker } from "./team-picker";
+import { AdminTeamManager } from "./team-picker";
 
 export const dynamic = "force-dynamic";
 
@@ -32,14 +23,19 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
   const selectedCenter = centers.find((center) => center.id === requestedCenterId) || defaultCenter;
   const teamsForSelectedCenter = selectedCenter ? teams.filter((team) => team.center_id === selectedCenter.id) : [];
   const requestedTeamId = Number(params.team_id);
-  const selectedTeam = teamsForSelectedCenter.find((team) => team.id === requestedTeamId) || teamsForSelectedCenter[0] || null;
-  const editableTeamIds = selectedTeam && !selectedTeam.deleted_at ? [selectedTeam.id] : [];
-  const playersByTeam = await listPlayersByTeams(editableTeamIds, true);
-  const availabilityBlocksByTeam = await listAvailabilityBlocksByTeams(editableTeamIds);
+  const selectedTeam =
+    teamsForSelectedCenter.find((team) => team.id === requestedTeamId) ||
+    teamsForSelectedCenter.find((team) => !team.deleted_at) ||
+    teamsForSelectedCenter[0] ||
+    null;
+  const activeTeamIds = teams.filter((team) => !team.deleted_at).map((team) => team.id);
+  const playersByTeam = await listPlayersByTeams(activeTeamIds, true);
+  const availabilityBlocksByTeam = await listAvailabilityBlocksByTeams(activeTeamIds);
   const playerIds = [...playersByTeam.values()].flat().map((player) => player.id);
   const shirtsByPlayer = await listShirtOrdersByPlayers(playerIds);
-  const selectedPlayers = selectedTeam ? playersByTeam.get(selectedTeam.id) || [] : [];
-  const selectedAvailabilityBlocks = selectedTeam ? availabilityBlocksByTeam.get(selectedTeam.id) || [] : [];
+  const players = [...playersByTeam.values()].flat();
+  const availabilityBlocks = [...availabilityBlocksByTeam.values()].flat();
+  const shirts = [...shirtsByPlayer.values()].flat();
   const snapshots = await query<{
     id: number;
     label: string;
@@ -138,225 +134,17 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
           </div>
           <span className="pill">{teams.length} total teams</span>
         </div>
-        <AdminTeamPicker
+        <AdminTeamManager
           centers={centers}
           teams={teams}
           selectedCenterId={selectedCenter?.id || 0}
           selectedTeamId={selectedTeam?.id || null}
+          players={players}
+          availabilityBlocks={availabilityBlocks}
+          shirts={shirts}
+          divisions={[...DIVISIONS]}
+          shirtSizes={[...SHIRT_SIZES]}
         />
-      </section>
-
-      <section className="section stack">
-        {selectedTeam ? (
-          <article className="card" key={selectedTeam.id}>
-            <form action={updateTeamAction} className="form-grid">
-              <input name="admin" type="hidden" value="1" />
-              <input name="team_id" type="hidden" value={selectedTeam.id} />
-              <label>
-                Team
-                <input name="name" defaultValue={selectedTeam.name} required disabled={Boolean(selectedTeam.deleted_at)} />
-              </label>
-              <label>
-                Center
-                <input defaultValue={selectedTeam.center_name} readOnly />
-              </label>
-              <label>
-                Division
-                <select name="division" defaultValue={selectedTeam.division} disabled={Boolean(selectedTeam.deleted_at)}>
-                  {DIVISIONS.map((division) => (
-                    <option key={division}>{division}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Tuesday opt-in
-                <input name="early_available" type="checkbox" defaultChecked={Boolean(selectedTeam.early_available)} disabled={Boolean(selectedTeam.deleted_at)} />
-              </label>
-              <div className="actions">
-                {selectedTeam.deleted_at ? (
-                  <button className="button" formAction={restoreTeamAction}>
-                    Restore Team
-                  </button>
-                ) : (
-                  <>
-                    <button className="button">Save Team</button>
-                    <button className="button danger" formAction={softDeleteTeamAction}>
-                      Delete Team
-                    </button>
-                  </>
-                )}
-              </div>
-            </form>
-
-            {!selectedTeam.deleted_at ? (
-              <>
-                <div className="team-subsection">
-                  <h3>Time Blockers</h3>
-                  {selectedAvailabilityBlocks.length ? (
-                    <div className="table-wrap">
-                      <table className="mini-table">
-                        <thead>
-                          <tr>
-                            <th>Unavailable From</th>
-                            <th>Until</th>
-                            <th>Reason</th>
-                            <th></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {selectedAvailabilityBlocks.map((block) => (
-                            <tr key={block.id}>
-                              <td>{displayDateTime(block.starts_at)}</td>
-                              <td>{displayDateTime(block.ends_at)}</td>
-                              <td>{block.reason || ""}</td>
-                              <td>
-                                <form action={deleteTeamAvailabilityBlockAction}>
-                                  <input name="admin" type="hidden" value="1" />
-                                  <input name="block_id" type="hidden" value={block.id} />
-                                  <button className="button danger">Remove</button>
-                                </form>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <p className="muted">No team-specific blockers.</p>
-                  )}
-                  <form action={addTeamAvailabilityBlockAction} className="form-grid">
-                    <input name="admin" type="hidden" value="1" />
-                    <input name="team_id" type="hidden" value={selectedTeam.id} />
-                    <label>
-                      Unavailable from
-                      <input name="starts_at" type="datetime-local" required />
-                    </label>
-                    <label>
-                      Until
-                      <input name="ends_at" type="datetime-local" required />
-                    </label>
-                    <label>
-                      Reason
-                      <input name="reason" placeholder="Travel, work, late arrival" />
-                    </label>
-                    <div className="actions">
-                      <button className="button secondary">Add Blocker</button>
-                    </div>
-                  </form>
-                </div>
-
-                <div className="table-wrap section">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Player</th>
-                        <th>Shirt</th>
-                        <th>Entry Payment</th>
-                        <th>Extra Shirts</th>
-                        <th>Notes</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedPlayers
-                        .filter((player) => !player.deleted_at)
-                        .map((player) => (
-                          <tr key={player.id}>
-                            <td>
-                              <form id={`admin-player-${player.id}`} action={updatePlayerAction}>
-                                <input name="admin" type="hidden" value="1" />
-                                <input name="player_id" type="hidden" value={player.id} />
-                                <input name="name" defaultValue={player.name} required />
-                              </form>
-                            </td>
-                            <td>
-                              <select name="shirt_size" form={`admin-player-${player.id}`} defaultValue={player.shirt_size}>
-                                {SHIRT_SIZES.map((size) => (
-                                  <option key={size}>{size}</option>
-                                ))}
-                              </select>
-                            </td>
-                            <td>
-                              <label>
-                                Paid
-                                <input name="entry_paid" form={`admin-player-${player.id}`} type="checkbox" defaultChecked={Boolean(player.entry_paid)} />
-                              </label>
-                              <input name="entry_amount" form={`admin-player-${player.id}`} type="number" step="0.01" defaultValue={player.entry_amount || ""} />
-                              <input name="entry_paid_date" form={`admin-player-${player.id}`} type="date" defaultValue={dateInputValue(player.entry_paid_date)} />
-                              <input name="entry_payment_method" form={`admin-player-${player.id}`} placeholder="Method" defaultValue={player.entry_payment_method || ""} />
-                            </td>
-                            <td>
-                              {(shirtsByPlayer.get(player.id) || []).map((shirt) => (
-                                <div key={shirt.id}>
-                                  {shirt.quantity}x {shirt.size} {shirt.paid ? <span className="pill ok">paid</span> : null}
-                                </div>
-                              ))}
-                              <form action={addShirtOrderAction} className="inline-form">
-                                <input name="admin" type="hidden" value="1" />
-                                <input name="player_id" type="hidden" value={player.id} />
-                                <select name="size" defaultValue={player.shirt_size}>
-                                  {SHIRT_SIZES.map((size) => (
-                                    <option key={size}>{size}</option>
-                                  ))}
-                                </select>
-                                <input name="quantity" type="number" min="1" defaultValue="1" style={{ width: 70 }} />
-                                <button className="button secondary">Add</button>
-                              </form>
-                            </td>
-                            <td>
-                              <textarea name="notes" form={`admin-player-${player.id}`} defaultValue={player.notes || ""} />
-                            </td>
-                            <td>
-                              <button className="button" form={`admin-player-${player.id}`}>
-                                Save
-                              </button>
-                              <form action={softDeletePlayerAction} className="actions">
-                                <input name="admin" type="hidden" value="1" />
-                                <input name="player_id" type="hidden" value={player.id} />
-                                <button className="button danger">Remove</button>
-                              </form>
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {selectedPlayers.filter((player) => !player.deleted_at).length < 5 ? (
-                  <form action={addPlayerAction} className="form-grid section">
-                    <input name="admin" type="hidden" value="1" />
-                    <input name="team_id" type="hidden" value={selectedTeam.id} />
-                    <label>
-                      Player name
-                      <input name="name" required />
-                    </label>
-                    <label>
-                      Shirt size
-                      <select name="shirt_size">
-                        {SHIRT_SIZES.map((size) => (
-                          <option key={size}>{size}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Notes
-                      <input name="notes" />
-                    </label>
-                    <div className="actions">
-                      <button className="button">Add Player</button>
-                    </div>
-                  </form>
-                ) : null}
-              </>
-            ) : (
-              <p className="pill warn">Soft deleted</p>
-            )}
-          </article>
-        ) : (
-          <article className="card">
-            <p className="muted">No teams found for the selected center.</p>
-          </article>
-        )}
       </section>
     </main>
   );
