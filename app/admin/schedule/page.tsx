@@ -113,6 +113,18 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
             <input name="tournament_mix" defaultValue="A,C|B,D" />
           </label>
           <label>
+            Next-day tournament cutoff
+            <input name="pre_tournament_cutoff" type="time" defaultValue="18:00" />
+          </label>
+          <label>
+            Late-night rows
+            <input name="late_night_rows" type="number" min="0" defaultValue="2" />
+          </label>
+          <label>
+            Morning rest rows
+            <input name="morning_rest_rows" type="number" min="0" defaultValue="2" />
+          </label>
+          <label>
             First day is early opt-in only
             <input name="include_tuesday" type="checkbox" />
           </label>
@@ -133,7 +145,6 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
                 <tr>
                   <th>Time</th>
                   <th>Court</th>
-                  <th>Phase</th>
                   <th>Division</th>
                   <th>Game</th>
                   <th>Teams</th>
@@ -145,7 +156,6 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
                   <tr key={game.id}>
                     <td>{displayDateTime(game.starts_at)}</td>
                     <td>{game.court}</td>
-                    <td>{game.phase}</td>
                     <td>{game.division}</td>
                     <td>{game.label}</td>
                     <td>

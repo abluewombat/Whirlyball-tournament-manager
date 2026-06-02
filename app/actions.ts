@@ -247,7 +247,10 @@ export async function generateScheduleAction(formData: FormData) {
     includeTuesday: checkbox(formData, "include_tuesday"),
     tournamentMix: text(formData, "tournament_mix") || "A,C|B,D",
     blockOrder: text(formData, "block_order") || "C,B,D,A,Unlimited",
-    blockRows: Math.max(1, num(formData, "block_rows", 6))
+    blockRows: Math.max(1, num(formData, "block_rows", 6)),
+    preTournamentCutoff: text(formData, "pre_tournament_cutoff") || "18:00",
+    morningRestRows: Math.max(0, num(formData, "morning_rest_rows", 2)),
+    lateNightRows: Math.max(0, num(formData, "late_night_rows", 2))
   });
   await withTransaction(async (client) => {
     await client.query("DELETE FROM games");

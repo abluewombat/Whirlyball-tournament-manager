@@ -15,6 +15,9 @@ type ScheduleInput = {
   tournamentMix: string;
   blockOrder?: string;
   blockRows?: number;
+  preTournamentCutoff?: string;
+  morningRestRows?: number;
+  lateNightRows?: number;
 };
 
 type GeneratedGame = {
@@ -70,6 +73,10 @@ function parseBlockOrder(value: string | undefined) {
     .map((item) => item.trim())
     .filter(Boolean);
   return parsed.length ? parsed : defaultBlockOrder;
+}
+
+function parseTournamentMix(value: string) {
+  return value.split("|").map((group) => group.split(",").map((x) => x.trim()).filter(Boolean));
 }
 
 function matchupKey(a: TeamRow, b: TeamRow) {
@@ -255,9 +262,12 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
   const start = minutes(input.dayStart);
   const earlyStart = minutes(input.earlyDayStart || input.dayStart);
   const end = minutes(input.dayEnd);
+  const preTournamentCutoff = minutes(input.preTournamentCutoff || "18:00");
+  const morningRestRows = Math.max(0, input.morningRestRows ?? 2);
+  const lateNightRows = Math.max(0, input.lateNightRows ?? 2);
   const blockRows = Math.max(1, input.blockRows || 6);
   const blockOrder = parseBlockOrder(input.blockOrder).filter((division) => byDivision.has(division));
-  const rowCapacity = Math.max(1, Math.floor((end - start) / input.seedingMinutes));
+  const mixes = parseTournamentMix(input.tournamentMix);
   const games: GeneratedGame[] = [];
 
   const queues = new Map<string, Matchup[]>();
@@ -270,8 +280,18 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
   const matchupCourtCounts = new Map<string, Map<number, number>>();
   const refCounts = new Map<number, number>();
   let blockCursor = 0;
+  let previousDayLateTeamIds = new Set<number>();
 
   for (const [dayIndex, day] of seedingDays.entries()) {
+    const dayStart = input.includeTuesday && dayIndex === 0 ? earlyStart : start;
+    const rowCapacity = Math.max(1, Math.floor((end - dayStart) / input.seedingMinutes));
+    const lateCutoff = end - lateNightRows * input.seedingMinutes;
+    const currentDayLateTeamIds = new Set<number>();
+    const nextDay = new Date(day);
+    nextDay.setDate(nextDay.getDate() + 1);
+    const nextTournamentDayIndex = tournamentDays.findIndex((tournamentDay) => isoDate(tournamentDay) === isoDate(nextDay));
+    const nextDayTournamentDivisions = new Set(nextTournamentDayIndex >= 0 ? mixes[nextTournamentDayIndex] || [] : []);
+
     for (let row = 0; row < rowCapacity && hasQueuedGames(queues); ) {
       const next = nextDivisionWithGames(blockOrder.length ? blockOrder : defaultBlockOrder, queues, blockCursor);
       if (!next) break;
@@ -280,8 +300,17 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
       for (let blockRow = 0; blockRow < blockRows && row < rowCapacity; blockRow++, row++) {
         const queue = queues.get(next.division) || [];
         if (!queue.length) break;
+        const rowMinute = dayStart + row * input.seedingMinutes;
         const eligible = (matchup: Matchup) => {
           if (input.includeTuesday && dayIndex === 0) return matchup.a.early_available && matchup.b.early_available;
+          if (nextDayTournamentDivisions.has(matchup.division) && rowMinute >= preTournamentCutoff) return false;
+          if (
+            morningRestRows > 0 &&
+            row < morningRestRows &&
+            (previousDayLateTeamIds.has(matchup.a.id) || previousDayLateTeamIds.has(matchup.b.id))
+          ) {
+            return false;
+          }
           return true;
         };
         const usedTeamIds = new Set<number>();
@@ -300,10 +329,13 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
         }
         const assignments = assignCourts(rowMatchups, input.courts, courtCountsByTeam, matchupCourtCounts);
         const unavailableTeamIds = new Set(assignments.flatMap(({ matchup }) => [matchup.a.id, matchup.b.id]));
-        const dayStart = input.includeTuesday && dayIndex === 0 ? earlyStart : start;
         for (const { matchup, court } of assignments) {
           teamGameCounts.set(matchup.a.id, (teamGameCounts.get(matchup.a.id) || 0) + 1);
           teamGameCounts.set(matchup.b.id, (teamGameCounts.get(matchup.b.id) || 0) + 1);
+          if (rowMinute >= lateCutoff) {
+            currentDayLateTeamIds.add(matchup.a.id);
+            currentDayLateTeamIds.add(matchup.b.id);
+          }
           games.push({
             phase: "seeding",
             division: matchup.division,
@@ -312,14 +344,14 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
             team1Id: matchup.a.id,
             team2Id: matchup.b.id,
             refTeamId: chooseRefTeam(matchup.division, teams, matchup.a, matchup.b, unavailableTeamIds, refCounts),
-            label: `${matchup.division} seeding R${matchup.round}`
+            label: `${matchup.division} R${matchup.round}`
           });
         }
       }
     }
+    previousDayLateTeamIds = currentDayLateTeamIds;
   }
 
-  const mixes = input.tournamentMix.split("|").map((group) => group.split(",").map((x) => x.trim()).filter(Boolean));
   let tournamentSlot = 0;
   for (const [dayIndex, day] of tournamentDays.entries()) {
     const divisions = mixes[dayIndex] || mixes[0] || ["A", "C"];
