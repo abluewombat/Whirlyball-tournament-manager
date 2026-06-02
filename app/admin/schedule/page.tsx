@@ -188,7 +188,7 @@ export default async function SchedulePage({
           </label>
           <label>
             First day is early opt-in only
-            <input name="include_tuesday" type="checkbox" />
+            <input name="include_tuesday" type="checkbox" defaultChecked />
           </label>
           <div className="actions">
             <button className="button">Generate Schedule</button>
