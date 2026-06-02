@@ -47,6 +47,11 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
      ORDER BY team_availability_blocks.starts_at, centers.name, teams.name`
   );
   const activeTeamCount = teamCounts.reduce((sum, row) => sum + Number(row.count), 0);
+  const fullTwoRoundDemand = teamCounts.reduce((sum, row) => {
+    const count = Number(row.count);
+    return sum + (count * Math.max(0, count - 1)) / 2 * 2;
+  }, 0);
+  const balancedEightDemand = teamCounts.reduce((sum, row) => sum + Math.ceil((Number(row.count) * 8) / 2), 0);
   const generatedCount = params.generated === undefined ? null : Number(params.generated);
   const unscheduledCount = params.unscheduled === undefined ? 0 : Number(params.unscheduled);
 
@@ -65,12 +70,12 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
       <section className="section card">
         <h2>Generate</h2>
         <p className="muted">
-          This creates a practical draft: seeding round-robin games first, then double-elimination bracket placeholders for the final two event days.
+          This creates a practical draft: seeding games first, then double-elimination bracket placeholders for the final two event days.
         </p>
         {generatedCount !== null ? (
           generatedCount > 0 ? (
             <p className={unscheduledCount > 0 ? "pill warn" : "pill ok"}>
-              Generated {generatedCount} games{unscheduledCount > 0 ? `, with ${unscheduledCount} seeding games left unscheduled due to time limits.` : "."}
+              Generated {generatedCount} games{unscheduledCount > 0 ? `, with ${unscheduledCount} seeding games left unscheduled due to time limits or constraints.` : "."}
             </p>
           ) : (
             <p className="pill warn">Generated 0 games. Add at least two active teams in a division before generating.</p>
@@ -79,6 +84,9 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
         <p className="muted">
           Active teams: {activeTeamCount || 0}
           {teamCounts.length ? ` (${teamCounts.map((row) => `${row.division}: ${row.count}`).join(", ")})` : ""}
+        </p>
+        <p className="muted">
+          Current demand check: full 2x round robin needs about {fullTwoRoundDemand} seeding games. Balanced 8 games/team needs about {balancedEightDemand}.
         </p>
         <form action={generateScheduleAction} className="form-grid">
           <label>
@@ -114,7 +122,22 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
             <input name="tournament_minutes" type="number" min="10" defaultValue="40" />
           </label>
           <label>
-            Round-robin count
+            Seeding mode
+            <select name="seeding_mode" defaultValue="balanced">
+              <option value="balanced">Balanced target games/team</option>
+              <option value="round_robin">Full round robin</option>
+            </select>
+          </label>
+          <label>
+            Target games/team
+            <input name="target_games_per_team" type="number" min="1" defaultValue="8" />
+          </label>
+          <label>
+            Division targets
+            <input name="division_target_games" placeholder="Optional: A:8,B:7,C:8,D:7" />
+          </label>
+          <label>
+            Pair repeat limit
             <input name="rounds_per_pair" type="number" min="1" defaultValue="2" />
           </label>
           <label>

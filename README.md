@@ -68,4 +68,5 @@ The database tables and default centers are created automatically on first reque
 - Admin dashboard for all centers, teams, passcodes, snapshots, and Excel export.
 - Admin state snapshots with restore.
 - Draft seeding and double-elimination placeholder schedule generator.
+- Schedule generator can use full round robin or balanced target games per team when full round robin exceeds available court time.
 - Excel export includes teams, players, extra shirts, and schedule.

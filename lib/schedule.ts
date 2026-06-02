@@ -11,6 +11,9 @@ type ScheduleInput = {
   seedingMinutes: number;
   tournamentMinutes: number;
   roundsPerPair: number;
+  seedingMode?: "round_robin" | "balanced";
+  targetGamesPerTeam?: number;
+  divisionTargetGames?: string;
   includeTuesday: boolean;
   tournamentMix: string;
   blockOrder?: string;
@@ -122,6 +125,50 @@ function buildDivisionMatchups(teams: TeamRow[], rounds: number) {
     }
   }
   return output;
+}
+
+function parseDivisionTargets(value: string | undefined, defaultTarget: number, divisions: string[]) {
+  const targets = new Map<string, number>();
+  for (const division of divisions) targets.set(division, defaultTarget);
+  for (const chunk of (value || "").split(",")) {
+    const [rawDivision, rawTarget] = chunk.split(":").map((part) => part.trim());
+    const target = Number(rawTarget);
+    if (rawDivision && Number.isFinite(target) && target >= 0) targets.set(rawDivision, Math.floor(target));
+  }
+  return targets;
+}
+
+function buildTargetGamesByTeam(byDivision: Map<string, TeamRow[]>, divisionTargets: Map<string, number>, maxPairRepeats: number) {
+  const targetGamesByTeam = new Map<number, number>();
+  for (const [division, teams] of byDivision.entries()) {
+    const maxPossible = Math.max(0, (teams.length - 1) * maxPairRepeats);
+    const target = Math.min(divisionTargets.get(division) ?? 0, maxPossible);
+    for (const team of teams) targetGamesByTeam.set(team.id, target);
+  }
+  return targetGamesByTeam;
+}
+
+function pruneSatisfiedMatchups(queues: Map<string, Matchup[]>, targetGamesByTeam: Map<number, number>, teamGameCounts: Map<number, number>) {
+  if (!targetGamesByTeam.size) return;
+  for (const [division, queue] of queues.entries()) {
+    queues.set(
+      division,
+      queue.filter((matchup) => {
+        const aTarget = targetGamesByTeam.get(matchup.a.id) ?? Number.POSITIVE_INFINITY;
+        const bTarget = targetGamesByTeam.get(matchup.b.id) ?? Number.POSITIVE_INFINITY;
+        return (teamGameCounts.get(matchup.a.id) || 0) < aTarget && (teamGameCounts.get(matchup.b.id) || 0) < bTarget;
+      })
+    );
+  }
+}
+
+function unscheduledTargetGames(targetGamesByTeam: Map<number, number>, teamGameCounts: Map<number, number>) {
+  if (!targetGamesByTeam.size) return null;
+  let missingTeamGames = 0;
+  for (const [teamId, target] of targetGamesByTeam.entries()) {
+    missingTeamGames += Math.max(0, target - (teamGameCounts.get(teamId) || 0));
+  }
+  return Math.ceil(missingTeamGames / 2);
 }
 
 function minGamesForDivision(matchups: Matchup[], teamGameCounts: Map<number, number>) {
@@ -306,10 +353,20 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
   const blockOrder = parseBlockOrder(input.blockOrder).filter((division) => byDivision.has(division));
   const mixes = parseTournamentMix(input.tournamentMix);
   const games: GeneratedGame[] = [];
+  const seedingMode = input.seedingMode || "balanced";
+  const maxPairRepeats = Math.max(1, input.roundsPerPair);
+  const targetGamesByTeam =
+    seedingMode === "balanced"
+      ? buildTargetGamesByTeam(
+          byDivision,
+          parseDivisionTargets(input.divisionTargetGames, Math.max(1, input.targetGamesPerTeam || 8), [...byDivision.keys()]),
+          maxPairRepeats
+        )
+      : new Map<number, number>();
 
   const queues = new Map<string, Matchup[]>();
   for (const [division, divTeams] of byDivision.entries()) {
-    queues.set(division, buildDivisionMatchups(divTeams, input.roundsPerPair));
+    queues.set(division, buildDivisionMatchups(divTeams, maxPairRepeats));
   }
 
   const teamGameCounts = new Map<number, number>();
@@ -330,6 +387,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
     const nextDayTournamentDivisions = new Set(nextTournamentDayIndex >= 0 ? mixes[nextTournamentDayIndex] || [] : []);
 
     for (let row = 0; row < rowCapacity && hasQueuedGames(queues); ) {
+      pruneSatisfiedMatchups(queues, targetGamesByTeam, teamGameCounts);
       const next = nextDivisionWithGames(blockOrder.length ? blockOrder : defaultBlockOrder, queues, blockCursor);
       if (!next) break;
       blockCursor = next.cursor;
@@ -340,6 +398,10 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
         const rowMinute = dayStart + row * input.seedingMinutes;
         const rowStartsAt = at(day, rowMinute);
         const eligible = (matchup: Matchup) => {
+          const aTarget = targetGamesByTeam.get(matchup.a.id);
+          const bTarget = targetGamesByTeam.get(matchup.b.id);
+          if (aTarget !== undefined && (teamGameCounts.get(matchup.a.id) || 0) >= aTarget) return false;
+          if (bTarget !== undefined && (teamGameCounts.get(matchup.b.id) || 0) >= bTarget) return false;
           if (input.includeTuesday && dayIndex === 0 && (!matchup.a.early_available || !matchup.b.early_available)) return false;
           if (teamBlockedAt(matchup.a.id, rowStartsAt, input.seedingMinutes, availability)) return false;
           if (teamBlockedAt(matchup.b.id, rowStartsAt, input.seedingMinutes, availability)) return false;
@@ -395,6 +457,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
     }
     previousDayLateTeamIds = currentDayLateTeamIds;
   }
+  pruneSatisfiedMatchups(queues, targetGamesByTeam, teamGameCounts);
 
   let tournamentSlot = 0;
   for (const [dayIndex, day] of tournamentDays.entries()) {
@@ -421,6 +484,6 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
 
   return {
     games: games.sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.court - b.court),
-    unscheduledSeedingGames: [...queues.values()].reduce((sum, queue) => sum + queue.length, 0)
+    unscheduledSeedingGames: unscheduledTargetGames(targetGamesByTeam, teamGameCounts) ?? [...queues.values()].reduce((sum, queue) => sum + queue.length, 0)
   };
 }
