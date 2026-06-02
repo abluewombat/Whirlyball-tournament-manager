@@ -306,7 +306,6 @@ export async function generateScheduleAction(formData: FormData) {
     targetGamesPerTeam: Math.max(1, num(formData, "target_games_per_team", scheduleDefaults.targetGamesPerTeam)),
     divisionTargetGames: text(formData, "division_target_games"),
     includeTuesday: checkbox(formData, "include_tuesday"),
-    tournamentMix: text(formData, "tournament_mix") || scheduleDefaults.tournamentMix,
     blockOrder: text(formData, "block_order") || scheduleDefaults.blockOrder,
     blockRows: Math.max(1, num(formData, "block_rows", scheduleDefaults.blockRows)),
     preTournamentCutoff: text(formData, "pre_tournament_cutoff") || scheduleDefaults.preTournamentCutoff,

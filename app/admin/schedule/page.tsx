@@ -175,10 +175,6 @@ export default async function SchedulePage({
             <input name="block_rows" type="number" min="1" defaultValue={scheduleDefaults.blockRows} />
           </label>
           <label>
-            Tournament mix
-            <input name="tournament_mix" defaultValue={scheduleDefaults.tournamentMix} placeholder="auto or A,B|C,D" />
-          </label>
-          <label>
             Next-day tournament cutoff
             <input name="pre_tournament_cutoff" type="time" defaultValue={scheduleDefaults.preTournamentCutoff} />
           </label>

@@ -19,7 +19,6 @@ type ScheduleInput = {
   targetGamesPerTeam?: number;
   divisionTargetGames?: string;
   includeTuesday: boolean;
-  tournamentMix: string;
   blockOrder?: string;
   blockRows?: number;
   preTournamentCutoff?: string;
@@ -126,65 +125,8 @@ function parseBlockOrder(value: string | undefined) {
   return parsed.length ? parsed : defaultBlockOrder;
 }
 
-function parseTournamentMix(value: string) {
-  return value.split("|").map((group) => group.split(",").map((x) => x.trim()).filter(Boolean));
-}
-
-function tournamentGameCount(teamCount: number) {
-  return bracketLabels(teamCount).length;
-}
-
-function buildAutoTournamentMix(byDivision: Map<string, TeamRow[]>, dayCapacities: number[]) {
-  const divisions = [...byDivision.entries()]
-    .map(([division, teams]) => ({ division, games: tournamentGameCount(teams.length) }))
-    .filter((entry) => entry.games > 0)
-    .sort((left, right) => right.games - left.games || left.division.localeCompare(right.division));
-  if (!divisions.length) return dayCapacities.map(() => []);
-
-  let bestGroups: string[][] | null = null;
-  let bestScore = Number.POSITIVE_INFINITY;
-  const loads = dayCapacities.map(() => 0);
-  const groups = dayCapacities.map(() => [] as string[]);
-
-  function score() {
-    let overCapacity = 0;
-    for (let index = 0; index < loads.length; index++) {
-      overCapacity += Math.max(0, loads[index] - dayCapacities[index]);
-    }
-    const normalizedLoads = loads.map((load, index) => load / Math.max(1, dayCapacities[index]));
-    const maxLoad = Math.max(...normalizedLoads);
-    const minLoad = Math.min(...normalizedLoads);
-    const emptyDayPenalty = groups.filter((group) => group.length === 0).length * 50;
-    return overCapacity * 1000 + (maxLoad - minLoad) * 100 + Math.max(...loads) + emptyDayPenalty;
-  }
-
-  function assign(index: number) {
-    if (index === divisions.length) {
-      const currentScore = score();
-      if (currentScore < bestScore) {
-        bestScore = currentScore;
-        bestGroups = groups.map((group) => [...group]);
-      }
-      return;
-    }
-    const next = divisions[index];
-    for (let dayIndex = 0; dayIndex < dayCapacities.length; dayIndex++) {
-      groups[dayIndex].push(next.division);
-      loads[dayIndex] += next.games;
-      assign(index + 1);
-      loads[dayIndex] -= next.games;
-      groups[dayIndex].pop();
-    }
-  }
-
-  assign(0);
-  return bestGroups || dayCapacities.map(() => []);
-}
-
-function buildTournamentMix(value: string, byDivision: Map<string, TeamRow[]>, dayCapacities: number[]) {
-  if (!value.trim() || value.trim().toLowerCase() === "auto") return buildAutoTournamentMix(byDivision, dayCapacities);
-  const manual = parseTournamentMix(value);
-  return manual.length ? manual : buildAutoTournamentMix(byDivision, dayCapacities);
+function tournamentDivisionsForDay(dayIndex: number) {
+  return dayIndex === 0 ? ["C", "B"] : ["A", "D"];
 }
 
 function matchupKey(a: TeamRow, b: TeamRow) {
@@ -630,11 +572,6 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
   const lateNightRows = Math.max(0, input.lateNightRows ?? scheduleDefaults.lateNightRows);
   const blockRows = Math.max(1, input.blockRows || scheduleDefaults.blockRows);
   const blockOrder = parseBlockOrder(input.blockOrder).filter((division) => byDivision.has(division));
-  const tournamentDayCapacities = tournamentDays.map((_, dayIndex) => {
-    const dayEnd = dayIndex === tournamentDays.length - 1 ? finalDayEnd : tournamentEnd;
-    return Math.max(0, Math.floor((dayEnd - tournamentStart) / input.tournamentMinutes)) * input.courts;
-  });
-  const mixes = buildTournamentMix(input.tournamentMix, byDivision, tournamentDayCapacities);
   const games: GeneratedGame[] = [];
   const seedingMode = input.seedingMode || scheduleDefaults.seedingMode;
   const maxPairRepeats = Math.max(1, input.roundsPerPair);
@@ -670,7 +607,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
     const nextDay = new Date(day);
     nextDay.setDate(nextDay.getDate() + 1);
     const nextTournamentDayIndex = tournamentDays.findIndex((tournamentDay) => isoDate(tournamentDay) === isoDate(nextDay));
-    const nextDayTournamentDivisions = new Set(nextTournamentDayIndex >= 0 ? mixes[nextTournamentDayIndex] || [] : []);
+    const nextDayTournamentDivisions = new Set(nextTournamentDayIndex >= 0 ? tournamentDivisionsForDay(nextTournamentDayIndex) : []);
 
     for (let row = 0; row < rowCapacity && hasQueuedGames(queues); ) {
       pruneSatisfiedMatchups(queues, targetGamesByTeam, teamGameCounts, pairPlayCounts);
@@ -788,7 +725,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
 
   let unscheduledTournamentGames = 0;
   for (const [dayIndex, day] of tournamentDays.entries()) {
-    const divisions = mixes[dayIndex] || mixes[0] || ["A", "C"];
+    const divisions = tournamentDivisionsForDay(dayIndex);
     const dayEnd = dayIndex === tournamentDays.length - 1 ? finalDayEnd : tournamentEnd;
     const rowCapacity = Math.max(0, Math.floor((dayEnd - tournamentStart) / input.tournamentMinutes));
     let tournamentSlot = 0;

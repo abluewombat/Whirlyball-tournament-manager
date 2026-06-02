@@ -15,7 +15,6 @@ export const scheduleDefaults = {
   roundsPerPair: 2,
   blockOrder: "C,B,D,A,Unlimited",
   blockRows: 6,
-  tournamentMix: "C,B|D,A",
   preTournamentCutoff: "18:00",
   lateNightRows: 6,
   morningRestRows: 8
