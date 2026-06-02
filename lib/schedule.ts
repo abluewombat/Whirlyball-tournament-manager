@@ -88,6 +88,16 @@ function buildDivisionMatchups(teams: TeamRow[], rounds: number) {
   return output;
 }
 
+function minGamesForDivision(matchups: Matchup[], teamGameCounts: Map<number, number>) {
+  const teamIds = new Set<number>();
+  for (const matchup of matchups) {
+    teamIds.add(matchup.a.id);
+    teamIds.add(matchup.b.id);
+  }
+  if (!teamIds.size) return 0;
+  return Math.min(...[...teamIds].map((teamId) => teamGameCounts.get(teamId) || 0));
+}
+
 function scoreMatchup(matchup: Matchup, usedTeamIds: Set<number>, teamGameCounts: Map<number, number>, eligible: (matchup: Matchup) => boolean) {
   if (!eligible(matchup)) return Number.POSITIVE_INFINITY;
   if (usedTeamIds.has(matchup.a.id) || usedTeamIds.has(matchup.b.id)) return Number.POSITIVE_INFINITY;
@@ -99,11 +109,30 @@ function scoreMatchup(matchup: Matchup, usedTeamIds: Set<number>, teamGameCounts
 function takeBestMatchup(queue: Matchup[], usedTeamIds: Set<number>, teamGameCounts: Map<number, number>, eligible: (matchup: Matchup) => boolean) {
   let bestIndex = -1;
   let bestScore = Number.POSITIVE_INFINITY;
+  const eligibleQueue = queue.filter(eligible);
+  if (!eligibleQueue.length) return null;
+  const earliestRound = Math.min(...eligibleQueue.map((matchup) => matchup.round));
+  const minGames = minGamesForDivision(queue, teamGameCounts);
   for (let index = 0; index < queue.length; index++) {
+    if (queue[index].round !== earliestRound) continue;
+    const aCount = teamGameCounts.get(queue[index].a.id) || 0;
+    const bCount = teamGameCounts.get(queue[index].b.id) || 0;
+    const touchesLeastPlayedTeam = aCount === minGames || bCount === minGames;
+    if (!touchesLeastPlayedTeam) continue;
     const score = scoreMatchup(queue[index], usedTeamIds, teamGameCounts, eligible);
     if (score < bestScore) {
       bestIndex = index;
       bestScore = score;
+    }
+  }
+  if (bestIndex < 0) {
+    for (let index = 0; index < queue.length; index++) {
+      if (queue[index].round !== earliestRound) continue;
+      const score = scoreMatchup(queue[index], usedTeamIds, teamGameCounts, eligible);
+      if (score < bestScore) {
+        bestIndex = index;
+        bestScore = score;
+      }
     }
   }
   if (bestIndex < 0 || bestScore === Number.POSITIVE_INFINITY) return null;
