@@ -1,5 +1,5 @@
 import { query } from "./db";
-import { TeamRow } from "./queries";
+import { TeamAvailabilityBlockRow, TeamRow } from "./queries";
 
 type ScheduleInput = {
   startDate: string;
@@ -38,6 +38,8 @@ type Matchup = {
   round: number;
 };
 
+type AvailabilityMap = Map<number, TeamAvailabilityBlockRow[]>;
+
 const rank: Record<string, number> = { A: 1, B: 2, C: 3, D: 4, Unlimited: 2 };
 const defaultBlockOrder = ["C", "B", "D", "A", "Unlimited"];
 
@@ -65,6 +67,33 @@ function at(date: Date, minute: number) {
   const h = String(Math.floor(minute / 60)).padStart(2, "0");
   const m = String(minute % 60).padStart(2, "0");
   return `${isoDate(date)}T${h}:${m}:00`;
+}
+
+function parseScheduleDateTime(value: string) {
+  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)) return Date.parse(value);
+  return Date.parse(`${value}Z`);
+}
+
+function buildAvailabilityMap(blocks: TeamAvailabilityBlockRow[]) {
+  const map: AvailabilityMap = new Map();
+  for (const block of blocks) map.set(block.team_id, [...(map.get(block.team_id) || []), block]);
+  return map;
+}
+
+function teamBlockedAt(teamId: number, startsAt: string, durationMinutes: number, availability: AvailabilityMap) {
+  const blocks = availability.get(teamId) || [];
+  if (!blocks.length) return false;
+  const gameStart = parseScheduleDateTime(startsAt);
+  const gameEnd = gameStart + durationMinutes * 60_000;
+  return blocks.some((block) => {
+    const blockStart = parseScheduleDateTime(block.starts_at);
+    const blockEnd = parseScheduleDateTime(block.ends_at);
+    return gameStart < blockEnd && gameEnd > blockStart;
+  });
+}
+
+function blockedTeamIdsAt(teams: TeamRow[], startsAt: string, durationMinutes: number, availability: AvailabilityMap) {
+  return new Set(teams.filter((team) => teamBlockedAt(team.id, startsAt, durationMinutes, availability)).map((team) => team.id));
 }
 
 function parseBlockOrder(value: string | undefined) {
@@ -253,6 +282,14 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
      WHERE teams.deleted_at IS NULL
      ORDER BY teams.division, centers.name, teams.name`
   );
+  const availabilityBlocks = await query<TeamAvailabilityBlockRow>(
+    `SELECT team_availability_blocks.*
+     FROM team_availability_blocks
+     JOIN teams ON teams.id = team_availability_blocks.team_id
+     WHERE teams.deleted_at IS NULL
+     ORDER BY team_availability_blocks.starts_at, team_availability_blocks.id`
+  );
+  const availability = buildAvailabilityMap(availabilityBlocks);
   const byDivision = new Map<string, TeamRow[]>();
   for (const team of teams) byDivision.set(team.division, [...(byDivision.get(team.division) || []), team]);
 
@@ -301,8 +338,11 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
         const queue = queues.get(next.division) || [];
         if (!queue.length) break;
         const rowMinute = dayStart + row * input.seedingMinutes;
+        const rowStartsAt = at(day, rowMinute);
         const eligible = (matchup: Matchup) => {
-          if (input.includeTuesday && dayIndex === 0) return matchup.a.early_available && matchup.b.early_available;
+          if (input.includeTuesday && dayIndex === 0 && (!matchup.a.early_available || !matchup.b.early_available)) return false;
+          if (teamBlockedAt(matchup.a.id, rowStartsAt, input.seedingMinutes, availability)) return false;
+          if (teamBlockedAt(matchup.b.id, rowStartsAt, input.seedingMinutes, availability)) return false;
           if (nextDayTournamentDivisions.has(matchup.division) && rowMinute >= preTournamentCutoff) return false;
           if (
             morningRestRows > 0 &&
@@ -328,7 +368,11 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
           break;
         }
         const assignments = assignCourts(rowMatchups, input.courts, courtCountsByTeam, matchupCourtCounts);
-        const unavailableTeamIds = new Set(assignments.flatMap(({ matchup }) => [matchup.a.id, matchup.b.id]));
+        const unavailableTeamIds = blockedTeamIdsAt(teams, rowStartsAt, input.seedingMinutes, availability);
+        for (const assignment of assignments) {
+          unavailableTeamIds.add(assignment.matchup.a.id);
+          unavailableTeamIds.add(assignment.matchup.b.id);
+        }
         for (const { matchup, court } of assignments) {
           teamGameCounts.set(matchup.a.id, (teamGameCounts.get(matchup.a.id) || 0) + 1);
           teamGameCounts.set(matchup.b.id, (teamGameCounts.get(matchup.b.id) || 0) + 1);
@@ -340,7 +384,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
             phase: "seeding",
             division: matchup.division,
             court,
-            startsAt: at(day, dayStart + row * input.seedingMinutes),
+            startsAt: rowStartsAt,
             team1Id: matchup.a.id,
             team2Id: matchup.b.id,
             refTeamId: chooseRefTeam(matchup.division, teams, matchup.a, matchup.b, unavailableTeamIds, refCounts),
@@ -359,14 +403,15 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
       const divTeams = byDivision.get(division) || [];
       for (const label of bracketLabels(divTeams.length)) {
         const daySlot = Math.floor(tournamentSlot / input.courts) % Math.max(1, Math.floor((end - start) / input.tournamentMinutes));
+        const startsAt = at(day, start + daySlot * input.tournamentMinutes);
         games.push({
           phase: "tournament",
           division,
           court: (tournamentSlot % input.courts) + 1,
-          startsAt: at(day, start + daySlot * input.tournamentMinutes),
+          startsAt,
           team1Id: null,
           team2Id: null,
-          refTeamId: chooseRefTeam(division, teams, null, null, new Set(), refCounts),
+          refTeamId: chooseRefTeam(division, teams, null, null, blockedTeamIdsAt(teams, startsAt, input.tournamentMinutes, availability), refCounts),
           label
         });
         tournamentSlot++;

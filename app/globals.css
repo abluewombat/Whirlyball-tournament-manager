@@ -225,12 +225,28 @@ th {
 
 .inline-form {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .stack {
   display: grid;
   gap: 14px;
+}
+
+.team-subsection {
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+.team-subsection h3 {
+  font-size: 16px;
+  margin: 0 0 10px;
+}
+
+.mini-table {
+  min-width: 620px;
 }
 
 .compact {

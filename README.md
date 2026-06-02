@@ -62,6 +62,7 @@ The database tables and default centers are created automatically on first reque
 - Center passcode dashboard for adding, editing, and soft-deleting that center's teams.
 - Teams are unique by center + division + team name.
 - Five-player roster limit per team.
+- Team-specific time blockers for travel/work constraints that the schedule generator respects.
 - Player shirt size and extra player-tied shirt orders.
 - Entry payment tracking with paid checkbox, amount, date, and method.
 - Admin dashboard for all centers, teams, passcodes, snapshots, and Excel export.

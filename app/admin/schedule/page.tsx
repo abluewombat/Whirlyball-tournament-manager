@@ -29,6 +29,23 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
   const teamCounts = await query<{ division: string; count: string }>(
     "SELECT division, COUNT(*) as count FROM teams WHERE deleted_at IS NULL GROUP BY division ORDER BY division"
   );
+  const availabilityBlocks = await query<{
+    id: number;
+    center: string;
+    division: string;
+    team: string;
+    starts_at: string;
+    ends_at: string;
+    reason: string | null;
+  }>(
+    `SELECT team_availability_blocks.id, centers.name as center, teams.division, teams.name as team,
+            team_availability_blocks.starts_at, team_availability_blocks.ends_at, team_availability_blocks.reason
+     FROM team_availability_blocks
+     JOIN teams ON teams.id = team_availability_blocks.team_id
+     JOIN centers ON centers.id = teams.center_id
+     WHERE teams.deleted_at IS NULL
+     ORDER BY team_availability_blocks.starts_at, centers.name, teams.name`
+  );
   const activeTeamCount = teamCounts.reduce((sum, row) => sum + Number(row.count), 0);
   const generatedCount = params.generated === undefined ? null : Number(params.generated);
   const unscheduledCount = params.unscheduled === undefined ? 0 : Number(params.unscheduled);
@@ -132,6 +149,40 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
             <button className="button">Generate Schedule</button>
           </div>
         </form>
+      </section>
+
+      <section className="section card">
+        <h2>Team Time Blockers</h2>
+        {availabilityBlocks.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Team</th>
+                  <th>Division</th>
+                  <th>Unavailable From</th>
+                  <th>Until</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {availabilityBlocks.map((block) => (
+                  <tr key={block.id}>
+                    <td>
+                      {block.center}: {block.team}
+                    </td>
+                    <td>{block.division}</td>
+                    <td>{displayDateTime(block.starts_at)}</td>
+                    <td>{displayDateTime(block.ends_at)}</td>
+                    <td>{block.reason || ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="muted">No team-specific blockers.</p>
+        )}
       </section>
 
       <section className="section">

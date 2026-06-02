@@ -160,6 +160,7 @@ async function main() {
     await client.query("DELETE FROM games");
     await client.query("DELETE FROM shirt_orders");
     await client.query("DELETE FROM players");
+    await client.query("DELETE FROM team_availability_blocks");
     await client.query("DELETE FROM teams");
 
     const centerIds = new Map();

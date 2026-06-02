@@ -1,8 +1,10 @@
 import {
+  addTeamAvailabilityBlockAction,
   addPlayerAction,
   addShirtOrderAction,
   addTeamAction,
   adminLogoutAction,
+  deleteTeamAvailabilityBlockAction,
   restoreSnapshotAction,
   restoreTeamAction,
   setCenterPasscodeAction,
@@ -15,7 +17,7 @@ import {
 import { requireAdmin } from "@/lib/auth";
 import { DIVISIONS, listCenters, query, SHIRT_SIZES } from "@/lib/db";
 import { dateInputValue, displayDateTime } from "@/lib/format";
-import { listPlayersByTeams, listShirtOrdersByPlayers, listTeams } from "@/lib/queries";
+import { listAvailabilityBlocksByTeams, listPlayersByTeams, listShirtOrdersByPlayers, listTeams } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +27,7 @@ export default async function AdminDashboardPage() {
   const teams = await listTeams(true);
   const activeTeams = teams.filter((team) => !team.deleted_at);
   const playersByTeam = await listPlayersByTeams(activeTeams.map((team) => team.id), true);
+  const availabilityBlocksByTeam = await listAvailabilityBlocksByTeams(activeTeams.map((team) => team.id));
   const playerIds = [...playersByTeam.values()].flat().map((player) => player.id);
   const shirtsByPlayer = await listShirtOrdersByPlayers(playerIds);
   const snapshots = await query<{
@@ -120,6 +123,7 @@ export default async function AdminDashboardPage() {
       <section className="section stack">
         {teams.map((team) => {
           const players = playersByTeam.get(team.id) || [];
+          const availabilityBlocks = availabilityBlocksByTeam.get(team.id) || [];
           return (
             <article className="card" key={team.id}>
               <form action={updateTeamAction} className="form-grid">
@@ -147,13 +151,13 @@ export default async function AdminDashboardPage() {
                 </label>
                 <div className="actions">
                   {team.deleted_at ? (
-                    <button className="button" formAction={restoreTeamAction} name="team_id" value={team.id}>
+                    <button className="button" formAction={restoreTeamAction}>
                       Restore Team
                     </button>
                   ) : (
                     <>
                       <button className="button">Save Team</button>
-                      <button className="button danger" formAction={softDeleteTeamAction} name="team_id" value={team.id}>
+                      <button className="button danger" formAction={softDeleteTeamAction}>
                         Delete Team
                       </button>
                     </>
@@ -163,6 +167,61 @@ export default async function AdminDashboardPage() {
 
               {!team.deleted_at ? (
                 <>
+                  <div className="team-subsection">
+                    <h3>Time Blockers</h3>
+                    {availabilityBlocks.length ? (
+                      <div className="table-wrap">
+                        <table className="mini-table">
+                          <thead>
+                            <tr>
+                              <th>Unavailable From</th>
+                              <th>Until</th>
+                              <th>Reason</th>
+                              <th></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {availabilityBlocks.map((block) => (
+                              <tr key={block.id}>
+                                <td>{displayDateTime(block.starts_at)}</td>
+                                <td>{displayDateTime(block.ends_at)}</td>
+                                <td>{block.reason || ""}</td>
+                                <td>
+                                  <form action={deleteTeamAvailabilityBlockAction}>
+                                    <input name="admin" type="hidden" value="1" />
+                                    <input name="block_id" type="hidden" value={block.id} />
+                                    <button className="button danger">Remove</button>
+                                  </form>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="muted">No team-specific blockers.</p>
+                    )}
+                    <form action={addTeamAvailabilityBlockAction} className="form-grid">
+                      <input name="admin" type="hidden" value="1" />
+                      <input name="team_id" type="hidden" value={team.id} />
+                      <label>
+                        Unavailable from
+                        <input name="starts_at" type="datetime-local" required />
+                      </label>
+                      <label>
+                        Until
+                        <input name="ends_at" type="datetime-local" required />
+                      </label>
+                      <label>
+                        Reason
+                        <input name="reason" placeholder="Travel, work, late arrival" />
+                      </label>
+                      <div className="actions">
+                        <button className="button secondary">Add Blocker</button>
+                      </div>
+                    </form>
+                  </div>
+
                   <div className="table-wrap section">
                     <table>
                       <thead>

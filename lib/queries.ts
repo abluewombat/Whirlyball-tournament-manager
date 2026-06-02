@@ -10,6 +10,14 @@ export type TeamRow = {
   deleted_at: string | null;
 };
 
+export type TeamAvailabilityBlockRow = {
+  id: number;
+  team_id: number;
+  starts_at: string;
+  ends_at: string;
+  reason: string | null;
+};
+
 export type PlayerRow = {
   id: number;
   team_id: number;
@@ -60,6 +68,17 @@ export async function listPlayersByTeams(teamIds: number[], includeDeleted = fal
     [teamIds]
   );
   const map = new Map<number, PlayerRow[]>();
+  for (const row of rows) map.set(row.team_id, [...(map.get(row.team_id) || []), row]);
+  return map;
+}
+
+export async function listAvailabilityBlocksByTeams(teamIds: number[]) {
+  if (teamIds.length === 0) return new Map<number, TeamAvailabilityBlockRow[]>();
+  const rows = await query<TeamAvailabilityBlockRow>(
+    "SELECT * FROM team_availability_blocks WHERE team_id = ANY($1::int[]) ORDER BY starts_at, id",
+    [teamIds]
+  );
+  const map = new Map<number, TeamAvailabilityBlockRow[]>();
   for (const row of rows) map.set(row.team_id, [...(map.get(row.team_id) || []), row]);
   return map;
 }

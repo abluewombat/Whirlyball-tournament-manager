@@ -1,17 +1,19 @@
 import {
+  addTeamAvailabilityBlockAction,
   addPlayerAction,
   addShirtOrderAction,
   addTeamAction,
   centerLogoutAction,
+  deleteTeamAvailabilityBlockAction,
   softDeletePlayerAction,
   softDeleteTeamAction,
   updatePlayerAction,
   updateTeamAction
 } from "@/app/actions";
 import { DIVISIONS, query, SHIRT_SIZES } from "@/lib/db";
-import { dateInputValue } from "@/lib/format";
+import { dateInputValue, displayDateTime } from "@/lib/format";
 import { requireCenterId } from "@/lib/auth";
-import { listPlayersByTeams, listShirtOrdersByPlayers, listTeamsForCenter } from "@/lib/queries";
+import { listAvailabilityBlocksByTeams, listPlayersByTeams, listShirtOrdersByPlayers, listTeamsForCenter } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +22,7 @@ export default async function CenterDashboardPage() {
   const [center] = await query<{ name: string }>("SELECT name FROM centers WHERE id = $1", [centerId]);
   const teams = await listTeamsForCenter(centerId);
   const playersByTeam = await listPlayersByTeams(teams.map((team) => team.id));
+  const availabilityBlocksByTeam = await listAvailabilityBlocksByTeams(teams.map((team) => team.id));
   const playerIds = [...playersByTeam.values()].flat().map((player) => player.id);
   const shirtsByPlayer = await listShirtOrdersByPlayers(playerIds);
 
@@ -60,6 +63,7 @@ export default async function CenterDashboardPage() {
       <section className="section stack">
         {teams.map((team) => {
           const players = playersByTeam.get(team.id) || [];
+          const availabilityBlocks = availabilityBlocksByTeam.get(team.id) || [];
           return (
             <article className="card" key={team.id}>
               <form action={updateTeamAction} className="form-grid">
@@ -82,11 +86,64 @@ export default async function CenterDashboardPage() {
                 </label>
                 <div className="actions">
                   <button className="button">Save Team</button>
-                  <button className="button danger" formAction={softDeleteTeamAction} name="team_id" value={team.id}>
+                  <button className="button danger" formAction={softDeleteTeamAction}>
                     Delete Team
                   </button>
                 </div>
               </form>
+
+              <div className="team-subsection">
+                <h3>Time Blockers</h3>
+                {availabilityBlocks.length ? (
+                  <div className="table-wrap">
+                    <table className="mini-table">
+                      <thead>
+                        <tr>
+                          <th>Unavailable From</th>
+                          <th>Until</th>
+                          <th>Reason</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {availabilityBlocks.map((block) => (
+                          <tr key={block.id}>
+                            <td>{displayDateTime(block.starts_at)}</td>
+                            <td>{displayDateTime(block.ends_at)}</td>
+                            <td>{block.reason || ""}</td>
+                            <td>
+                              <form action={deleteTeamAvailabilityBlockAction}>
+                                <input name="block_id" type="hidden" value={block.id} />
+                                <button className="button danger">Remove</button>
+                              </form>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="muted">No team-specific blockers.</p>
+                )}
+                <form action={addTeamAvailabilityBlockAction} className="form-grid">
+                  <input name="team_id" type="hidden" value={team.id} />
+                  <label>
+                    Unavailable from
+                    <input name="starts_at" type="datetime-local" required />
+                  </label>
+                  <label>
+                    Until
+                    <input name="ends_at" type="datetime-local" required />
+                  </label>
+                  <label>
+                    Reason
+                    <input name="reason" placeholder="Travel, work, late arrival" />
+                  </label>
+                  <div className="actions">
+                    <button className="button secondary">Add Blocker</button>
+                  </div>
+                </form>
+              </div>
 
               <div className="table-wrap section">
                 <table>

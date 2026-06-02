@@ -47,6 +47,14 @@ export async function GET() {
      JOIN centers ON centers.id = teams.center_id
      WHERE shirt_orders.deleted_at IS NULL ORDER BY center, team, player`
   );
+  const availabilityBlocks = await query(
+    `SELECT centers.name as center, teams.division, teams.name as team,
+            team_availability_blocks.starts_at, team_availability_blocks.ends_at, team_availability_blocks.reason
+     FROM team_availability_blocks
+     JOIN teams ON teams.id = team_availability_blocks.team_id
+     JOIN centers ON centers.id = teams.center_id
+     ORDER BY team_availability_blocks.starts_at, center, team`
+  );
   const games = await query<GameExportRow>(
     `SELECT games.division, games.court, games.starts_at,
             t1.name as team_1, t2.name as team_2, tr.name as ref_team, games.label
@@ -66,6 +74,7 @@ export async function GET() {
   addObjectSheet(workbook, "Teams", teams);
   addObjectSheet(workbook, "Players", players);
   addObjectSheet(workbook, "Extra Shirts", shirts);
+  addObjectSheet(workbook, "Time Blockers", availabilityBlocks);
 
   const buffer = await workbook.xlsx.writeBuffer();
   return new Response(new Uint8Array(buffer), {
@@ -208,21 +217,43 @@ function buildScheduleGrid(games: GameExportRow[]) {
 }
 
 function formatDay(value: string) {
+  const literal = literalDateTimeParts(value);
+  if (literal) return literal.day;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value.slice(0, 10);
   return date.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
 }
 
 function formatTime(value: string) {
+  const literal = literalDateTimeParts(value);
+  if (literal) return literal.time;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value.slice(11, 16);
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
+function literalDateTimeParts(value: string) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!match) return null;
+  const [, year, month, day, hour, minute] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  if (Number.isNaN(date.getTime())) return null;
+  return {
+    day: date.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" }),
+    time: formatClock(Number(hour), minute)
+  };
+}
+
+function formatClock(hour: number, minute: string) {
+  const suffix = hour >= 12 ? "PM" : "AM";
+  const displayHour = hour % 12 || 12;
+  return `${displayHour}:${minute} ${suffix}`;
+}
+
 function formatValue(value: unknown) {
   if (value instanceof Date) return value.toISOString().slice(0, 10);
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) return value.slice(0, 10);
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) return `${formatDay(value)} ${formatTime(value)}`;
   return value ?? "";
 }
 

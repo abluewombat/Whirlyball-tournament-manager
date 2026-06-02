@@ -20,6 +20,10 @@ function checkbox(formData: FormData, key: string) {
   return formData.get(key) === "on";
 }
 
+function dateTimeMs(value: string) {
+  return Date.parse(`${value.length === 16 ? `${value}:00` : value}Z`);
+}
+
 function safeDivision(value: string) {
   return DIVISIONS.includes(value as never) ? value : "D";
 }
@@ -82,6 +86,56 @@ export async function updateTeamAction(formData: FormData) {
   revalidatePath("/");
   revalidatePath("/center/dashboard");
   revalidatePath("/admin/dashboard");
+}
+
+export async function addTeamAvailabilityBlockAction(formData: FormData) {
+  const adminEdit = formData.has("admin");
+  if (adminEdit) await requireAdmin();
+  const centerId = adminEdit ? null : await requireCenterId();
+  const teamId = num(formData, "team_id");
+  if (!adminEdit) {
+    const owned = await query("SELECT id FROM teams WHERE id = $1 AND center_id = $2 AND deleted_at IS NULL", [teamId, centerId]);
+    if (!owned.length) return;
+  }
+
+  const startsAt = text(formData, "starts_at");
+  const endsAt = text(formData, "ends_at");
+  const startMs = dateTimeMs(startsAt);
+  const endMs = dateTimeMs(endsAt);
+  if (!startsAt || !endsAt || Number.isNaN(startMs) || Number.isNaN(endMs) || endMs <= startMs) return;
+
+  await exec("INSERT INTO team_availability_blocks (team_id, starts_at, ends_at, reason) VALUES ($1, $2, $3, $4)", [
+    teamId,
+    startsAt,
+    endsAt,
+    text(formData, "reason") || null
+  ]);
+  revalidatePath("/center/dashboard");
+  revalidatePath("/admin/dashboard");
+  revalidatePath("/admin/schedule");
+}
+
+export async function deleteTeamAvailabilityBlockAction(formData: FormData) {
+  const adminEdit = formData.has("admin");
+  if (adminEdit) await requireAdmin();
+  const centerId = adminEdit ? null : await requireCenterId();
+  const blockId = num(formData, "block_id");
+  await exec(
+    `DELETE FROM team_availability_blocks
+     WHERE id = $1 ${
+       adminEdit
+         ? ""
+         : `AND EXISTS (
+              SELECT 1 FROM teams
+              WHERE teams.id = team_availability_blocks.team_id
+                AND teams.center_id = $2
+            )`
+     }`,
+    adminEdit ? [blockId] : [blockId, centerId]
+  );
+  revalidatePath("/center/dashboard");
+  revalidatePath("/admin/dashboard");
+  revalidatePath("/admin/schedule");
 }
 
 export async function softDeleteTeamAction(formData: FormData) {

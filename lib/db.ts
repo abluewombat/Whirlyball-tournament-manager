@@ -48,6 +48,16 @@ export async function initDb() {
         UNIQUE(center_id, division, name)
       );
 
+      CREATE TABLE IF NOT EXISTS team_availability_blocks (
+        id SERIAL PRIMARY KEY,
+        team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+        starts_at TIMESTAMPTZ NOT NULL,
+        ends_at TIMESTAMPTZ NOT NULL,
+        reason TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CHECK (ends_at > starts_at)
+      );
+
       CREATE TABLE IF NOT EXISTS players (
         id SERIAL PRIMARY KEY,
         team_id INTEGER NOT NULL REFERENCES teams(id),
@@ -102,6 +112,9 @@ export async function initDb() {
         data_json JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+
+      CREATE INDEX IF NOT EXISTS idx_team_availability_blocks_team_id
+        ON team_availability_blocks(team_id);
     `);
 
     const count = await query<{ count: string }>("SELECT COUNT(*) as count FROM centers");
@@ -162,7 +175,7 @@ function normalizeRow<T extends QueryResultRow>(row: T): T {
 }
 
 export async function getFullState() {
-  const tables = ["centers", "teams", "players", "shirt_orders", "schedule_settings", "games"];
+  const tables = ["centers", "teams", "team_availability_blocks", "players", "shirt_orders", "schedule_settings", "games"];
   const entries = await Promise.all(tables.map(async (table) => [table, await query(`SELECT * FROM ${table}`)] as const));
   return Object.fromEntries(entries);
 }
@@ -181,10 +194,10 @@ export async function restoreSnapshot(id: number) {
 
   const data = snapshot.data_json;
   await withTransaction(async (client) => {
-    for (const table of ["games", "shirt_orders", "players", "teams", "schedule_settings", "centers"]) {
+    for (const table of ["games", "shirt_orders", "players", "team_availability_blocks", "teams", "schedule_settings", "centers"]) {
       await client.query(`DELETE FROM ${table}`);
     }
-    for (const table of ["centers", "teams", "players", "shirt_orders", "schedule_settings", "games"]) {
+    for (const table of ["centers", "teams", "team_availability_blocks", "players", "shirt_orders", "schedule_settings", "games"]) {
       for (const row of data[table] || []) {
         const keys = Object.keys(row);
         const cols = keys.join(", ");
