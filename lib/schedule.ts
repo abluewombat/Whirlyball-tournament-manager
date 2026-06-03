@@ -927,6 +927,71 @@ function nearestPlayingGapMinutes(teamId: number, startsAt: string, durationMinu
   };
 }
 
+function sameDayTeamAssignments(teamId: number, startsAt: string, games: GeneratedGame[], currentGame: GeneratedGame, input: ScheduleInput) {
+  const day = startsAt.slice(0, 10);
+  return games
+    .filter((game) => game !== currentGame && game.startsAt.slice(0, 10) === day && (teamPlaysInGame(teamId, game) || game.refTeamId === teamId))
+    .map((game) => ({
+      startsAt: game.startsAt,
+      durationMinutes: gameDurationMinutes(game, input),
+      role: teamPlaysInGame(teamId, game) ? "play" : "ref"
+    }))
+    .sort((left, right) => left.startsAt.localeCompare(right.startsAt));
+}
+
+function assignmentWindowMinutes(assignments: Array<{ startsAt: string; durationMinutes: number }>, extra?: { startsAt: string; durationMinutes: number }) {
+  const all = extra ? [...assignments, extra] : assignments;
+  if (!all.length) return 0;
+  const starts = all.map((assignment) => parseScheduleDateTime(assignment.startsAt));
+  const ends = all.map((assignment) => parseScheduleDateTime(assignment.startsAt) + assignment.durationMinutes * 60_000);
+  return Math.round((Math.max(...ends) - Math.min(...starts)) / 60_000);
+}
+
+function nearestAssignmentGapMinutes(assignments: Array<{ startsAt: string; durationMinutes: number }>, startsAt: string, durationMinutes: number) {
+  if (!assignments.length) return 720;
+  return Math.min(...assignments.map((assignment) => intervalGapMinutes(startsAt, durationMinutes, assignment.startsAt, assignment.durationMinutes)));
+}
+
+function dailyExperiencePenalty(teamId: number, game: GeneratedGame, games: GeneratedGame[], currentGame: GeneratedGame, input: ScheduleInput) {
+  const durationMinutes = gameDurationMinutes(game, input);
+  const assignments = sameDayTeamAssignments(teamId, game.startsAt, games, currentGame, input);
+  const plays = assignments.filter((assignment) => assignment.role === "play");
+  const refs = assignments.filter((assignment) => assignment.role === "ref");
+  const nearestAnyGap = nearestAssignmentGapMinutes(assignments, game.startsAt, durationMinutes);
+  const nearestRefGap = nearestAssignmentGapMinutes(refs, game.startsAt, durationMinutes);
+  const nearestPlayGap = nearestAssignmentGapMinutes(plays, game.startsAt, durationMinutes);
+  const totalWindow = assignmentWindowMinutes(assignments, { startsAt: game.startsAt, durationMinutes });
+  const playWindow = assignmentWindowMinutes(plays);
+  const refWindow = assignmentWindowMinutes(refs, { startsAt: game.startsAt, durationMinutes });
+  const refsAfterThis = refs.length + 1;
+
+  let penalty = 0;
+
+  if (plays.length) {
+    const extension = Math.max(0, totalWindow - Math.max(playWindow, durationMinutes));
+    penalty += Math.max(0, nearestPlayGap - 80) * 10;
+    penalty += Math.max(0, extension - 160) * 12;
+    if (nearestPlayGap <= 40) penalty -= 220;
+    if (refsAfterThis > 2) penalty += (refsAfterThis - 2) * 900;
+    if (refsAfterThis > plays.length + 1) penalty += (refsAfterThis - plays.length - 1) * 350;
+  } else {
+    penalty += 1_100;
+    if (refs.length === 0) {
+      penalty += game.phase === "tournament" ? 450 : 220;
+    } else {
+      penalty += Math.max(0, nearestRefGap - 80) * 55;
+      penalty += Math.max(0, refWindow - 160) * 70;
+      if (nearestRefGap <= 40) penalty -= 450;
+    }
+    if (refsAfterThis > 2) penalty += (refsAfterThis - 2) * 1_200;
+    if (refsAfterThis > 3) penalty += (refsAfterThis - 3) * 6_000;
+    if (refWindow > 240) penalty += (refWindow - 240) * 35;
+  }
+
+  if (nearestAnyGap >= 180) penalty += (nearestAnyGap - 160) * 6;
+  return penalty;
+}
+
 function tournamentDivisionsByDate(tournamentDays: Date[]) {
   return new Map(tournamentDays.map((day, dayIndex) => [isoDate(day), new Set(tournamentDivisionsForDay(dayIndex))]));
 }
@@ -957,14 +1022,16 @@ function refScore({
   const tournamentDayPenalty = game.phase === "tournament" && tournamentDivisions.has(team.division) ? 5_000 : 0;
   const sameDivisionTournamentPenalty = game.phase === "tournament" && team.division === game.division ? 5_000 : 0;
   const sameDayPenalty = nearest.sameDay ? 0 : 500;
+  const experiencePenalty = dailyExperiencePenalty(team.id, game, games, game, input);
   const divisionDistance = Math.abs((rank[team.division] || 2) - (rank[game.division] || 2));
 
   return (
     tournamentDayPenalty +
     sameDivisionTournamentPenalty +
     sameCenterPenalty +
-    (refCounts.get(team.id) || 0) * 180 +
-    nearest.gap +
+    experiencePenalty +
+    (refCounts.get(team.id) || 0) * 115 +
+    nearest.gap * 0.35 +
     sameDayPenalty +
     divisionDistance * 20
   );
