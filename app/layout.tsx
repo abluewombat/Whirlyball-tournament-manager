@@ -15,6 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="brand">Whirlyball Manager</div>
             <nav className="nav">
               <a href="/">Public Teams</a>
+              <a href="/schedule">Public Schedule</a>
               <a href="/center">Center Login</a>
               <a href="/admin">Admin</a>
             </nav>

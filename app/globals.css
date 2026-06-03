@@ -109,6 +109,10 @@ a {
   max-width: 680px;
 }
 
+.hero-actions {
+  margin-top: 18px !important;
+}
+
 .section {
   margin-top: 28px;
 }
@@ -271,6 +275,118 @@ th {
 
 .compact {
   max-width: 520px;
+}
+
+.schedule-page {
+  max-width: 1440px;
+}
+
+.schedule-grid-section {
+  display: grid;
+  gap: 12px;
+}
+
+.schedule-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.legend-chip {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 10px;
+}
+
+.schedule-grid-wrap {
+  border: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.schedule-grid-table {
+  min-width: 980px;
+}
+
+.schedule-grid-table th {
+  background: #176b87;
+  color: white;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.schedule-grid-table td,
+.schedule-grid-table th {
+  border: 1px solid var(--line);
+  padding: 9px 10px;
+  vertical-align: middle;
+}
+
+.schedule-day,
+.schedule-time {
+  background: #f7f7f2;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.schedule-game-cell {
+  color: white;
+  font-weight: 700;
+  min-width: 260px;
+}
+
+.schedule-ref-cell {
+  color: var(--ink);
+  font-weight: 700;
+  min-width: 150px;
+}
+
+.schedule-game-cell.division-a,
+.legend-chip.division-a {
+  background: #a04a12;
+}
+
+.schedule-game-cell.division-b,
+.legend-chip.division-b {
+  background: #245f94;
+}
+
+.schedule-game-cell.division-c,
+.legend-chip.division-c {
+  background: #3f6f31;
+}
+
+.schedule-game-cell.division-d,
+.legend-chip.division-d {
+  background: #9b7600;
+}
+
+.schedule-game-cell.division-unlimited,
+.legend-chip.division-unlimited {
+  background: #6f5595;
+}
+
+.schedule-ref-cell.division-a {
+  background: #fce4d6;
+}
+
+.schedule-ref-cell.division-b {
+  background: #ddebf7;
+}
+
+.schedule-ref-cell.division-c {
+  background: #e2f0d9;
+}
+
+.schedule-ref-cell.division-d {
+  background: #fff2cc;
+}
+
+.schedule-ref-cell.division-unlimited {
+  background: #eadcf8;
 }
 
 @media (max-width: 680px) {

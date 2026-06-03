@@ -1,4 +1,5 @@
 import { DIVISIONS } from "@/lib/db";
+import { query } from "@/lib/db";
 import { listPlayersByTeams, listTeams } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
@@ -6,6 +7,8 @@ export const dynamic = "force-dynamic";
 export default async function PublicTeamsPage() {
   const teams = await listTeams(false);
   const playersByTeam = await listPlayersByTeams(teams.map((team) => team.id));
+  const [scheduleCount] = await query<{ count: string }>("SELECT COUNT(*) as count FROM games");
+  const hasSchedule = Number(scheduleCount?.count || 0) > 0;
 
   return (
     <>
@@ -13,6 +16,13 @@ export default async function PublicTeamsPage() {
         <div>
           <h1>Whirlyball Teams</h1>
           <p>Public registration view for centers, divisions, team names, and player rosters.</p>
+          {hasSchedule ? (
+            <p className="hero-actions">
+              <a className="button" href="/schedule">
+                View Public Schedule
+              </a>
+            </p>
+          ) : null}
         </div>
       </section>
       <main className="content">
