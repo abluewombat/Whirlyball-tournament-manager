@@ -35,3 +35,21 @@ export async function requireAdmin() {
 export async function logoutAdmin() {
   (await cookies()).delete("admin_session");
 }
+
+export async function loginScorekeeper(passcode: string) {
+  const [settings] = await query<{ scorekeeper_passcode_hash: string }>("SELECT scorekeeper_passcode_hash FROM event_settings WHERE id = 1");
+  if (!settings || !verifySecret(passcode, settings.scorekeeper_passcode_hash)) return false;
+  (await cookies()).set("scorekeeper_session", sign("scorekeeper"), { httpOnly: true, sameSite: "lax", path: "/" });
+  return true;
+}
+
+export async function requireScorekeeperOrAdmin() {
+  const jar = await cookies();
+  if (unsign(jar.get("admin_session")?.value) === "admin") return;
+  if (unsign(jar.get("scorekeeper_session")?.value) === "scorekeeper") return;
+  redirect("/score");
+}
+
+export async function logoutScorekeeper() {
+  (await cookies()).delete("scorekeeper_session");
+}

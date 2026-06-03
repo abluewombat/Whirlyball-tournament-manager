@@ -3,10 +3,21 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createSnapshot, DIVISIONS, exec, query, restoreSnapshot, SHIRT_SIZES, withTransaction } from "@/lib/db";
-import { loginAdmin, loginCenter, logoutAdmin, logoutCenter, requireAdmin, requireCenterId } from "@/lib/auth";
+import {
+  loginAdmin,
+  loginCenter,
+  loginScorekeeper,
+  logoutAdmin,
+  logoutCenter,
+  logoutScorekeeper,
+  requireAdmin,
+  requireCenterId,
+  requireScorekeeperOrAdmin
+} from "@/lib/auth";
 import { hashSecret } from "@/lib/security";
 import { generateSchedule } from "@/lib/schedule";
 import { scheduleDefaults } from "@/lib/schedule-defaults";
+import { maybeCreateBracketForDivision, rebuildBracketForDivision, scoreBracketGame } from "@/lib/brackets";
 
 function text(formData: FormData, key: string) {
   return String(formData.get(key) || "").trim();
@@ -42,6 +53,17 @@ export async function centerLoginAction(formData: FormData) {
 export async function centerLogoutAction() {
   await logoutCenter();
   redirect("/center");
+}
+
+export async function scorekeeperLoginAction(formData: FormData) {
+  const ok = await loginScorekeeper(text(formData, "passcode"));
+  if (!ok) redirect("/score?error=1");
+  redirect("/score");
+}
+
+export async function scorekeeperLogoutAction() {
+  await logoutScorekeeper();
+  redirect("/score");
 }
 
 export async function adminLoginAction(formData: FormData) {
@@ -274,6 +296,62 @@ export async function setCenterPasscodeAction(formData: FormData) {
   revalidatePath("/admin/dashboard");
 }
 
+export async function setScorekeeperPasscodeAction(formData: FormData) {
+  await requireAdmin();
+  const passcode = text(formData, "passcode");
+  if (passcode) {
+    await exec("UPDATE event_settings SET scorekeeper_passcode_hash = $1, updated_at = NOW() WHERE id = 1", [hashSecret(passcode)]);
+  }
+  revalidatePath("/admin/dashboard");
+}
+
+export async function updateAnnouncementAction(formData: FormData) {
+  await requireAdmin();
+  await exec("UPDATE event_settings SET announcement = $1, updated_at = NOW() WHERE id = 1", [text(formData, "announcement") || null]);
+  revalidatePath("/");
+  revalidatePath("/schedule");
+  revalidatePath("/brackets");
+}
+
+export async function submitBlockerRequestAction(formData: FormData) {
+  const teamId = num(formData, "team_id");
+  const startsAt = text(formData, "starts_at");
+  const endsAt = text(formData, "ends_at");
+  const startMs = dateTimeMs(startsAt);
+  const endMs = dateTimeMs(endsAt);
+  if (!teamId || !startsAt || !endsAt || Number.isNaN(startMs) || Number.isNaN(endMs) || endMs <= startMs) redirect("/requests?error=1");
+  await exec("INSERT INTO blocker_requests (team_id, starts_at, ends_at, reason) VALUES ($1, $2, $3, $4)", [
+    teamId,
+    startsAt,
+    endsAt,
+    text(formData, "reason") || null
+  ]);
+  redirect("/requests?submitted=1");
+}
+
+export async function reviewBlockerRequestAction(formData: FormData) {
+  await requireAdmin();
+  const requestId = num(formData, "request_id");
+  const decision = text(formData, "decision") === "approved" ? "approved" : "rejected";
+  const [request] = await query<{ team_id: number; starts_at: string; ends_at: string; reason: string | null }>("SELECT * FROM blocker_requests WHERE id = $1", [
+    requestId
+  ]);
+  if (!request) return;
+  await withTransaction(async (client) => {
+    await client.query("UPDATE blocker_requests SET status = $1, reviewed_at = NOW() WHERE id = $2", [decision, requestId]);
+    if (decision === "approved") {
+      await client.query("INSERT INTO team_availability_blocks (team_id, starts_at, ends_at, reason) VALUES ($1, $2, $3, $4)", [
+        request.team_id,
+        request.starts_at,
+        request.ends_at,
+        request.reason
+      ]);
+    }
+  });
+  revalidatePath("/admin/dashboard");
+  revalidatePath("/admin/schedule");
+}
+
 export async function snapshotAction(formData: FormData) {
   await requireAdmin();
   await createSnapshot(text(formData, "label") || "Manual snapshot");
@@ -354,4 +432,41 @@ export async function moveScheduleGameAction(input: { gameId: number; startsAt: 
 
   revalidatePath("/admin/schedule");
   revalidatePath("/schedule");
+}
+
+export async function submitGameScoreAction(formData: FormData) {
+  await requireScorekeeperOrAdmin();
+  const gameId = num(formData, "game_id");
+  const team1Score = num(formData, "team_1_score");
+  const team2Score = num(formData, "team_2_score");
+  const [game] = await query<{ division: string; team_1_id: number | null; team_2_id: number | null }>("SELECT * FROM games WHERE id = $1", [gameId]);
+  if (!game || game.team_1_id === null || game.team_2_id === null) return;
+  const winnerId = team1Score >= team2Score ? game.team_1_id : game.team_2_id;
+  const loserId = winnerId === game.team_1_id ? game.team_2_id : game.team_1_id;
+  await exec(
+    `UPDATE games
+     SET team_1_score = $1, team_2_score = $2, winner_team_id = $3, loser_team_id = $4,
+         scored_by = 'scorekeeper', scored_at = NOW()
+     WHERE id = $5`,
+    [team1Score, team2Score, winnerId, loserId, gameId]
+  );
+  await maybeCreateBracketForDivision(game.division);
+  revalidatePath("/score");
+  revalidatePath("/schedule");
+  revalidatePath("/standings");
+  revalidatePath("/brackets");
+}
+
+export async function submitBracketScoreAction(formData: FormData) {
+  await requireScorekeeperOrAdmin();
+  await scoreBracketGame(num(formData, "bracket_game_id"), num(formData, "team_1_score"), num(formData, "team_2_score"));
+  revalidatePath("/score");
+  revalidatePath("/brackets");
+}
+
+export async function rebuildBracketAction(formData: FormData) {
+  await requireAdmin();
+  await rebuildBracketForDivision(safeDivision(text(formData, "division")));
+  revalidatePath("/brackets");
+  revalidatePath("/score");
 }

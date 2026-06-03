@@ -1,4 +1,5 @@
 import { query } from "@/lib/db";
+import { LiveRefresh } from "@/app/live-refresh";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,8 @@ type PublicScheduleGame = {
   team_2: string | null;
   ref_team: string | null;
   ref_team_division: string | null;
+  team_1_score: number | null;
+  team_2_score: number | null;
   label: string | null;
 };
 
@@ -21,8 +24,10 @@ type ScheduleGridRow = {
   court1RefDivision: string;
   court1Game: string;
   court1Division: string;
+  court1Scored: boolean;
   court2Game: string;
   court2Division: string;
+  court2Scored: boolean;
   court2Ref: string;
   court2RefDivision: string;
 };
@@ -38,6 +43,7 @@ const divisionClassNames: Record<string, string> = {
 export default async function PublicSchedulePage() {
   const games = await query<PublicScheduleGame>(
     `SELECT games.phase, games.division, games.court, games.starts_at,
+            games.team_1_score, games.team_2_score,
             t1.name as team_1, t2.name as team_2,
             tr.name as ref_team, tr.division as ref_team_division, games.label
      FROM games
@@ -51,6 +57,7 @@ export default async function PublicSchedulePage() {
 
   return (
     <main className="content schedule-page">
+      <LiveRefresh seconds={30} />
       <div className="section-heading">
         <div>
           <h1>Public Schedule</h1>
@@ -90,8 +97,8 @@ export default async function PublicSchedulePage() {
                     <td className="schedule-day">{row.day}</td>
                     <td className="schedule-time">{row.time}</td>
                     <td className={refCellClass(row.court1RefDivision)}>{row.court1Ref}</td>
-                    <td className={gameCellClass(row.court1Division)}>{row.court1Game}</td>
-                    <td className={gameCellClass(row.court2Division)}>{row.court2Game}</td>
+                    <td className={gameCellClass(row.court1Division, row.court1Scored)}>{row.court1Game}</td>
+                    <td className={gameCellClass(row.court2Division, row.court2Scored)}>{row.court2Game}</td>
                     <td className={refCellClass(row.court2RefDivision)}>{row.court2Ref}</td>
                   </tr>
                 ))}
@@ -122,21 +129,27 @@ function buildScheduleGrid(games: PublicScheduleGame[]) {
         court1RefDivision: "",
         court1Game: "",
         court1Division: "",
+        court1Scored: false,
         court2Game: "",
         court2Division: "",
+        court2Scored: false,
         court2Ref: "",
         court2RefDivision: ""
       };
-    const gameText = game.team_1 && game.team_2 ? `${game.division}: ${game.team_1} vs. ${game.team_2}` : `${game.division}: ${game.label || "Game"}`;
+    const scoreText = game.team_1_score !== null && game.team_2_score !== null ? ` (${game.team_1_score}-${game.team_2_score})` : "";
+    const gameText = game.team_1 && game.team_2 ? `${game.division}: ${game.team_1} vs. ${game.team_2}${scoreText}` : `${game.division}: ${game.label || "Game"}${scoreText}`;
+    const scored = game.team_1_score !== null && game.team_2_score !== null;
 
     if (game.court === 1) {
       row.court1Ref = game.ref_team || "";
       row.court1RefDivision = game.ref_team_division || "";
       row.court1Game = gameText;
       row.court1Division = game.division;
+      row.court1Scored = scored;
     } else if (game.court === 2) {
       row.court2Game = gameText;
       row.court2Division = game.division;
+      row.court2Scored = scored;
       row.court2Ref = game.ref_team || "";
       row.court2RefDivision = game.ref_team_division || "";
     }
@@ -147,8 +160,8 @@ function buildScheduleGrid(games: PublicScheduleGame[]) {
   return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row);
 }
 
-function gameCellClass(division: string) {
-  return `schedule-game-cell ${divisionClassNames[division] || ""}`.trim();
+function gameCellClass(division: string, scored = false) {
+  return `schedule-game-cell ${divisionClassNames[division] || ""} ${scored ? "muted-game-row" : ""}`.trim();
 }
 
 function refCellClass(division: string) {

@@ -39,6 +39,15 @@ a {
   padding: 14px 24px;
 }
 
+.announcement-banner {
+  background: #fff2cc;
+  border-bottom: 1px solid #d8ba5c;
+  color: #4f3b00;
+  font-weight: 700;
+  padding: 10px 24px;
+  text-align: center;
+}
+
 .brand {
   font-size: 18px;
   font-weight: 700;
@@ -387,6 +396,77 @@ th {
 
 .schedule-ref-cell.division-unlimited {
   background: #eadcf8;
+}
+
+.muted-game-row {
+  filter: grayscale(0.35);
+  opacity: 0.68;
+}
+
+.bracket-page {
+  max-width: 1500px;
+}
+
+.bracket-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.bracket-scroll {
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.bracket-rounds {
+  display: grid;
+  gap: 14px;
+  min-width: 900px;
+}
+
+.bracket-round {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.bracket-round h4 {
+  margin: 0;
+}
+
+.bracket-game {
+  background: #f7f7f2;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+}
+
+.bracket-team {
+  align-items: center;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 7px 9px;
+}
+
+.bracket-team.winner {
+  border-color: var(--ok);
+  box-shadow: inset 4px 0 0 var(--ok);
+  font-weight: 700;
+}
+
+.qr-code {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  height: 150px;
+  width: 150px;
 }
 
 .schedule-editor-toolbar {

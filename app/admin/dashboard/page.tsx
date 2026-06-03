@@ -1,9 +1,12 @@
 import {
   addTeamAction,
   adminLogoutAction,
+  reviewBlockerRequestAction,
   restoreSnapshotAction,
   setCenterPasscodeAction,
-  snapshotAction
+  setScorekeeperPasscodeAction,
+  snapshotAction,
+  updateAnnouncementAction
 } from "@/app/actions";
 import { requireAdmin } from "@/lib/auth";
 import { DIVISIONS, listCenters, query, SHIRT_SIZES } from "@/lib/db";
@@ -41,6 +44,25 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
     label: string;
     created_at: string;
   }>("SELECT id, label, created_at FROM state_snapshots ORDER BY id DESC LIMIT 20");
+  const [settings] = await query<{ announcement: string | null }>("SELECT announcement FROM event_settings WHERE id = 1");
+  const blockerRequests = await query<{
+    id: number;
+    center: string;
+    division: string;
+    team: string;
+    starts_at: string;
+    ends_at: string;
+    reason: string | null;
+    status: string;
+  }>(
+    `SELECT blocker_requests.id, centers.name as center, teams.division, teams.name as team,
+            blocker_requests.starts_at, blocker_requests.ends_at, blocker_requests.reason, blocker_requests.status
+     FROM blocker_requests
+     JOIN teams ON teams.id = blocker_requests.team_id
+     JOIN centers ON centers.id = teams.center_id
+     WHERE blocker_requests.status = 'pending'
+     ORDER BY blocker_requests.created_at`
+  );
 
   return (
     <main className="content">
@@ -124,6 +146,60 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
             ))}
           </div>
         </article>
+
+        <article className="card">
+          <h2>Event Settings</h2>
+          <form action={setScorekeeperPasscodeAction} className="stack">
+            <label>
+              Scorekeeper passcode
+              <input name="passcode" placeholder="New scorekeeper passcode" />
+            </label>
+            <button className="button secondary">Set Passcode</button>
+          </form>
+          <form action={updateAnnouncementAction} className="stack section">
+            <label>
+              Public announcement
+              <textarea name="announcement" defaultValue={settings?.announcement || ""} placeholder="Court 2 is running 20 minutes behind." />
+            </label>
+            <button className="button">Save Announcement</button>
+          </form>
+        </article>
+      </section>
+
+      <section className="section card">
+        <h2>Blocker Requests</h2>
+        {blockerRequests.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Team</th>
+                  <th>Unavailable</th>
+                  <th>Reason</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {blockerRequests.map((request) => (
+                  <tr key={request.id}>
+                    <td>{request.division} {request.center} - {request.team}</td>
+                    <td>{displayDateTime(request.starts_at)} to {displayDateTime(request.ends_at)}</td>
+                    <td>{request.reason || ""}</td>
+                    <td>
+                      <form action={reviewBlockerRequestAction} className="inline-form">
+                        <input name="request_id" type="hidden" value={request.id} />
+                        <button className="button" name="decision" value="approved">Approve</button>
+                        <button className="button danger" name="decision" value="rejected">Reject</button>
+                      </form>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="muted">No pending blocker requests.</p>
+        )}
       </section>
 
       <section className="section card">

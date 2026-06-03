@@ -10,6 +10,7 @@ export const SHIRT_SIZES = ["YS", "YM", "YL", "S", "M", "L", "XL", "XLT", "2XL",
 
 let pool: Pool | null = null;
 let initPromise: Promise<void> | null = null;
+let isInitializing = false;
 
 function getPool() {
   if (pool) return pool;
@@ -28,7 +29,9 @@ function getPool() {
 export async function initDb() {
   if (initPromise) return initPromise;
   initPromise = (async () => {
-    await getPool().query(`
+    isInitializing = true;
+    try {
+      await getPool().query(`
       CREATE TABLE IF NOT EXISTS centers (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
@@ -106,6 +109,62 @@ export async function initDb() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
+      ALTER TABLE games ADD COLUMN IF NOT EXISTS team_1_score INTEGER;
+      ALTER TABLE games ADD COLUMN IF NOT EXISTS team_2_score INTEGER;
+      ALTER TABLE games ADD COLUMN IF NOT EXISTS winner_team_id INTEGER;
+      ALTER TABLE games ADD COLUMN IF NOT EXISTS loser_team_id INTEGER;
+      ALTER TABLE games ADD COLUMN IF NOT EXISTS scored_by TEXT;
+      ALTER TABLE games ADD COLUMN IF NOT EXISTS scored_at TIMESTAMPTZ;
+
+      CREATE TABLE IF NOT EXISTS event_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        scorekeeper_passcode_hash TEXT NOT NULL,
+        announcement TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS blocker_requests (
+        id SERIAL PRIMARY KEY,
+        team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+        starts_at TIMESTAMPTZ NOT NULL,
+        ends_at TIMESTAMPTZ NOT NULL,
+        reason TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        reviewed_at TIMESTAMPTZ,
+        CHECK (ends_at > starts_at)
+      );
+
+      CREATE TABLE IF NOT EXISTS brackets (
+        id SERIAL PRIMARY KEY,
+        division TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        seed_snapshot_json JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS bracket_games (
+        id SERIAL PRIMARY KEY,
+        bracket_id INTEGER NOT NULL REFERENCES brackets(id) ON DELETE CASCADE,
+        game_key TEXT NOT NULL,
+        bracket_side TEXT NOT NULL,
+        round INTEGER NOT NULL,
+        position INTEGER NOT NULL,
+        team_1_id INTEGER REFERENCES teams(id),
+        team_2_id INTEGER REFERENCES teams(id),
+        team_1_score INTEGER,
+        team_2_score INTEGER,
+        winner_team_id INTEGER REFERENCES teams(id),
+        loser_team_id INTEGER REFERENCES teams(id),
+        next_winner_game_key TEXT,
+        next_winner_slot INTEGER,
+        next_loser_game_key TEXT,
+        next_loser_slot INTEGER,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (bracket_id, game_key)
+      );
+
       CREATE TABLE IF NOT EXISTS state_snapshots (
         id SERIAL PRIMARY KEY,
         label TEXT NOT NULL,
@@ -117,27 +176,33 @@ export async function initDb() {
         ON team_availability_blocks(team_id);
     `);
 
-    const count = await query<{ count: string }>("SELECT COUNT(*) as count FROM centers");
-    if (Number(count[0]?.count || 0) === 0) {
-      for (const center of centers) {
-        await query("INSERT INTO centers (name, passcode_hash) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING", [
-          center,
-          hashSecret(center.toLowerCase())
-        ]);
+      const count = await query<{ count: string }>("SELECT COUNT(*) as count FROM centers");
+      if (Number(count[0]?.count || 0) === 0) {
+        for (const center of centers) {
+          await query("INSERT INTO centers (name, passcode_hash) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING", [
+            center,
+            hashSecret(center.toLowerCase())
+          ]);
+        }
       }
+      await query("INSERT INTO event_settings (id, scorekeeper_passcode_hash) VALUES (1, $1) ON CONFLICT (id) DO NOTHING", [
+        hashSecret("scorekeeper")
+      ]);
+    } finally {
+      isInitializing = false;
     }
   })();
   return initPromise;
 }
 
 export async function query<T extends QueryResultRow = QueryResultRow>(sql: string, params: unknown[] = []) {
-  if (!initPromise && !sql.includes("CREATE TABLE")) await initDb();
+  if (!isInitializing && !sql.includes("CREATE TABLE")) await initDb();
   const result = await getPool().query<T>(sql, params);
   return result.rows.map(normalizeRow) as T[];
 }
 
 export async function exec(sql: string, params: unknown[] = []) {
-  if (!initPromise && !sql.includes("CREATE TABLE")) await initDb();
+  if (!isInitializing && !sql.includes("CREATE TABLE")) await initDb();
   return getPool().query(sql, params);
 }
 
@@ -175,7 +240,19 @@ function normalizeRow<T extends QueryResultRow>(row: T): T {
 }
 
 export async function getFullState() {
-  const tables = ["centers", "teams", "team_availability_blocks", "players", "shirt_orders", "schedule_settings", "games"];
+  const tables = [
+    "centers",
+    "teams",
+    "team_availability_blocks",
+    "players",
+    "shirt_orders",
+    "schedule_settings",
+    "games",
+    "event_settings",
+    "blocker_requests",
+    "brackets",
+    "bracket_games"
+  ];
   const entries = await Promise.all(tables.map(async (table) => [table, await query(`SELECT * FROM ${table}`)] as const));
   return Object.fromEntries(entries);
 }
@@ -194,10 +271,34 @@ export async function restoreSnapshot(id: number) {
 
   const data = snapshot.data_json;
   await withTransaction(async (client) => {
-    for (const table of ["games", "shirt_orders", "players", "team_availability_blocks", "teams", "schedule_settings", "centers"]) {
+    for (const table of [
+      "bracket_games",
+      "brackets",
+      "blocker_requests",
+      "games",
+      "shirt_orders",
+      "players",
+      "team_availability_blocks",
+      "teams",
+      "schedule_settings",
+      "event_settings",
+      "centers"
+    ]) {
       await client.query(`DELETE FROM ${table}`);
     }
-    for (const table of ["centers", "teams", "team_availability_blocks", "players", "shirt_orders", "schedule_settings", "games"]) {
+    for (const table of [
+      "centers",
+      "event_settings",
+      "teams",
+      "team_availability_blocks",
+      "players",
+      "shirt_orders",
+      "schedule_settings",
+      "games",
+      "blocker_requests",
+      "brackets",
+      "bracket_games"
+    ]) {
       for (const row of data[table] || []) {
         const keys = Object.keys(row);
         const cols = keys.join(", ");

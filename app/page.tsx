@@ -37,7 +37,9 @@ export default async function PublicTeamsPage() {
                 <div className="grid">
                   {divisionTeams.map((team) => (
                     <article className="card" key={team.id}>
-                      <h3>{team.name}</h3>
+                      <h3>
+                        <a href={`/teams/${team.id}`}>{team.name}</a>
+                      </h3>
                       <p className="muted">{team.center_name}</p>
                       <p>
                         {team.early_available ? <span className="pill ok">Tuesday opt-in</span> : null}
