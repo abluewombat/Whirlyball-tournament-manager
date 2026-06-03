@@ -7,8 +7,17 @@ export const metadata: Metadata = {
   description: "Tournament registration, rosters, shirts, payments, and schedules."
 };
 
+async function getAnnouncement() {
+  try {
+    const [settings] = await query<{ announcement: string | null }>("SELECT announcement FROM event_settings WHERE id = 1");
+    return settings?.announcement || null;
+  } catch {
+    return null;
+  }
+}
+
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const [settings] = await query<{ announcement: string | null }>("SELECT announcement FROM event_settings WHERE id = 1");
+  const announcement = await getAnnouncement();
   return (
     <html lang="en">
       <body>
@@ -26,7 +35,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <a href="/admin">Admin</a>
             </nav>
           </header>
-          {settings?.announcement ? <div className="announcement-banner">{settings.announcement}</div> : null}
+          {announcement ? <div className="announcement-banner">{announcement}</div> : null}
           {children}
         </div>
       </body>
