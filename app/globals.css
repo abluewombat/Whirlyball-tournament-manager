@@ -103,7 +103,7 @@ a {
   align-items: flex-end;
   background:
     linear-gradient(90deg, rgba(32, 33, 36, 0.82), rgba(32, 33, 36, 0.28)),
-    url("https://images.unsplash.com/photo-1517649763962-0c623066013b?auto=format&fit=crop&w=1800&q=80");
+    url("/images/whirlyball-hero.jpg");
   background-position: center;
   background-size: cover;
   color: white;
