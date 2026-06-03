@@ -867,6 +867,178 @@ function refEligible(gameDivision: string, team: TeamRow) {
   return Math.abs((rank[team.division] || 2) - gameRank) <= 1;
 }
 
+function gameDurationMinutes(game: GeneratedGame, input: ScheduleInput) {
+  return game.phase === "tournament" ? input.tournamentMinutes : input.seedingMinutes;
+}
+
+function intervalsOverlap(leftStartsAt: string, leftDurationMinutes: number, rightStartsAt: string, rightDurationMinutes: number) {
+  const leftStart = parseScheduleDateTime(leftStartsAt);
+  const leftEnd = leftStart + leftDurationMinutes * 60_000;
+  const rightStart = parseScheduleDateTime(rightStartsAt);
+  const rightEnd = rightStart + rightDurationMinutes * 60_000;
+  return leftStart < rightEnd && leftEnd > rightStart;
+}
+
+function intervalGapMinutes(leftStartsAt: string, leftDurationMinutes: number, rightStartsAt: string, rightDurationMinutes: number) {
+  const leftStart = parseScheduleDateTime(leftStartsAt);
+  const leftEnd = leftStart + leftDurationMinutes * 60_000;
+  const rightStart = parseScheduleDateTime(rightStartsAt);
+  const rightEnd = rightStart + rightDurationMinutes * 60_000;
+  if (leftStart < rightEnd && leftEnd > rightStart) return 0;
+  return Math.round(Math.min(Math.abs(rightStart - leftEnd), Math.abs(leftStart - rightEnd)) / 60_000);
+}
+
+function teamPlaysInGame(teamId: number, game: GeneratedGame) {
+  return game.team1Id === teamId || game.team2Id === teamId;
+}
+
+function teamPlaysDuring(teamId: number, startsAt: string, durationMinutes: number, games: GeneratedGame[], currentGame: GeneratedGame, input: ScheduleInput) {
+  return games.some(
+    (game) =>
+      game !== currentGame &&
+      teamPlaysInGame(teamId, game) &&
+      intervalsOverlap(startsAt, durationMinutes, game.startsAt, gameDurationMinutes(game, input))
+  );
+}
+
+function teamRefsDuring(teamId: number, startsAt: string, durationMinutes: number, games: GeneratedGame[], currentGame: GeneratedGame, input: ScheduleInput) {
+  return games.some(
+    (game) =>
+      game !== currentGame &&
+      game.refTeamId === teamId &&
+      intervalsOverlap(startsAt, durationMinutes, game.startsAt, gameDurationMinutes(game, input))
+  );
+}
+
+function nearestPlayingGapMinutes(teamId: number, startsAt: string, durationMinutes: number, games: GeneratedGame[], currentGame: GeneratedGame, input: ScheduleInput) {
+  let nearest = Number.POSITIVE_INFINITY;
+  let sameDay = false;
+
+  for (const game of games) {
+    if (game === currentGame || !teamPlaysInGame(teamId, game)) continue;
+    const gap = intervalGapMinutes(startsAt, durationMinutes, game.startsAt, gameDurationMinutes(game, input));
+    if (gap < nearest) nearest = gap;
+    if (game.startsAt.slice(0, 10) === startsAt.slice(0, 10)) sameDay = true;
+  }
+
+  return {
+    gap: Number.isFinite(nearest) ? Math.min(nearest, 720) : 720,
+    sameDay
+  };
+}
+
+function tournamentDivisionsByDate(tournamentDays: Date[]) {
+  return new Map(tournamentDays.map((day, dayIndex) => [isoDate(day), new Set(tournamentDivisionsForDay(dayIndex))]));
+}
+
+function refScore({
+  game,
+  team,
+  team1,
+  team2,
+  games,
+  refCounts,
+  input,
+  tournamentDateDivisions
+}: {
+  game: GeneratedGame;
+  team: TeamRow;
+  team1: TeamRow | null;
+  team2: TeamRow | null;
+  games: GeneratedGame[];
+  refCounts: Map<number, number>;
+  input: ScheduleInput;
+  tournamentDateDivisions: Map<string, Set<string>>;
+}) {
+  const gameCenters = new Set([team1?.center_name, team2?.center_name].filter(Boolean));
+  const nearest = nearestPlayingGapMinutes(team.id, game.startsAt, gameDurationMinutes(game, input), games, game, input);
+  const tournamentDivisions = tournamentDateDivisions.get(game.startsAt.slice(0, 10)) || new Set<string>();
+  const sameCenterPenalty = gameCenters.has(team.center_name) ? 3_000 : 0;
+  const tournamentDayPenalty = game.phase === "tournament" && tournamentDivisions.has(team.division) ? 5_000 : 0;
+  const sameDivisionTournamentPenalty = game.phase === "tournament" && team.division === game.division ? 5_000 : 0;
+  const sameDayPenalty = nearest.sameDay ? 0 : 500;
+  const divisionDistance = Math.abs((rank[team.division] || 2) - (rank[game.division] || 2));
+
+  return (
+    tournamentDayPenalty +
+    sameDivisionTournamentPenalty +
+    sameCenterPenalty +
+    (refCounts.get(team.id) || 0) * 180 +
+    nearest.gap +
+    sameDayPenalty +
+    divisionDistance * 20
+  );
+}
+
+function chooseRefTeamForSchedule({
+  game,
+  teams,
+  team1,
+  team2,
+  games,
+  availability,
+  refCounts,
+  input,
+  tournamentDateDivisions
+}: {
+  game: GeneratedGame;
+  teams: TeamRow[];
+  team1: TeamRow | null;
+  team2: TeamRow | null;
+  games: GeneratedGame[];
+  availability: AvailabilityMap;
+  refCounts: Map<number, number>;
+  input: ScheduleInput;
+  tournamentDateDivisions: Map<string, Set<string>>;
+}) {
+  const durationMinutes = gameDurationMinutes(game, input);
+  const candidates = teams
+    .filter((team) => {
+      if (!refEligible(game.division, team)) return false;
+      if (team.id === team1?.id || team.id === team2?.id) return false;
+      if (input.includeTuesday && game.startsAt.startsWith(input.startDate) && !team.early_available) return false;
+      if (teamBlockedAt(team.id, game.startsAt, durationMinutes, availability)) return false;
+      if (teamPlaysDuring(team.id, game.startsAt, durationMinutes, games, game, input)) return false;
+      if (teamRefsDuring(team.id, game.startsAt, durationMinutes, games, game, input)) return false;
+      return true;
+    })
+    .sort((left, right) => {
+      const leftScore = refScore({ game, team: left, team1, team2, games, refCounts, input, tournamentDateDivisions });
+      const rightScore = refScore({ game, team: right, team1, team2, games, refCounts, input, tournamentDateDivisions });
+      if (leftScore !== rightScore) return leftScore - rightScore;
+      return left.name.localeCompare(right.name);
+    });
+
+  return candidates[0] || null;
+}
+
+function assignRefsForSchedule(games: GeneratedGame[], teams: TeamRow[], availability: AvailabilityMap, input: ScheduleInput, tournamentDays: Date[]) {
+  const teamById = new Map(teams.map((team) => [team.id, team]));
+  const refCounts = new Map<number, number>();
+  const tournamentDateDivisions = tournamentDivisionsByDate(tournamentDays);
+  const sortedGames = [...games].sort((left, right) => left.startsAt.localeCompare(right.startsAt) || left.court - right.court);
+
+  for (const game of sortedGames) game.refTeamId = null;
+
+  for (const game of sortedGames) {
+    const team1 = game.team1Id === null ? null : teamById.get(game.team1Id) || null;
+    const team2 = game.team2Id === null ? null : teamById.get(game.team2Id) || null;
+    const selected = chooseRefTeamForSchedule({
+      game,
+      teams,
+      team1,
+      team2,
+      games: sortedGames,
+      availability,
+      refCounts,
+      input,
+      tournamentDateDivisions
+    });
+    game.refTeamId = selected?.id || null;
+    if (selected) refCounts.set(selected.id, (refCounts.get(selected.id) || 0) + 1);
+  }
+}
+
 function chooseRefTeam(
   gameDivision: string,
   teams: TeamRow[],
@@ -1793,6 +1965,8 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
       });
     }
   }
+
+  assignRefsForSchedule(games, teams, availability, input, tournamentDays);
 
   return {
     games: games.sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.court - b.court),
