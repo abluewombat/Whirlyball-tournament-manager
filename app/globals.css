@@ -476,6 +476,143 @@ th {
   width: 150px;
 }
 
+.team-page {
+  max-width: 1440px;
+}
+
+.team-insight-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.team-insight {
+  background: #f7f7f2;
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  display: grid;
+  gap: 6px;
+  min-height: 78px;
+  padding: 10px 12px;
+}
+
+.team-insight span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.team-insight strong {
+  font-size: 18px;
+}
+
+.team-note-list {
+  margin-top: 14px;
+}
+
+.team-note-list p {
+  margin: 6px 0 0;
+}
+
+.team-analytics-table,
+.team-schedule-table {
+  min-width: 900px;
+}
+
+.team-highlight-row {
+  background: #fff8dd;
+  font-weight: 700;
+}
+
+.positive-diff {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.negative-diff {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.team-day-group {
+  margin-top: 18px;
+}
+
+.team-day-header {
+  background: #202124;
+  border-radius: 6px 6px 0 0;
+  color: white;
+  font-size: 22px;
+  margin: 0;
+  padding: 11px 12px;
+}
+
+.team-day-group .table-wrap {
+  border: 1px solid var(--line);
+  border-top: 0;
+}
+
+.team-role-pill {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  justify-content: center;
+  min-width: 78px;
+  padding: 5px 9px;
+}
+
+.team-role-pill.playing.division-a {
+  background: #a04a12;
+  color: white;
+}
+
+.team-role-pill.playing.division-b {
+  background: #245f94;
+  color: white;
+}
+
+.team-role-pill.playing.division-c {
+  background: #3f6f31;
+  color: white;
+}
+
+.team-role-pill.playing.division-d {
+  background: #9b7600;
+  color: white;
+}
+
+.team-role-pill.playing.division-unlimited {
+  background: #6f5595;
+  color: white;
+}
+
+.team-role-pill.reffing.division-a {
+  background: #fce4d6;
+  color: #7a350a;
+}
+
+.team-role-pill.reffing.division-b {
+  background: #ddebf7;
+  color: #16436b;
+}
+
+.team-role-pill.reffing.division-c {
+  background: #e2f0d9;
+  color: #2b5121;
+}
+
+.team-role-pill.reffing.division-d {
+  background: #fff2cc;
+  color: #665000;
+}
+
+.team-role-pill.reffing.division-unlimited {
+  background: #eadcf8;
+  color: #4e3b72;
+}
+
 .schedule-editor-toolbar {
   align-items: center;
   display: flex;
