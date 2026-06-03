@@ -630,7 +630,7 @@ function parseDivisionTargets(value: string | undefined, defaultTarget: number, 
   for (const chunk of (value || "").split(",")) {
     const [rawDivision, rawTarget] = chunk.split(":").map((part) => part.trim());
     const target = Number(rawTarget);
-    if (rawDivision && Number.isFinite(target) && target >= 0) targets.set(rawDivision, Math.floor(target));
+    if (rawDivision && Number.isFinite(target) && target >= 0) targets.set(rawDivision, Math.max(defaultTarget, Math.floor(target)));
   }
   return targets;
 }

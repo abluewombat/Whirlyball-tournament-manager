@@ -10,7 +10,14 @@ export const dynamic = "force-dynamic";
 export default async function SchedulePage({
   searchParams
 }: {
-  searchParams: Promise<{ generated?: string; seeding_scheduled?: string; seeding_target?: string; unscheduled?: string; unscheduled_tournament?: string }>;
+  searchParams: Promise<{
+    generated?: string;
+    seeding_scheduled?: string;
+    seeding_target?: string;
+    target_games?: string;
+    unscheduled?: string;
+    unscheduled_tournament?: string;
+  }>;
 }) {
   await requireAdmin();
   const params = await searchParams;
@@ -49,7 +56,6 @@ export default async function SchedulePage({
     const count = Number(row.count);
     return sum + (count * Math.max(0, count - 1)) / 2 * 2;
   }, 0);
-  const balancedEightDemand = teamCounts.reduce((sum, row) => sum + Math.ceil((Number(row.count) * 8) / 2), 0);
   const tournamentDemand = teamCounts.reduce((sum, row) => {
     const count = Number(row.count);
     return sum + (count > 1 ? 2 * count - 1 : 0);
@@ -57,6 +63,8 @@ export default async function SchedulePage({
   const generatedCount = params.generated === undefined ? null : Number(params.generated);
   const scheduledSeedingCount = params.seeding_scheduled === undefined ? null : Number(params.seeding_scheduled);
   const targetSeedingCount = params.seeding_target === undefined ? null : Number(params.seeding_target);
+  const targetGamesPerTeam = Math.max(scheduleDefaults.targetGamesPerTeam, Number(params.target_games) || scheduleDefaults.targetGamesPerTeam);
+  const balancedTargetDemand = teamCounts.reduce((sum, row) => sum + Math.ceil((Number(row.count) * targetGamesPerTeam) / 2), 0);
   const unscheduledCount = params.unscheduled === undefined ? 0 : Number(params.unscheduled);
   const unscheduledTournamentCount = params.unscheduled_tournament === undefined ? 0 : Number(params.unscheduled_tournament);
   const seedingProgress =
@@ -96,7 +104,8 @@ export default async function SchedulePage({
           {teamCounts.length ? ` (${teamCounts.map((row) => `${row.division}: ${row.count}`).join(", ")})` : ""}
         </p>
         <p className="muted">
-          Current demand check: full 2x round robin needs about {fullTwoRoundDemand} seeding games. Balanced 8 games/team needs about {balancedEightDemand}.
+          Current demand check: full 2x round robin needs about {fullTwoRoundDemand} seeding games. Balanced {targetGamesPerTeam} games/team needs about{" "}
+          {balancedTargetDemand}.
           Double-elimination placeholders need about {tournamentDemand} tournament games before division/day cutoffs.
         </p>
         <form action={generateScheduleAction} className="form-grid">
@@ -153,11 +162,11 @@ export default async function SchedulePage({
           </label>
           <label>
             Target games/team
-            <input name="target_games_per_team" type="number" min={scheduleDefaults.targetGamesPerTeam} defaultValue={scheduleDefaults.targetGamesPerTeam} />
+            <input name="target_games_per_team" type="number" min={scheduleDefaults.targetGamesPerTeam} defaultValue={targetGamesPerTeam} />
           </label>
           <label>
-            Division targets
-            <input name="division_target_games" placeholder="Optional: A:8,B:7,C:8,D:7" />
+            Division target minimums
+            <input name="division_target_games" placeholder="Optional higher targets: A:10,B:10,C:12,D:10" />
           </label>
           <label>
             Pair repeat limit

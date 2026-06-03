@@ -367,6 +367,7 @@ export async function restoreSnapshotAction(formData: FormData) {
 
 export async function generateScheduleAction(formData: FormData) {
   await requireAdmin();
+  const targetGamesPerTeam = Math.max(scheduleDefaults.targetGamesPerTeam, num(formData, "target_games_per_team", scheduleDefaults.targetGamesPerTeam));
   const result = await generateSchedule({
     startDate: text(formData, "start_date") || scheduleDefaults.startDate,
     endDate: text(formData, "end_date") || scheduleDefaults.endDate,
@@ -381,7 +382,7 @@ export async function generateScheduleAction(formData: FormData) {
     finalDayEnd: text(formData, "final_day_end") || scheduleDefaults.finalDayEnd,
     roundsPerPair: Math.max(1, num(formData, "rounds_per_pair", scheduleDefaults.roundsPerPair)),
     seedingMode: text(formData, "seeding_mode") === "round_robin" ? "round_robin" : "balanced",
-    targetGamesPerTeam: Math.max(scheduleDefaults.targetGamesPerTeam, num(formData, "target_games_per_team", scheduleDefaults.targetGamesPerTeam)),
+    targetGamesPerTeam,
     divisionTargetGames: text(formData, "division_target_games"),
     includeTuesday: true,
     blockOrder: text(formData, "block_order") || scheduleDefaults.blockOrder,
@@ -405,7 +406,7 @@ export async function generateScheduleAction(formData: FormData) {
   });
   revalidatePath("/admin/schedule");
   redirect(
-    `/admin/schedule?generated=${result.games.length}&seeding_scheduled=${result.scheduledSeedingGames}&seeding_target=${result.targetSeedingGames}&unscheduled=${result.unscheduledSeedingGames}&unscheduled_tournament=${result.unscheduledTournamentGames}`
+    `/admin/schedule?generated=${result.games.length}&seeding_scheduled=${result.scheduledSeedingGames}&seeding_target=${result.targetSeedingGames}&unscheduled=${result.unscheduledSeedingGames}&unscheduled_tournament=${result.unscheduledTournamentGames}&target_games=${targetGamesPerTeam}`
   );
 }
 
