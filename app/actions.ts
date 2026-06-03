@@ -504,6 +504,7 @@ export async function generateBracketAction() {
   for (const { division } of divisions) await rebuildBracketForDivision(division);
   revalidatePath("/score");
   revalidatePath("/brackets");
+  revalidatePath("/schedule");
 }
 
 export async function submitBracketScoreAction(formData: FormData) {
@@ -511,6 +512,7 @@ export async function submitBracketScoreAction(formData: FormData) {
   await scoreBracketGame(num(formData, "bracket_game_id"), num(formData, "team_1_score"), num(formData, "team_2_score"));
   revalidatePath("/score");
   revalidatePath("/brackets");
+  revalidatePath("/schedule");
 }
 
 export async function resetBracketScoreAction(formData: FormData) {
@@ -518,6 +520,7 @@ export async function resetBracketScoreAction(formData: FormData) {
   await resetBracketGameScore(num(formData, "bracket_game_id"));
   revalidatePath("/score");
   revalidatePath("/brackets");
+  revalidatePath("/schedule");
 }
 
 export async function rebuildBracketAction(formData: FormData) {
@@ -527,4 +530,5 @@ export async function rebuildBracketAction(formData: FormData) {
   await rebuildBracketForDivision(division);
   revalidatePath("/brackets");
   revalidatePath("/score");
+  revalidatePath("/schedule");
 }

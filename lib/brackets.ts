@@ -22,6 +22,13 @@ type BracketGameRow = {
   next_loser_slot: number | null;
 };
 
+type BracketRow = {
+  id: number;
+  division: string;
+  seed_snapshot_json: SeedSnapshot[];
+  bracket_data_json: any;
+};
+
 type BracketGamePlan = {
   gameKey: string;
   side: "winners" | "losers";
@@ -47,15 +54,44 @@ export async function rebuildBracketForDivision(division: string) {
   const seeds = standings.map((row, index) => ({ seed: index + 1, teamId: row.team_id, team: row.team, center: row.center }));
   const bracketData = await createManagedDoubleEliminationBracket(division, seeds);
 
-  return withTransaction(async (client) => {
+  const bracketId = await withTransaction(async (client) => {
     await client.query("UPDATE brackets SET status = 'archived', updated_at = NOW() WHERE division = $1 AND status = 'active'", [division]);
     const bracketResult = await client.query<{ id: number }>(
       "INSERT INTO brackets (division, seed_snapshot_json, bracket_data_json) VALUES ($1, $2::jsonb, $3::jsonb) RETURNING id",
       [division, JSON.stringify(seeds), JSON.stringify(bracketData)]
     );
     await client.query("DELETE FROM bracket_games WHERE bracket_id = $1", [bracketResult.rows[0].id]);
+    const size = nextPowerOfTwo(seeds.length);
+    const plans = buildDoubleEliminationPlan(
+      seeds.map((seed) => seed.teamId),
+      size
+    );
+    for (const plan of plans) {
+      await client.query(
+        `INSERT INTO bracket_games (
+           bracket_id, game_key, bracket_side, round, position, team_1_id, team_2_id,
+           next_winner_game_key, next_winner_slot, next_loser_game_key, next_loser_slot
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          bracketResult.rows[0].id,
+          plan.gameKey,
+          plan.side,
+          plan.round,
+          plan.position,
+          plan.team1Id,
+          plan.team2Id,
+          plan.nextWinnerGameKey,
+          plan.nextWinnerSlot,
+          plan.nextLoserGameKey,
+          plan.nextLoserSlot
+        ]
+      );
+    }
     return bracketResult.rows[0].id;
   });
+  await advanceBracket(bracketId);
+  return bracketId;
 }
 
 type SeedSnapshot = {
@@ -93,6 +129,7 @@ export async function scoreBracketGame(gameId: number, team1Score: number, team2
     [team1Score, team2Score, winnerId, loserId, gameId]
   );
   await advanceBracket(game.bracket_id);
+  await syncBracketToSchedule(game.bracket_id);
 }
 
 export async function resetBracketGameScore(gameId: number) {
@@ -106,6 +143,7 @@ export async function resetBracketGameScore(gameId: number) {
     [gameId]
   );
   await advanceBracket(game.bracket_id);
+  await syncBracketToSchedule(game.bracket_id);
 }
 
 export async function advanceBracket(bracketId: number) {
@@ -133,6 +171,8 @@ export async function advanceBracket(bracketId: number) {
     }
     if (!changed) break;
   }
+  await refreshBracketViewerData(bracketId);
+  await syncBracketToSchedule(bracketId);
 }
 
 function buildDoubleEliminationPlan(teamIds: number[], size: number) {
@@ -242,6 +282,88 @@ async function fillSlot(bracketId: number, gameKey: string, slot: number, teamId
   if (target.current_team_id !== null && target.current_team_id !== teamId) return false;
   await exec(`UPDATE bracket_games SET ${column} = $1 WHERE id = $2`, [teamId, target.id]);
   return true;
+}
+
+async function syncBracketToSchedule(bracketId: number) {
+  const [bracket] = await query<{ id: number; division: string }>("SELECT id, division FROM brackets WHERE id = $1", [bracketId]);
+  if (!bracket) return;
+  const games = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE bracket_id = $1", [bracketId]);
+  const labels = bracketScheduleLabels(games);
+  for (const game of games) {
+    const label = labels.get(game.id);
+    if (!label) continue;
+    await exec(
+      `UPDATE games
+       SET team_1_id = $1, team_2_id = $2, team_1_score = $3, team_2_score = $4,
+           winner_team_id = $5, loser_team_id = $6
+       WHERE phase = 'tournament' AND division = $7 AND label = $8`,
+      [game.team_1_id, game.team_2_id, game.team_1_score, game.team_2_score, game.winner_team_id, game.loser_team_id, bracket.division, label]
+    );
+  }
+}
+
+function bracketScheduleLabels(games: BracketGameRow[]) {
+  const labels = new Map<number, string>();
+  let winnerIndex = 0;
+  for (const game of games
+    .filter((candidate) => candidate.bracket_side === "winners" && candidate.game_key !== "F1" && candidate.game_key !== "F2")
+    .sort((left, right) => left.round - right.round || left.position - right.position)) {
+    winnerIndex++;
+    labels.set(game.id, game.round === 1 ? `Winners R1 Game ${game.position}` : `Winners bracket Game ${winnerIndex}`);
+  }
+  let loserIndex = 0;
+  for (const game of games
+    .filter((candidate) => candidate.bracket_side === "losers")
+    .sort((left, right) => left.round - right.round || left.position - right.position)) {
+    loserIndex++;
+    labels.set(game.id, `Losers bracket Game ${loserIndex}`);
+  }
+  for (const game of games) {
+    if (game.game_key === "F1") labels.set(game.id, "Championship");
+    if (game.game_key === "F2") labels.set(game.id, "If-needed Championship");
+  }
+  return labels;
+}
+
+async function refreshBracketViewerData(bracketId: number) {
+  const [bracket] = await query<BracketRow>("SELECT * FROM brackets WHERE id = $1", [bracketId]);
+  if (!bracket?.bracket_data_json) return;
+
+  const seeds = bracket.seed_snapshot_json || [];
+  const participantByTeamId = new Map(seeds.map((seed, index) => [seed.teamId, index]));
+  const bracketGames = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE bracket_id = $1", [bracketId]);
+  const data = structuredClone(bracket.bracket_data_json);
+  const groupsById = new Map<number, { id: number; number: number }>((data.group || []).map((group: any) => [group.id, group]));
+  const roundsById = new Map<number, { id: number; number: number }>((data.round || []).map((round: any) => [round.id, round]));
+
+  for (const match of (data.match || []) as Array<{ group_id: number; round_id: number; number: number; opponent1?: unknown; opponent2?: unknown; status?: number }>) {
+    const group = groupsById.get(match.group_id);
+    const round = roundsById.get(match.round_id);
+    if (!group || !round) continue;
+    const gameKey = gameKeyForManagedMatch(group.number, round.number, match.number);
+    const bracketGame = bracketGames.find((game) => game.game_key === gameKey);
+    if (!bracketGame) continue;
+    match.opponent1 = managedOpponent(bracketGame.team_1_id, bracketGame.team_1_score, bracketGame.winner_team_id, participantByTeamId);
+    match.opponent2 = managedOpponent(bracketGame.team_2_id, bracketGame.team_2_score, bracketGame.winner_team_id, participantByTeamId);
+    match.status = bracketGame.team_1_score !== null && bracketGame.team_2_score !== null ? 4 : bracketGame.team_1_id !== null && bracketGame.team_2_id !== null ? 2 : 0;
+  }
+
+  await exec("UPDATE brackets SET bracket_data_json = $1::jsonb, updated_at = NOW() WHERE id = $2", [JSON.stringify(data), bracketId]);
+}
+
+function managedOpponent(teamId: number | null, score: number | null, winnerTeamId: number | null, participantByTeamId: Map<number, number>) {
+  const id = teamId === null ? null : participantByTeamId.get(teamId);
+  const opponent: Record<string, unknown> = { id: id ?? null };
+  if (score !== null) opponent.score = score;
+  if (teamId !== null && winnerTeamId !== null) opponent.result = teamId === winnerTeamId ? "win" : "loss";
+  return opponent;
+}
+
+function gameKeyForManagedMatch(groupNumber: number, roundNumber: number, matchNumber: number) {
+  if (groupNumber === 1) return `W${roundNumber}-${matchNumber}`;
+  if (groupNumber === 2) return `L${roundNumber}-${matchNumber}`;
+  if (groupNumber === 3) return roundNumber === 1 ? "F1" : "F2";
+  return "";
 }
 
 async function clearDownstreamFromGame(game: BracketGameRow, seen = new Set<number>()) {

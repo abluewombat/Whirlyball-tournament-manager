@@ -1,8 +1,10 @@
 import {
   generateBracketAction,
   resetGameScoreAction,
+  resetBracketScoreAction,
   scorekeeperLoginAction,
   scorekeeperLogoutAction,
+  submitBracketScoreAction,
   submitGameScoreAction
 } from "@/app/actions";
 import { scoreEntryAccess } from "@/lib/auth";
@@ -30,6 +32,19 @@ type BracketScoreGame = {
   bracket_id: number;
   division: string;
   bracket_data_json: ManagedBracketData | null;
+};
+
+type EditableBracketGame = {
+  id: number;
+  division: string;
+  game_key: string;
+  bracket_side: string;
+  round: number;
+  position: number;
+  team_1: string | null;
+  team_2: string | null;
+  team_1_score: number | null;
+  team_2_score: number | null;
 };
 
 export default async function ScorePage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
@@ -66,6 +81,19 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
      FROM brackets
      WHERE brackets.status = 'active'
      ORDER BY brackets.division, brackets.id`
+  );
+  const editableBracketGames = await query<EditableBracketGame>(
+    `SELECT bracket_games.id, brackets.division, bracket_games.game_key, bracket_games.bracket_side,
+            bracket_games.round, bracket_games.position, bracket_games.team_1_score, bracket_games.team_2_score,
+            t1.name as team_1, t2.name as team_2
+     FROM bracket_games
+     JOIN brackets ON brackets.id = bracket_games.bracket_id
+     LEFT JOIN teams t1 ON t1.id = bracket_games.team_1_id
+     LEFT JOIN teams t2 ON t2.id = bracket_games.team_2_id
+     WHERE brackets.status = 'active'
+     ORDER BY brackets.division,
+              CASE bracket_games.bracket_side WHEN 'winners' THEN 1 WHEN 'losers' THEN 2 ELSE 3 END,
+              bracket_games.round, bracket_games.position`
   );
   const seedingGames = games.filter((game) => game.phase === "seeding" && game.division !== "Unlimited");
   const unscoredSeedingCount = seedingGames.filter((game) => game.team_1_score === null || game.team_2_score === null).length;
@@ -112,8 +140,18 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
             {allSeedingScored ? "Complete" : `${unscoredSeedingCount} left`}
           </span>
         </summary>
-        <ScoreTable games={games} />
+        <ScoreTable games={seedingGames} />
       </details>
+
+      {editableBracketGames.length ? (
+        <details className="section card score-collapse" open={bracketsReady}>
+          <summary>
+            <span>Tournament Score Entry</span>
+            <span className="pill">Bracket games</span>
+          </summary>
+          <BracketScoreTable games={editableBracketGames} />
+        </details>
+      ) : null}
 
       {bracketGames.length ? (
         <section className="section card bracket-page">
@@ -135,6 +173,63 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
       ) : null}
     </main>
   );
+}
+
+function BracketScoreTable({ games }: { games: EditableBracketGame[] }) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Game</th>
+            <th>Team 1</th>
+            <th>Team 2</th>
+            <th>Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          {games.map((game) => (
+            <tr key={`bracket-${game.id}`} className={game.team_1_score !== null && game.team_2_score !== null ? "muted-game-row" : ""}>
+              <td>
+                {bracketGameLabel(game)}
+                <div className="muted">
+                  {game.division} {game.game_key}
+                </div>
+              </td>
+              <td>{game.team_1 || "TBD"}</td>
+              <td>{game.team_2 || "TBD"}</td>
+              <td>
+                {game.team_1 && game.team_2 ? (
+                  <div className="score-actions">
+                    <form action={submitBracketScoreAction} className="inline-form">
+                      <input name="bracket_game_id" type="hidden" value={game.id} />
+                      <input name="team_1_score" type="number" min="0" defaultValue={game.team_1_score ?? ""} placeholder={game.team_1} style={{ width: 90 }} />
+                      <input name="team_2_score" type="number" min="0" defaultValue={game.team_2_score ?? ""} placeholder={game.team_2} style={{ width: 90 }} />
+                      <button className="button secondary">Save</button>
+                    </form>
+                    {game.team_1_score !== null && game.team_2_score !== null ? (
+                      <form action={resetBracketScoreAction}>
+                        <input name="bracket_game_id" type="hidden" value={game.id} />
+                        <button className="button danger">Reset</button>
+                      </form>
+                    ) : null}
+                  </div>
+                ) : (
+                  <span className="muted">Waiting on bracket results</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function bracketGameLabel(game: EditableBracketGame) {
+  if (game.game_key === "F1") return "Championship";
+  if (game.game_key === "F2") return "If-needed Championship";
+  return `${game.bracket_side === "losers" ? "Losers" : "Winners"} Round ${game.round} Game ${game.position}`;
 }
 
 function ScoreTable({ games }: { games: ScoreGame[] }) {
