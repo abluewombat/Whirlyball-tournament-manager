@@ -1862,7 +1862,13 @@ function bracketLabels(count: number) {
   return labels;
 }
 
-export async function generateSchedule(input: ScheduleInput): Promise<{ games: GeneratedGame[]; unscheduledSeedingGames: number; unscheduledTournamentGames: number }> {
+export async function generateSchedule(input: ScheduleInput): Promise<{
+  games: GeneratedGame[];
+  scheduledSeedingGames: number;
+  targetSeedingGames: number;
+  unscheduledSeedingGames: number;
+  unscheduledTournamentGames: number;
+}> {
   const teams = await query<TeamRow>(
     `SELECT teams.*, centers.name as center_name
      FROM teams JOIN centers ON centers.id = teams.center_id
@@ -1905,7 +1911,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
     const requiredSlots = tournamentSlotsNeeded(flattenTournamentEntries(divisions, entriesByDivision), input.courts, divisions);
     const rowCapacity = Math.max(configuredRows, Math.ceil(requiredSlots / Math.max(1, input.courts)));
     const slots = buildTournamentDaySlots(day, tournamentStart, rowCapacity, input.tournamentMinutes, input.courts, unlimitedReservations);
-    return planTournamentDay(day, divisions, entriesByDivision, slots, false);
+    return planTournamentDay(day, divisions, entriesByDivision, slots, true);
   });
   const overflowTournamentEntries = tournamentPlans.flatMap((plan) => plan.overflowEntries);
   const overflowTournamentDivisions = tournamentDivisionOrder(overflowTournamentEntries);
@@ -1948,6 +1954,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
     queues.set(division, buildDivisionMatchups(divTeams, maxPairRepeats));
   }
   const targetGamesByDivision = buildTargetGamesByDivision(queues, seedingByDivision, targetGamesByTeam);
+  const targetSeedingGames = [...targetGamesByDivision.values()].reduce((sum, count) => sum + count, 0);
 
   const teamGameCounts = new Map<number, number>();
   const divisionGameCounts = new Map<string, number>();
@@ -2196,9 +2203,12 @@ export async function generateSchedule(input: ScheduleInput): Promise<{ games: G
 
   games.push(...buildUnlimitedGames(byDivision, unlimitedReservations));
   assignRefsForSchedule(games, teams, availability, input, tournamentDays);
+  const scheduledSeedingGames = games.filter((game) => game.phase === "seeding" && game.team1Id !== null && game.team2Id !== null).length;
 
   return {
     games: games.sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.court - b.court),
+    scheduledSeedingGames,
+    targetSeedingGames,
     unscheduledSeedingGames: unscheduledTargetGames(targetGamesByTeam, teamGameCounts, seedingByDivision) ?? [...queues.values()].reduce((sum, queue) => sum + queue.length, 0),
     unscheduledTournamentGames
   };

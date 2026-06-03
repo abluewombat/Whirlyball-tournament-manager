@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function SchedulePage({
   searchParams
 }: {
-  searchParams: Promise<{ generated?: string; unscheduled?: string; unscheduled_tournament?: string }>;
+  searchParams: Promise<{ generated?: string; seeding_scheduled?: string; seeding_target?: string; unscheduled?: string; unscheduled_tournament?: string }>;
 }) {
   await requireAdmin();
   const params = await searchParams;
@@ -55,8 +55,12 @@ export default async function SchedulePage({
     return sum + (count > 1 ? 2 * count - 1 : 0);
   }, 0);
   const generatedCount = params.generated === undefined ? null : Number(params.generated);
+  const scheduledSeedingCount = params.seeding_scheduled === undefined ? null : Number(params.seeding_scheduled);
+  const targetSeedingCount = params.seeding_target === undefined ? null : Number(params.seeding_target);
   const unscheduledCount = params.unscheduled === undefined ? 0 : Number(params.unscheduled);
   const unscheduledTournamentCount = params.unscheduled_tournament === undefined ? 0 : Number(params.unscheduled_tournament);
+  const seedingProgress =
+    scheduledSeedingCount !== null && targetSeedingCount !== null ? `${scheduledSeedingCount}/${targetSeedingCount} intended seeding games scheduled` : null;
 
   return (
     <main className="content">
@@ -73,15 +77,15 @@ export default async function SchedulePage({
       <section className="section card">
         <h2>Generate</h2>
         <p className="muted">
-          This creates a practical draft: seeding games first, then double-elimination bracket placeholders for the final two event days.
+          This creates a practical draft: tournament bracket placeholders first, then as many intended seeding games as fit around them.
         </p>
         {generatedCount !== null ? (
           generatedCount > 0 ? (
             <p className={unscheduledCount > 0 || unscheduledTournamentCount > 0 ? "pill warn" : "pill ok"}>
               Generated {generatedCount} games
-              {unscheduledCount > 0 || unscheduledTournamentCount > 0
-                ? `, with ${unscheduledCount} seeding and ${unscheduledTournamentCount} tournament games left unscheduled due to time limits or constraints.`
-                : "."}
+              {seedingProgress ? `; ${seedingProgress}` : ""}
+              {unscheduledTournamentCount > 0 ? `; ${unscheduledTournamentCount} tournament games still need room` : ""}
+              .
             </p>
           ) : (
             <p className="pill warn">Generated 0 games. Add at least two active teams in a division before generating.</p>

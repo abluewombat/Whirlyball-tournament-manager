@@ -405,7 +405,7 @@ export async function generateScheduleAction(formData: FormData) {
   });
   revalidatePath("/admin/schedule");
   redirect(
-    `/admin/schedule?generated=${result.games.length}&unscheduled=${result.unscheduledSeedingGames}&unscheduled_tournament=${result.unscheduledTournamentGames}`
+    `/admin/schedule?generated=${result.games.length}&seeding_scheduled=${result.scheduledSeedingGames}&seeding_target=${result.targetSeedingGames}&unscheduled=${result.unscheduledSeedingGames}&unscheduled_tournament=${result.unscheduledTournamentGames}`
   );
 }
 
