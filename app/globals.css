@@ -55,6 +55,13 @@ a {
   font-weight: 700;
 }
 
+.app-version {
+  color: #b9c0c7;
+  font-size: 12px;
+  font-weight: 700;
+  margin-left: 6px;
+}
+
 .nav {
   display: flex;
   flex-wrap: wrap;

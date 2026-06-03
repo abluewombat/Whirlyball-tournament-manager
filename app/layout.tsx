@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { appVersion } from "@/lib/app-version";
 import { query } from "@/lib/db";
 
 export const metadata: Metadata = {
@@ -23,7 +24,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body>
         <div className="shell">
           <header className="topbar">
-            <div className="brand">Whirlyball Manager</div>
+            <div className="brand">
+              Whirlyball Manager <span className="app-version">{appVersion}</span>
+            </div>
             <nav className="nav">
               <a href="/">Public Teams</a>
               <a href="/schedule">Public Schedule</a>
