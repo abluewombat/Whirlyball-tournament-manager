@@ -1314,6 +1314,7 @@ function repairSeedingSlots({
   games,
   queues,
   teams,
+  balanceTeams,
   byDivision,
   input,
   availability,
@@ -1334,6 +1335,7 @@ function repairSeedingSlots({
   games: GeneratedGame[];
   queues: Map<string, Matchup[]>;
   teams: TeamRow[];
+  balanceTeams: TeamRow[];
   byDivision: Map<string, TeamRow[]>;
   input: ScheduleInput;
   availability: AvailabilityMap;
@@ -1365,7 +1367,7 @@ function repairSeedingSlots({
     const eligible = (matchup: Matchup) => {
       if (divisionGamesThroughDay(games, slots, matchup.division, slot.dayIndex) >= divisionDayLimit(matchup.division, slot.dayIndex, seedingDayCount, targetGamesByDivision)) return false;
       if (!matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts)) return false;
-      if (!matchupKeepsSeedingCountsBalanced(matchup, teams, teamGameCounts)) return false;
+      if (!matchupKeepsSeedingCountsBalanced(matchup, balanceTeams, teamGameCounts)) return false;
       if (teamReachedGlobalFairCap(matchup.a, teamGameCounts, globalFairGameCap)) return false;
       if (teamReachedGlobalFairCap(matchup.b, teamGameCounts, globalFairGameCap)) return false;
       if (isEarlyOptInStart(input, slot.startsAt) && (!matchup.a.early_available || !matchup.b.early_available)) return false;
@@ -1435,6 +1437,7 @@ function repairOpenSeedingCourts({
   games,
   queues,
   teams,
+  balanceTeams,
   byDivision,
   input,
   availability,
@@ -1456,6 +1459,7 @@ function repairOpenSeedingCourts({
   games: GeneratedGame[];
   queues: Map<string, Matchup[]>;
   teams: TeamRow[];
+  balanceTeams: TeamRow[];
   byDivision: Map<string, TeamRow[]>;
   input: ScheduleInput;
   availability: AvailabilityMap;
@@ -1510,7 +1514,7 @@ function repairOpenSeedingCourts({
         const eligible = (matchup: Matchup) => {
           if (divisionGamesThroughDay(games, slots, matchup.division, slot.dayIndex) >= divisionDayLimit(matchup.division, slot.dayIndex, seedingDayCount, targetGamesByDivision)) return false;
           if (!matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts)) return false;
-          if (!matchupKeepsSeedingCountsBalanced(matchup, teams, teamGameCounts)) return false;
+          if (!matchupKeepsSeedingCountsBalanced(matchup, balanceTeams, teamGameCounts)) return false;
           if (teamReachedGlobalFairCap(matchup.a, teamGameCounts, globalFairGameCap)) return false;
           if (teamReachedGlobalFairCap(matchup.b, teamGameCounts, globalFairGameCap)) return false;
           if (isEarlyOptInStart(input, slot.startsAt) && (!matchup.a.early_available || !matchup.b.early_available)) return false;
@@ -2066,6 +2070,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
   const seedingMode = input.seedingMode || scheduleDefaults.seedingMode;
   const maxPairRepeats = Math.max(1, input.roundsPerPair);
   const globalFairGameCap = buildGlobalFairGameCap(seedingByDivision, maxPairRepeats);
+  const seedingTeams = [...seedingByDivision.values()].flat();
   const targetGamesByTeam =
     seedingMode === "balanced"
       ? buildTargetGamesByTeam(
@@ -2142,7 +2147,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
         });
         const eligible = (matchup: Matchup) => {
           if (!matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts)) return false;
-          if (!matchupKeepsSeedingCountsBalanced(matchup, teams, teamGameCounts)) return false;
+          if (!matchupKeepsSeedingCountsBalanced(matchup, seedingTeams, teamGameCounts)) return false;
           if (teamReachedGlobalFairCap(matchup.a, teamGameCounts, globalFairGameCap)) return false;
           if (teamReachedGlobalFairCap(matchup.b, teamGameCounts, globalFairGameCap)) return false;
           if (isEarlyOptInStart(input, rowStartsAt) && (!matchup.a.early_available || !matchup.b.early_available)) return false;
@@ -2223,6 +2228,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
       games,
       queues,
       teams,
+      balanceTeams: seedingTeams,
       byDivision: seedingByDivision,
       input,
       availability,
@@ -2247,6 +2253,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
       games,
       queues,
       teams,
+      balanceTeams: seedingTeams,
       byDivision: seedingByDivision,
       input,
       availability,
