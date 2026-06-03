@@ -256,6 +256,13 @@ th {
   gap: 8px;
 }
 
+.score-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .stack {
   display: grid;
   gap: 14px;

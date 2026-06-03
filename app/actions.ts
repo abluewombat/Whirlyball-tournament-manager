@@ -17,7 +17,7 @@ import {
 import { hashSecret } from "@/lib/security";
 import { generateSchedule } from "@/lib/schedule";
 import { scheduleDefaults } from "@/lib/schedule-defaults";
-import { maybeCreateBracketForDivision, rebuildBracketForDivision, scoreBracketGame } from "@/lib/brackets";
+import { maybeCreateBracketForDivision, rebuildBracketForDivision, resetBracketGameScore, scoreBracketGame } from "@/lib/brackets";
 
 function text(formData: FormData, key: string) {
   return String(formData.get(key) || "").trim();
@@ -457,9 +457,31 @@ export async function submitGameScoreAction(formData: FormData) {
   revalidatePath("/brackets");
 }
 
+export async function resetGameScoreAction(formData: FormData) {
+  await requireScorekeeperOrAdmin();
+  await exec(
+    `UPDATE games
+     SET team_1_score = NULL, team_2_score = NULL, winner_team_id = NULL, loser_team_id = NULL,
+         scored_by = NULL, scored_at = NULL
+     WHERE id = $1`,
+    [num(formData, "game_id")]
+  );
+  revalidatePath("/score");
+  revalidatePath("/schedule");
+  revalidatePath("/standings");
+  revalidatePath("/brackets");
+}
+
 export async function submitBracketScoreAction(formData: FormData) {
   await requireScorekeeperOrAdmin();
   await scoreBracketGame(num(formData, "bracket_game_id"), num(formData, "team_1_score"), num(formData, "team_2_score"));
+  revalidatePath("/score");
+  revalidatePath("/brackets");
+}
+
+export async function resetBracketScoreAction(formData: FormData) {
+  await requireScorekeeperOrAdmin();
+  await resetBracketGameScore(num(formData, "bracket_game_id"));
   revalidatePath("/score");
   revalidatePath("/brackets");
 }

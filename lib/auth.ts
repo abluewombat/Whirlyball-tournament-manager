@@ -43,10 +43,17 @@ export async function loginScorekeeper(passcode: string) {
   return true;
 }
 
-export async function requireScorekeeperOrAdmin() {
+export type ScoreEntryAccess = "admin" | "scorekeeper" | null;
+
+export async function scoreEntryAccess(): Promise<ScoreEntryAccess> {
   const jar = await cookies();
-  if (unsign(jar.get("admin_session")?.value) === "admin") return;
-  if (unsign(jar.get("scorekeeper_session")?.value) === "scorekeeper") return;
+  if (unsign(jar.get("admin_session")?.value) === "admin") return "admin";
+  if (unsign(jar.get("scorekeeper_session")?.value) === "scorekeeper") return "scorekeeper";
+  return null;
+}
+
+export async function requireScorekeeperOrAdmin() {
+  if (await scoreEntryAccess()) return;
   redirect("/score");
 }
 

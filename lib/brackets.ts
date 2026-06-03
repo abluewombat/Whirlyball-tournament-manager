@@ -86,11 +86,25 @@ export async function scoreBracketGame(gameId: number, team1Score: number, team2
   if (!game || game.team_1_id === null || game.team_2_id === null) return;
   const winnerId = team1Score >= team2Score ? game.team_1_id : game.team_2_id;
   const loserId = winnerId === game.team_1_id ? game.team_2_id : game.team_1_id;
+  await clearDownstreamFromGame(game);
   await exec(
     `UPDATE bracket_games
      SET team_1_score = $1, team_2_score = $2, winner_team_id = $3, loser_team_id = $4
      WHERE id = $5`,
     [team1Score, team2Score, winnerId, loserId, gameId]
+  );
+  await advanceBracket(game.bracket_id);
+}
+
+export async function resetBracketGameScore(gameId: number) {
+  const [game] = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE id = $1", [gameId]);
+  if (!game) return;
+  await clearDownstreamFromGame(game);
+  await exec(
+    `UPDATE bracket_games
+     SET team_1_score = NULL, team_2_score = NULL, winner_team_id = NULL, loser_team_id = NULL
+     WHERE id = $1`,
+    [gameId]
   );
   await advanceBracket(game.bracket_id);
 }
@@ -225,4 +239,46 @@ async function fillSlot(bracketId: number, gameKey: string, slot: number, teamId
   if (target.current_team_id !== null && target.current_team_id !== teamId) return false;
   await exec(`UPDATE bracket_games SET ${column} = $1 WHERE id = $2`, [teamId, target.id]);
   return true;
+}
+
+async function clearDownstreamFromGame(game: BracketGameRow, seen = new Set<number>()) {
+  if (seen.has(game.id)) return;
+  seen.add(game.id);
+
+  if (game.winner_team_id !== null && game.next_winner_game_key && game.next_winner_slot) {
+    await clearDownstreamSlot(game.bracket_id, game.next_winner_game_key, game.next_winner_slot, game.winner_team_id, seen);
+  }
+  if (game.loser_team_id !== null && game.next_loser_game_key && game.next_loser_slot) {
+    await clearDownstreamSlot(game.bracket_id, game.next_loser_game_key, game.next_loser_slot, game.loser_team_id, seen);
+  }
+  if (game.game_key === "F1") {
+    const [finalReset] = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE bracket_id = $1 AND game_key = 'F2'", [game.bracket_id]);
+    if (finalReset) {
+      await clearDownstreamFromGame(finalReset, seen);
+      await exec(
+        `UPDATE bracket_games
+         SET team_1_id = NULL, team_2_id = NULL, team_1_score = NULL, team_2_score = NULL,
+             winner_team_id = NULL, loser_team_id = NULL
+         WHERE id = $1`,
+        [finalReset.id]
+      );
+    }
+  }
+}
+
+async function clearDownstreamSlot(bracketId: number, gameKey: string, slot: number, teamId: number, seen: Set<number>) {
+  const column = slot === 1 ? "team_1_id" : "team_2_id";
+  const [target] = await query<BracketGameRow & { current_team_id: number | null }>(
+    `SELECT *, ${column} as current_team_id FROM bracket_games WHERE bracket_id = $1 AND game_key = $2`,
+    [bracketId, gameKey]
+  );
+  if (!target || target.current_team_id !== teamId) return;
+
+  await clearDownstreamFromGame(target, seen);
+  await exec(
+    `UPDATE bracket_games
+     SET ${column} = NULL, team_1_score = NULL, team_2_score = NULL, winner_team_id = NULL, loser_team_id = NULL
+     WHERE id = $1`,
+    [target.id]
+  );
 }

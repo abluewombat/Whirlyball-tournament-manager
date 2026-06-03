@@ -1,8 +1,14 @@
-import { cookies } from "next/headers";
-import { scorekeeperLoginAction, scorekeeperLogoutAction, submitBracketScoreAction, submitGameScoreAction } from "@/app/actions";
+import {
+  resetBracketScoreAction,
+  resetGameScoreAction,
+  scorekeeperLoginAction,
+  scorekeeperLogoutAction,
+  submitBracketScoreAction,
+  submitGameScoreAction
+} from "@/app/actions";
+import { scoreEntryAccess } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { displayDateTime } from "@/lib/format";
-import { unsign } from "@/lib/security";
 
 export const dynamic = "force-dynamic";
 
@@ -34,9 +40,8 @@ type BracketScoreGame = {
 
 export default async function ScorePage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const params = await searchParams;
-  const jar = await cookies();
-  const allowed = unsign(jar.get("admin_session")?.value) === "admin" || unsign(jar.get("scorekeeper_session")?.value) === "scorekeeper";
-  if (!allowed) {
+  const access = await scoreEntryAccess();
+  if (!access) {
     return (
       <main className="content">
         <section className="section card compact">
@@ -45,7 +50,7 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
           {params.error ? <p className="pill warn">Wrong passcode.</p> : null}
           <form action={scorekeeperLoginAction} className="stack">
             <input name="passcode" type="password" required />
-            <button className="button">Enter</button>
+            <button className="button">Enter Scorekeeper Mode</button>
           </form>
         </section>
       </main>
@@ -78,10 +83,16 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
     <main className="content">
       <div className="actions">
         <h1 style={{ marginRight: "auto" }}>Score Entry</h1>
-        <form action={scorekeeperLogoutAction}>
-          <button className="button secondary">Log Out</button>
-        </form>
+        <span className="pill ok">{access === "admin" ? "Admin access" : "Scorekeeper access"}</span>
+        {access === "admin" ? (
+          <a className="button secondary" href="/admin/dashboard">Admin Dashboard</a>
+        ) : (
+          <form action={scorekeeperLogoutAction}>
+            <button className="button secondary">Log Out</button>
+          </form>
+        )}
       </div>
+      {access === "admin" ? <p className="muted">You are already logged in as admin, so the scorekeeper passcode is not required.</p> : null}
 
       <section className="section card">
         <h2>Schedule Games</h2>
@@ -120,12 +131,20 @@ function ScoreTable({ games, action }: { games: ScoreGame[]; action: "schedule" 
               <td>{game.team_2 || "TBD"}</td>
               <td>
                 {game.team_1 && game.team_2 ? (
-                  <form action={action === "schedule" ? submitGameScoreAction : submitBracketScoreAction} className="inline-form">
-                    <input name={action === "schedule" ? "game_id" : "bracket_game_id"} type="hidden" value={game.id} />
-                    <input name="team_1_score" type="number" min="0" defaultValue={game.team_1_score ?? ""} placeholder={game.team_1} style={{ width: 90 }} />
-                    <input name="team_2_score" type="number" min="0" defaultValue={game.team_2_score ?? ""} placeholder={game.team_2} style={{ width: 90 }} />
-                    <button className="button secondary">Save</button>
-                  </form>
+                  <div className="score-actions">
+                    <form action={action === "schedule" ? submitGameScoreAction : submitBracketScoreAction} className="inline-form">
+                      <input name={action === "schedule" ? "game_id" : "bracket_game_id"} type="hidden" value={game.id} />
+                      <input name="team_1_score" type="number" min="0" defaultValue={game.team_1_score ?? ""} placeholder={game.team_1} style={{ width: 90 }} />
+                      <input name="team_2_score" type="number" min="0" defaultValue={game.team_2_score ?? ""} placeholder={game.team_2} style={{ width: 90 }} />
+                      <button className="button secondary">Save</button>
+                    </form>
+                    {game.team_1_score !== null && game.team_2_score !== null ? (
+                      <form action={action === "schedule" ? resetGameScoreAction : resetBracketScoreAction}>
+                        <input name={action === "schedule" ? "game_id" : "bracket_game_id"} type="hidden" value={game.id} />
+                        <button className="button danger">Reset</button>
+                      </form>
+                    ) : null}
+                  </div>
                 ) : (
                   <span className="muted">Waiting on teams</span>
                 )}
