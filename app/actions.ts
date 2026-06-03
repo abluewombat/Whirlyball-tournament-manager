@@ -305,7 +305,7 @@ export async function generateScheduleAction(formData: FormData) {
     seedingMode: text(formData, "seeding_mode") === "round_robin" ? "round_robin" : "balanced",
     targetGamesPerTeam: Math.max(1, num(formData, "target_games_per_team", scheduleDefaults.targetGamesPerTeam)),
     divisionTargetGames: text(formData, "division_target_games"),
-    includeTuesday: checkbox(formData, "include_tuesday"),
+    includeTuesday: true,
     blockOrder: text(formData, "block_order") || scheduleDefaults.blockOrder,
     blockRows: Math.max(1, num(formData, "block_rows", scheduleDefaults.blockRows)),
     preTournamentCutoff: text(formData, "pre_tournament_cutoff") || scheduleDefaults.preTournamentCutoff,
