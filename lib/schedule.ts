@@ -263,11 +263,11 @@ function reservationOverlapsSlot(reservation: CourtReservation, startsAt: string
   return reservation.court === court && intervalsOverlap(reservation.startsAt, reservation.durationMinutes, startsAt, durationMinutes);
 }
 
-function buildUnlimitedReservations(input: ScheduleInput) {
+function buildUnlimitedReservations(input: ScheduleInput, gameCount = unlimitedSeriesGames) {
   const startsAt = input.unlimitedGameStart || "";
-  if (!startsAt) return [];
+  if (!startsAt || gameCount <= 0) return [];
   const court = Math.max(1, Math.min(input.courts, input.unlimitedCourt || scheduleDefaults.unlimitedCourt));
-  return Array.from({ length: unlimitedSeriesGames }, (_, index) => ({
+  return Array.from({ length: gameCount }, (_, index) => ({
     startsAt: addMinutes(startsAt, index * unlimitedBlockMinutes),
     durationMinutes: unlimitedBlockMinutes,
     court
@@ -276,17 +276,25 @@ function buildUnlimitedReservations(input: ScheduleInput) {
 
 function buildUnlimitedGames(byDivision: Map<string, TeamRow[]>, reservations: CourtReservation[]) {
   const teams = byDivision.get(unlimitedDivision) || [];
-  if (teams.length !== 2 || reservations.length < unlimitedSeriesGames) return [];
-  return reservations.slice(0, unlimitedSeriesGames).map((reservation, index) => ({
-    phase: "unlimited" as const,
-    division: unlimitedDivision,
-    court: reservation.court,
-    startsAt: reservation.startsAt,
-    team1Id: teams[0].id,
-    team2Id: teams[1].id,
-    refTeamId: null,
-    label: `Unlimited Game ${index + 1}`
-  }));
+  const labels = bracketLabels(teams.length);
+  if (teams.length < 2 || reservations.length < labels.length) return [];
+  const firstRoundGames = Math.ceil(teams.length / 2);
+  return labels.map((label, index) => {
+    const firstRoundTeamIndex = index * 2;
+    const team1 = index < firstRoundGames ? teams[firstRoundTeamIndex] || null : null;
+    const team2 = index < firstRoundGames ? teams[firstRoundTeamIndex + 1] || null : null;
+    const reservation = reservations[index];
+    return {
+      phase: "unlimited" as const,
+      division: unlimitedDivision,
+      court: reservation.court,
+      startsAt: reservation.startsAt,
+      team1Id: team1?.id || null,
+      team2Id: team2?.id || null,
+      refTeamId: null,
+      label
+    };
+  });
 }
 
 function addReservedSeedingCourtsForReservations(
@@ -1901,7 +1909,8 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
   const lateNightRows = Math.max(0, input.lateNightRows ?? scheduleDefaults.lateNightRows);
   const blockRows = Math.max(1, input.blockRows || scheduleDefaults.blockRows);
   const blockOrder = parseBlockOrder(input.blockOrder).filter((division) => seedingByDivision.has(division));
-  const unlimitedReservations = buildUnlimitedReservations(input);
+  const unlimitedTeamCount = (byDivision.get(unlimitedDivision) || []).length;
+  const unlimitedReservations = buildUnlimitedReservations(input, bracketLabels(unlimitedTeamCount).length);
   const games: GeneratedGame[] = [];
   const tournamentPlans = tournamentDays.map((day, dayIndex) => {
     const divisions = tournamentDivisionsForDay(dayIndex).filter((division) => seedingByDivision.has(division));

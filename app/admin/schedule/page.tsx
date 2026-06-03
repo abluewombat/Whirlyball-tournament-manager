@@ -176,7 +176,7 @@ export default async function SchedulePage({
             <input name="pre_tournament_cutoff" type="time" defaultValue={scheduleDefaults.preTournamentCutoff} />
           </label>
           <label>
-            Unlimited start
+            Unlimited tournament start
             <input name="unlimited_game_start" type="datetime-local" defaultValue={scheduleDefaults.unlimitedGameStart} />
           </label>
           <label>
