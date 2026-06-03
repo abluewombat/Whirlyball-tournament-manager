@@ -153,7 +153,7 @@ export default async function SchedulePage({
           </label>
           <label>
             Target games/team
-            <input name="target_games_per_team" type="number" min="1" defaultValue={scheduleDefaults.targetGamesPerTeam} />
+            <input name="target_games_per_team" type="number" min={scheduleDefaults.targetGamesPerTeam} defaultValue={scheduleDefaults.targetGamesPerTeam} />
           </label>
           <label>
             Division targets

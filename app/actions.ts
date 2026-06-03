@@ -381,7 +381,7 @@ export async function generateScheduleAction(formData: FormData) {
     finalDayEnd: text(formData, "final_day_end") || scheduleDefaults.finalDayEnd,
     roundsPerPair: Math.max(1, num(formData, "rounds_per_pair", scheduleDefaults.roundsPerPair)),
     seedingMode: text(formData, "seeding_mode") === "round_robin" ? "round_robin" : "balanced",
-    targetGamesPerTeam: Math.max(1, num(formData, "target_games_per_team", scheduleDefaults.targetGamesPerTeam)),
+    targetGamesPerTeam: Math.max(scheduleDefaults.targetGamesPerTeam, num(formData, "target_games_per_team", scheduleDefaults.targetGamesPerTeam)),
     divisionTargetGames: text(formData, "division_target_games"),
     includeTuesday: true,
     blockOrder: text(formData, "block_order") || scheduleDefaults.blockOrder,
