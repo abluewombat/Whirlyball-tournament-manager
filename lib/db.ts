@@ -140,9 +140,12 @@ export async function initDb() {
         division TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'active',
         seed_snapshot_json JSONB NOT NULL,
+        bracket_data_json JSONB,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+
+      ALTER TABLE brackets ADD COLUMN IF NOT EXISTS bracket_data_json JSONB;
 
       CREATE TABLE IF NOT EXISTS bracket_games (
         id SERIAL PRIMARY KEY,

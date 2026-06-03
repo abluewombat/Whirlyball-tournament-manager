@@ -1,14 +1,14 @@
 import {
-  resetBracketScoreAction,
+  generateBracketAction,
   resetGameScoreAction,
   scorekeeperLoginAction,
   scorekeeperLogoutAction,
-  submitBracketScoreAction,
   submitGameScoreAction
 } from "@/app/actions";
 import { scoreEntryAccess } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { DIVISIONS, query } from "@/lib/db";
 import { displayDateTime } from "@/lib/format";
+import { ManagedBracketViewer, type ManagedBracketData } from "@/app/brackets/managed-bracket-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -26,16 +26,9 @@ type ScoreGame = {
 };
 
 type BracketScoreGame = {
-  id: number;
+  bracket_id: number;
   division: string;
-  game_key: string;
-  bracket_side: string;
-  round: number;
-  position: number;
-  team_1: string | null;
-  team_2: string | null;
-  team_1_score: number | null;
-  team_2_score: number | null;
+  bracket_data_json: ManagedBracketData | null;
 };
 
 export default async function ScorePage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
@@ -68,16 +61,15 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
      ORDER BY games.starts_at, games.court`
   );
   const bracketGames = await query<BracketScoreGame>(
-    `SELECT bracket_games.id, brackets.division, bracket_games.game_key, bracket_games.bracket_side,
-            bracket_games.round, bracket_games.position, bracket_games.team_1_score, bracket_games.team_2_score,
-            t1.name as team_1, t2.name as team_2
-     FROM bracket_games
-     JOIN brackets ON brackets.id = bracket_games.bracket_id
-     LEFT JOIN teams t1 ON t1.id = bracket_games.team_1_id
-     LEFT JOIN teams t2 ON t2.id = bracket_games.team_2_id
+    `SELECT brackets.id as bracket_id, brackets.division, brackets.bracket_data_json
+     FROM brackets
      WHERE brackets.status = 'active'
-     ORDER BY brackets.division, bracket_games.bracket_side DESC, bracket_games.round, bracket_games.position`
+     ORDER BY brackets.division, brackets.id`
   );
+  const seedingGames = games.filter((game) => game.phase === "seeding");
+  const unscoredSeedingCount = seedingGames.filter((game) => game.team_1_score === null || game.team_2_score === null).length;
+  const allSeedingScored = seedingGames.length > 0 && unscoredSeedingCount === 0;
+  const bracketsReady = allSeedingScored && bracketGames.length > 0;
 
   return (
     <main className="content">
@@ -95,19 +87,56 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
       {access === "admin" ? <p className="muted">You are already logged in as admin, so the scorekeeper passcode is not required.</p> : null}
 
       <section className="section card">
-        <h2>Schedule Games</h2>
-        <ScoreTable games={games} action="schedule" />
+        <div className="section-heading">
+          <div>
+            <h2>Bracket Setup</h2>
+            <p className="muted">
+              {allSeedingScored ? "All seeding scores are filled." : `${unscoredSeedingCount} seeding scores remaining.`}
+            </p>
+          </div>
+          {bracketsReady ? (
+            <span className="pill ok">Bracket generated</span>
+          ) : (
+            <form action={generateBracketAction}>
+              <button className="button" disabled={!allSeedingScored}>Generate Bracket</button>
+            </form>
+          )}
+        </div>
       </section>
 
-      <section className="section card">
-        <h2>Bracket Games</h2>
-        <ScoreTable games={bracketGames.map((game) => ({ ...game, starts_at: "", court: 0, phase: game.bracket_side, label: game.game_key }))} action="bracket" />
-      </section>
+      <details className="section card score-collapse" open={!bracketsReady}>
+        <summary>
+          <span>Seeding Score Entry</span>
+          <span className={allSeedingScored ? "pill ok" : "pill warn"}>
+            {allSeedingScored ? "Complete" : `${unscoredSeedingCount} left`}
+          </span>
+        </summary>
+        <ScoreTable games={games} />
+      </details>
+
+      {bracketGames.length ? (
+        <section className="section card bracket-page">
+          <h2>Bracket</h2>
+          {DIVISIONS.map((division) => {
+            const [divisionBracket] = bracketGames.filter((game) => game.division === division);
+            if (!divisionBracket?.bracket_data_json) return null;
+            return (
+              <details className="bracket-division-card" key={division} open={division === "A"}>
+                <summary>
+                  <span>{division} Division</span>
+                  <span className="pill">Double elimination</span>
+                </summary>
+                <ManagedBracketViewer data={divisionBracket.bracket_data_json} />
+              </details>
+            );
+          })}
+        </section>
+      ) : null}
     </main>
   );
 }
 
-function ScoreTable({ games, action }: { games: ScoreGame[]; action: "schedule" | "bracket" }) {
+function ScoreTable({ games }: { games: ScoreGame[] }) {
   if (!games.length) return <p className="muted">No games available.</p>;
   return (
     <div className="table-wrap">
@@ -122,7 +151,7 @@ function ScoreTable({ games, action }: { games: ScoreGame[]; action: "schedule" 
         </thead>
         <tbody>
           {games.map((game) => (
-            <tr key={`${action}-${game.id}`} className={game.team_1_score !== null && game.team_2_score !== null ? "muted-game-row" : ""}>
+            <tr key={`schedule-${game.id}`} className={game.team_1_score !== null && game.team_2_score !== null ? "muted-game-row" : ""}>
               <td>
                 {game.starts_at ? `${displayDateTime(game.starts_at)} Court ${game.court}` : game.label}
                 <div className="muted">{game.division} {game.phase}</div>
@@ -132,15 +161,15 @@ function ScoreTable({ games, action }: { games: ScoreGame[]; action: "schedule" 
               <td>
                 {game.team_1 && game.team_2 ? (
                   <div className="score-actions">
-                    <form action={action === "schedule" ? submitGameScoreAction : submitBracketScoreAction} className="inline-form">
-                      <input name={action === "schedule" ? "game_id" : "bracket_game_id"} type="hidden" value={game.id} />
+                    <form action={submitGameScoreAction} className="inline-form">
+                      <input name="game_id" type="hidden" value={game.id} />
                       <input name="team_1_score" type="number" min="0" defaultValue={game.team_1_score ?? ""} placeholder={game.team_1} style={{ width: 90 }} />
                       <input name="team_2_score" type="number" min="0" defaultValue={game.team_2_score ?? ""} placeholder={game.team_2} style={{ width: 90 }} />
                       <button className="button secondary">Save</button>
                     </form>
                     {game.team_1_score !== null && game.team_2_score !== null ? (
-                      <form action={action === "schedule" ? resetGameScoreAction : resetBracketScoreAction}>
-                        <input name={action === "schedule" ? "game_id" : "bracket_game_id"} type="hidden" value={game.id} />
+                      <form action={resetGameScoreAction}>
+                        <input name="game_id" type="hidden" value={game.id} />
                         <button className="button danger">Reset</button>
                       </form>
                     ) : null}

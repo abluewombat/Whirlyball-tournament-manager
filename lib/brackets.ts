@@ -1,3 +1,5 @@
+import { BracketsManager } from "brackets-manager";
+import { InMemoryDatabase } from "brackets-memory-db";
 import { exec, query, withTransaction } from "./db";
 import { getStandings, seedingCompleteForDivision } from "./standings";
 
@@ -42,43 +44,40 @@ export async function maybeCreateBracketForDivision(division: string) {
 export async function rebuildBracketForDivision(division: string) {
   const standings = (await getStandings(division)).filter((row) => row.division === division);
   if (standings.length < 2) return null;
-  const seeds = standings.map((row) => ({ seed: standings.indexOf(row) + 1, teamId: row.team_id, team: row.team, center: row.center }));
-  const size = nextPowerOfTwo(seeds.length);
-  const plans = buildDoubleEliminationPlan(seeds.map((seed) => seed.teamId), size);
+  const seeds = standings.map((row, index) => ({ seed: index + 1, teamId: row.team_id, team: row.team, center: row.center }));
+  const bracketData = await createManagedDoubleEliminationBracket(division, seeds);
 
   return withTransaction(async (client) => {
     await client.query("UPDATE brackets SET status = 'archived', updated_at = NOW() WHERE division = $1 AND status = 'active'", [division]);
     const bracketResult = await client.query<{ id: number }>(
-      "INSERT INTO brackets (division, seed_snapshot_json) VALUES ($1, $2::jsonb) RETURNING id",
-      [division, JSON.stringify(seeds)]
+      "INSERT INTO brackets (division, seed_snapshot_json, bracket_data_json) VALUES ($1, $2::jsonb, $3::jsonb) RETURNING id",
+      [division, JSON.stringify(seeds), JSON.stringify(bracketData)]
     );
-    const bracketId = bracketResult.rows[0].id;
-    for (const plan of plans) {
-      await client.query(
-        `INSERT INTO bracket_games (
-          bracket_id, game_key, bracket_side, round, position, team_1_id, team_2_id,
-          next_winner_game_key, next_winner_slot, next_loser_game_key, next_loser_slot
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [
-          bracketId,
-          plan.gameKey,
-          plan.side,
-          plan.round,
-          plan.position,
-          plan.team1Id,
-          plan.team2Id,
-          plan.nextWinnerGameKey,
-          plan.nextWinnerSlot,
-          plan.nextLoserGameKey,
-          plan.nextLoserSlot
-        ]
-      );
-    }
-    return bracketId;
-  }).then(async (bracketId) => {
-    if (bracketId) await advanceBracket(bracketId);
-    return bracketId;
+    await client.query("DELETE FROM bracket_games WHERE bracket_id = $1", [bracketResult.rows[0].id]);
+    return bracketResult.rows[0].id;
   });
+}
+
+type SeedSnapshot = {
+  seed: number;
+  teamId: number;
+  team: string;
+  center: string;
+};
+
+async function createManagedDoubleEliminationBracket(division: string, seeds: SeedSnapshot[]) {
+  const size = nextPowerOfTwo(seeds.length);
+  const seeding = [...seeds.map((seed) => seed.team), ...Array<string | null>(size - seeds.length).fill(null)];
+  const storage = new InMemoryDatabase();
+  const manager = new BracketsManager(storage);
+  const stage = await manager.create.stage({
+    tournamentId: 0,
+    name: `${division} Division`,
+    type: "double_elimination",
+    seeding,
+    settings: { grandFinal: "double" }
+  });
+  return manager.get.stageData(stage.id);
 }
 
 export async function scoreBracketGame(gameId: number, team1Score: number, team2Score: number) {
@@ -114,7 +113,7 @@ export async function advanceBracket(bracketId: number) {
     const games = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE bracket_id = $1 ORDER BY bracket_side, round, position", [bracketId]);
     let changed = false;
     for (const game of games) {
-      if (game.winner_team_id === null && oneTeamOnly(game)) {
+      if (game.winner_team_id === null && isFirstRoundBye(game)) {
         const winnerId = game.team_1_id || game.team_2_id;
         if (!winnerId) continue;
         await exec("UPDATE bracket_games SET winner_team_id = $1 WHERE id = $2", [winnerId, game.id]);
@@ -223,6 +222,10 @@ function seedOrder(size: number): number[] {
   if (size === 1) return [1];
   const previous = seedOrder(size / 2);
   return previous.flatMap((seed) => [seed, size + 1 - seed]);
+}
+
+function isFirstRoundBye(game: BracketGameRow) {
+  return game.bracket_side === "winners" && game.round === 1 && oneTeamOnly(game);
 }
 
 function oneTeamOnly(game: BracketGameRow) {

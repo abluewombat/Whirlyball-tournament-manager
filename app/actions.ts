@@ -17,7 +17,7 @@ import {
 import { hashSecret } from "@/lib/security";
 import { generateSchedule } from "@/lib/schedule";
 import { scheduleDefaults } from "@/lib/schedule-defaults";
-import { maybeCreateBracketForDivision, rebuildBracketForDivision, resetBracketGameScore, scoreBracketGame } from "@/lib/brackets";
+import { rebuildBracketForDivision, resetBracketGameScore, scoreBracketGame } from "@/lib/brackets";
 
 function text(formData: FormData, key: string) {
   return String(formData.get(key) || "").trim();
@@ -391,6 +391,7 @@ export async function generateScheduleAction(formData: FormData) {
     lateNightRows: Math.max(0, num(formData, "late_night_rows", scheduleDefaults.lateNightRows))
   });
   await withTransaction(async (client) => {
+    await client.query("DELETE FROM brackets");
     await client.query("DELETE FROM games");
     for (const game of result.games) {
       await client.query(
@@ -450,7 +451,6 @@ export async function submitGameScoreAction(formData: FormData) {
      WHERE id = $5`,
     [team1Score, team2Score, winnerId, loserId, gameId]
   );
-  await maybeCreateBracketForDivision(game.division);
   revalidatePath("/score");
   revalidatePath("/schedule");
   revalidatePath("/standings");
@@ -459,16 +459,46 @@ export async function submitGameScoreAction(formData: FormData) {
 
 export async function resetGameScoreAction(formData: FormData) {
   await requireScorekeeperOrAdmin();
+  const gameId = num(formData, "game_id");
+  const [game] = await query<{ phase: string; division: string }>("SELECT phase, division FROM games WHERE id = $1", [gameId]);
   await exec(
     `UPDATE games
      SET team_1_score = NULL, team_2_score = NULL, winner_team_id = NULL, loser_team_id = NULL,
          scored_by = NULL, scored_at = NULL
      WHERE id = $1`,
-    [num(formData, "game_id")]
+    [gameId]
   );
+  if (game?.phase === "seeding") {
+    await exec("UPDATE brackets SET status = 'archived', updated_at = NOW() WHERE division = $1 AND status = 'active'", [game.division]);
+  }
   revalidatePath("/score");
   revalidatePath("/schedule");
   revalidatePath("/standings");
+  revalidatePath("/brackets");
+}
+
+export async function generateBracketAction() {
+  await requireScorekeeperOrAdmin();
+  const [remaining] = await query<{ count: string }>(
+    `SELECT COUNT(*) as count
+     FROM games
+     WHERE phase = 'seeding'
+       AND team_1_id IS NOT NULL
+       AND team_2_id IS NOT NULL
+       AND (team_1_score IS NULL OR team_2_score IS NULL)`
+  );
+  if (Number(remaining?.count || 0) > 0) return;
+
+  const divisions = await query<{ division: string }>(
+    `SELECT DISTINCT division
+     FROM games
+     WHERE phase = 'seeding'
+       AND team_1_id IS NOT NULL
+       AND team_2_id IS NOT NULL
+     ORDER BY division`
+  );
+  for (const { division } of divisions) await rebuildBracketForDivision(division);
+  revalidatePath("/score");
   revalidatePath("/brackets");
 }
 
