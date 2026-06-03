@@ -18,6 +18,14 @@ type Assignment = {
   label: string;
 };
 
+type GeneratedAuditGame = {
+  phase: string;
+  division: string;
+  startsAt: string;
+  court: number;
+  label: string;
+};
+
 type Issue = {
   severity: number;
   team: string;
@@ -79,6 +87,7 @@ async function main() {
   }
 
   const issues = auditAssignments(assignments, teamById);
+  const tournamentSegmentIssues = auditTournamentSegments(result.games);
   const severe = issues.filter((issue) => issue.severity >= 90).length;
   const high = issues.filter((issue) => issue.severity >= 70).length;
   console.log(
@@ -89,12 +98,46 @@ async function main() {
         unscheduledTournamentGames: result.unscheduledTournamentGames,
         severeIssues: severe,
         highIssues: high,
+        tournamentSegmentIssues: tournamentSegmentIssues.length,
+        tournamentSegmentExamples: tournamentSegmentIssues.slice(0, 20),
         issues: issues.slice(0, 80)
       },
       null,
       2
     )
   );
+}
+
+function auditTournamentSegments(games: GeneratedAuditGame[]) {
+  const tournamentGames = games.filter((game) => game.phase === "tournament");
+  const byDay = new Map<string, typeof tournamentGames>();
+  for (const game of tournamentGames) {
+    const day = game.startsAt.slice(0, 10);
+    byDay.set(day, [...(byDay.get(day) || []), game]);
+  }
+
+  const issues: string[] = [];
+  for (const dayGames of byDay.values()) {
+    const starts = [...new Set(dayGames.map((game) => game.startsAt))].sort();
+    const rowSegment = (startsAt: string) => {
+      const index = starts.indexOf(startsAt);
+      const position = index / Math.max(1, starts.length);
+      if (position < 0.38) return "morning";
+      if (position < 0.76) return "afternoon";
+      return "late";
+    };
+    for (const game of dayGames) {
+      const desired =
+        game.label === "Championship" || game.label === "If-needed Championship"
+          ? "late"
+          : game.label.startsWith("Winners R1")
+            ? "morning"
+            : "afternoon";
+      const actual = rowSegment(game.startsAt);
+      if (desired !== actual) issues.push(`${game.startsAt} C${game.court} ${game.division} ${game.label}: preferred ${desired}, got ${actual}`);
+    }
+  }
+  return issues;
 }
 
 function auditAssignments(assignmentsByTeam: Map<number, Assignment[]>, teamsById: Map<number, Team>) {

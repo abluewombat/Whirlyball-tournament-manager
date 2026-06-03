@@ -69,6 +69,8 @@ type TournamentSlot = {
   court: number;
 };
 
+type TournamentSegment = "morning" | "afternoon" | "late";
+
 type TournamentPlacement = {
   entry: TournamentEntry;
   startsAt: string;
@@ -244,6 +246,27 @@ function groupTournamentSlotsByStart(slots: TournamentSlot[]) {
   return rows;
 }
 
+function tournamentSegmentForSlot(slot: TournamentSlot, slots: TournamentSlot[]): TournamentSegment {
+  const rows = groupTournamentSlotsByStart(slots);
+  const rowIndex = rows.findIndex((row) => row.some((candidate) => candidate.startsAt === slot.startsAt));
+  const rowCount = Math.max(1, rows.length);
+  const position = rowIndex < 0 ? 0 : rowIndex / rowCount;
+  if (position < 0.38) return "morning";
+  if (position < 0.76) return "afternoon";
+  return "late";
+}
+
+function tournamentSegmentForEntry(entry: TournamentEntry): TournamentSegment {
+  if (entry.label === "Championship" || entry.label === "If-needed Championship") return "late";
+  if (entry.label.startsWith("Winners R1")) return "morning";
+  return "afternoon";
+}
+
+function tournamentSegmentDistance(entry: TournamentEntry, slot: TournamentSlot, slots: TournamentSlot[]) {
+  const order: TournamentSegment[] = ["morning", "afternoon", "late"];
+  return Math.abs(order.indexOf(tournamentSegmentForEntry(entry)) - order.indexOf(tournamentSegmentForSlot(slot, slots)));
+}
+
 function tournamentDivisionOrder(entries: TournamentEntry[], preferredOrder?: string[]) {
   const divisions = [...new Set(entries.map((entry) => entry.division))];
   const preferred = (preferredOrder || []).filter((division) => divisions.includes(division));
@@ -287,25 +310,53 @@ function placeTournamentEntriesInSlots(entries: TournamentEntry[], slots: Tourna
   return placeTournamentEntriesGreedily(entries, slots, preferredOrder);
 }
 
+function tournamentPlacementScore(
+  entry: TournamentEntry,
+  slot: TournamentSlot,
+  slots: TournamentSlot[],
+  placements: TournamentPlacement[],
+  divisionQueues: Map<string, TournamentEntry[]>
+) {
+  const sameDivisionPlacements = placements.filter((placement) => placement.entry.division === entry.division);
+  const sameDivisionSameRow = sameDivisionPlacements.filter((placement) => placement.startsAt === slot.startsAt).length;
+  const previous = sameDivisionPlacements[sameDivisionPlacements.length - 1];
+  const gap = previous ? Math.abs(parseScheduleDateTime(slot.startsAt) - parseScheduleDateTime(previous.startsAt)) / 60_000 : 0;
+  const segmentDistance = tournamentSegmentDistance(entry, slot, slots);
+  const remainingForDivision = divisionQueues.get(entry.division)?.length || 0;
+  const finalPenalty = entry.label === "If-needed Championship" && previous?.startsAt === slot.startsAt ? 100_000 : 0;
+
+  return (
+    finalPenalty +
+    segmentDistance * 1_600 +
+    sameDivisionSameRow * 2_000 +
+    Math.max(0, gap - 160) * 7 +
+    Math.max(0, 80 - gap) * (previous ? 2 : 0) -
+    remainingForDivision * 30
+  );
+}
+
 function placeTournamentEntriesGreedily(entries: TournamentEntry[], slots: TournamentSlot[], preferredOrder?: string[]) {
   const placements: TournamentPlacement[] = [];
   const queues = new Map<string, TournamentEntry[]>();
   for (const entry of entries) queues.set(entry.division, [...(queues.get(entry.division) || []), entry]);
   const divisions = tournamentDivisionOrder(entries, preferredOrder);
   const championshipStartsByDivision = new Map<string, string>();
-  let divisionCursor = 0;
 
   const canPlace = (entry: TournamentEntry, startsAt: string) =>
     entry.label !== "If-needed Championship" || championshipStartsByDivision.get(entry.division) !== startsAt;
 
-  const placeDivision = (division: string, availableSlots: TournamentSlot[]) => {
-    const queue = queues.get(division) || [];
-    const entry = queue[0];
-    const slot = availableSlots[0];
+  const placeEntry = (entry: TournamentEntry, availableSlots: TournamentSlot[]) => {
+    const queue = queues.get(entry.division) || [];
+    const slot = [...availableSlots].sort(
+      (left, right) =>
+        tournamentPlacementScore(entry, left, slots, placements, queues) - tournamentPlacementScore(entry, right, slots, placements, queues) ||
+        left.startsAt.localeCompare(right.startsAt) ||
+        left.court - right.court
+    )[0];
     if (!entry || !slot || !canPlace(entry, slot.startsAt)) return false;
 
     queue.shift();
-    availableSlots.shift();
+    availableSlots.splice(availableSlots.indexOf(slot), 1);
     placements.push({ entry, startsAt: slot.startsAt, court: slot.court });
     if (entry.label === "Championship") championshipStartsByDivision.set(entry.division, slot.startsAt);
     return true;
@@ -313,22 +364,20 @@ function placeTournamentEntriesGreedily(entries: TournamentEntry[], slots: Tourn
 
   for (const row of groupTournamentSlotsByStart(slots)) {
     const availableSlots = [...row];
-    for (let offset = 0; offset < divisions.length && availableSlots.length; offset++) {
-      const division = divisions[(divisionCursor + offset) % divisions.length];
-      placeDivision(division, availableSlots);
-    }
-
     while (availableSlots.length) {
-      const [division] = divisions
-        .filter((candidate) => {
-          const entry = queues.get(candidate)?.[0];
-          return entry && canPlace(entry, availableSlots[0].startsAt);
-        })
-        .sort((left, right) => (queues.get(right)?.length || 0) - (queues.get(left)?.length || 0));
-      if (!division || !placeDivision(division, availableSlots)) break;
+      const candidateEntries = divisions
+        .map((division) => queues.get(division)?.[0])
+        .filter((entry): entry is TournamentEntry => Boolean(entry))
+        .filter((entry) => availableSlots.some((slot) => canPlace(entry, slot.startsAt)))
+        .sort((left, right) => {
+          const leftBest = Math.min(...availableSlots.filter((slot) => canPlace(left, slot.startsAt)).map((slot) => tournamentPlacementScore(left, slot, slots, placements, queues)));
+          const rightBest = Math.min(...availableSlots.filter((slot) => canPlace(right, slot.startsAt)).map((slot) => tournamentPlacementScore(right, slot, slots, placements, queues)));
+          if (leftBest !== rightBest) return leftBest - rightBest;
+          return (queues.get(right.division)?.length || 0) - (queues.get(left.division)?.length || 0);
+        });
+      const entry = candidateEntries[0];
+      if (!entry || !placeEntry(entry, availableSlots)) break;
     }
-
-    if (divisions.length) divisionCursor = (divisionCursor + 1) % divisions.length;
   }
 
   return {
