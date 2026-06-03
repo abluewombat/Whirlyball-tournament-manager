@@ -16,6 +16,8 @@ export const scheduleDefaults = {
   blockOrder: "C,B,D,A,Unlimited",
   blockRows: 6,
   preTournamentCutoff: "18:00",
+  unlimitedGameStart: "2026-06-27T13:00",
+  unlimitedCourt: 1,
   lateNightRows: 6,
   morningRestRows: 8
 } as const;

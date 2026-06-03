@@ -270,7 +270,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
                           </td>
                           <td>{game.court}</td>
                           <td>
-                            <strong>{game.phase === "seeding" ? "Seeding" : "Tournament"}</strong>
+                            <strong>{game.phase === "seeding" ? "Seeding" : game.phase === "unlimited" ? "Unlimited" : "Tournament"}</strong>
                             <div>{game.team_1 && game.team_2 ? `${game.team_1} vs. ${game.team_2}` : `${game.division}: ${game.label || "Game"}`}</div>
                             {playing ? <div className="muted">Opponent: {opponentLabel(game, team.id)}</div> : null}
                           </td>

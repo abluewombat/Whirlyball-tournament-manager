@@ -6,6 +6,7 @@ import { unsign } from "@/lib/security";
 import { ManagedBracketViewer, type ManagedBracketData } from "./managed-bracket-viewer";
 
 export const dynamic = "force-dynamic";
+const bracketDivisions = DIVISIONS.filter((division) => division !== "Unlimited");
 
 type BracketGame = {
   bracket_id: number;
@@ -33,7 +34,7 @@ export default async function BracketsPage() {
         <a className="button secondary" href="/standings">Standings</a>
       </div>
 
-      {DIVISIONS.map((division) => {
+      {bracketDivisions.map((division) => {
         const [divisionBracket] = games.filter((game) => game.division === division);
         return (
           <section className="section card" key={division}>

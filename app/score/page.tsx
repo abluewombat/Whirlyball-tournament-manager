@@ -11,6 +11,7 @@ import { displayDateTime } from "@/lib/format";
 import { ManagedBracketViewer, type ManagedBracketData } from "@/app/brackets/managed-bracket-viewer";
 
 export const dynamic = "force-dynamic";
+const bracketDivisions = DIVISIONS.filter((division) => division !== "Unlimited");
 
 type ScoreGame = {
   id: number;
@@ -66,7 +67,7 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
      WHERE brackets.status = 'active'
      ORDER BY brackets.division, brackets.id`
   );
-  const seedingGames = games.filter((game) => game.phase === "seeding");
+  const seedingGames = games.filter((game) => game.phase === "seeding" && game.division !== "Unlimited");
   const unscoredSeedingCount = seedingGames.filter((game) => game.team_1_score === null || game.team_2_score === null).length;
   const allSeedingScored = seedingGames.length > 0 && unscoredSeedingCount === 0;
   const bracketsReady = allSeedingScored && bracketGames.length > 0;
@@ -117,7 +118,7 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
       {bracketGames.length ? (
         <section className="section card bracket-page">
           <h2>Bracket</h2>
-          {DIVISIONS.map((division) => {
+          {bracketDivisions.map((division) => {
             const [divisionBracket] = bracketGames.filter((game) => game.division === division);
             if (!divisionBracket?.bracket_data_json) return null;
             return (

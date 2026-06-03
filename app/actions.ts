@@ -387,6 +387,8 @@ export async function generateScheduleAction(formData: FormData) {
     blockOrder: text(formData, "block_order") || scheduleDefaults.blockOrder,
     blockRows: Math.max(1, num(formData, "block_rows", scheduleDefaults.blockRows)),
     preTournamentCutoff: text(formData, "pre_tournament_cutoff") || scheduleDefaults.preTournamentCutoff,
+    unlimitedGameStart: text(formData, "unlimited_game_start") || scheduleDefaults.unlimitedGameStart,
+    unlimitedCourt: Math.max(1, num(formData, "unlimited_court", scheduleDefaults.unlimitedCourt)),
     morningRestRows: Math.max(0, num(formData, "morning_rest_rows", scheduleDefaults.morningRestRows)),
     lateNightRows: Math.max(0, num(formData, "late_night_rows", scheduleDefaults.lateNightRows))
   });
@@ -483,6 +485,7 @@ export async function generateBracketAction() {
     `SELECT COUNT(*) as count
      FROM games
      WHERE phase = 'seeding'
+       AND division <> 'Unlimited'
        AND team_1_id IS NOT NULL
        AND team_2_id IS NOT NULL
        AND (team_1_score IS NULL OR team_2_score IS NULL)`
@@ -493,6 +496,7 @@ export async function generateBracketAction() {
     `SELECT DISTINCT division
      FROM games
      WHERE phase = 'seeding'
+       AND division <> 'Unlimited'
        AND team_1_id IS NOT NULL
        AND team_2_id IS NOT NULL
      ORDER BY division`
@@ -518,7 +522,9 @@ export async function resetBracketScoreAction(formData: FormData) {
 
 export async function rebuildBracketAction(formData: FormData) {
   await requireAdmin();
-  await rebuildBracketForDivision(safeDivision(text(formData, "division")));
+  const division = safeDivision(text(formData, "division"));
+  if (division === "Unlimited") return;
+  await rebuildBracketForDivision(division);
   revalidatePath("/brackets");
   revalidatePath("/score");
 }

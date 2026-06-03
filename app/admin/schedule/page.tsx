@@ -172,6 +172,14 @@ export default async function SchedulePage({
             <input name="pre_tournament_cutoff" type="time" defaultValue={scheduleDefaults.preTournamentCutoff} />
           </label>
           <label>
+            Unlimited start
+            <input name="unlimited_game_start" type="datetime-local" defaultValue={scheduleDefaults.unlimitedGameStart} />
+          </label>
+          <label>
+            Unlimited court
+            <input name="unlimited_court" type="number" min="1" defaultValue={scheduleDefaults.unlimitedCourt} />
+          </label>
+          <label>
             Late-night rows
             <input name="late_night_rows" type="number" min="0" defaultValue={scheduleDefaults.lateNightRows} />
           </label>
@@ -180,7 +188,7 @@ export default async function SchedulePage({
             <input name="morning_rest_rows" type="number" min="0" defaultValue={scheduleDefaults.morningRestRows} />
           </label>
           <label>
-            First day is early opt-in only
+            Tuesdays are early opt-in only
             <input type="hidden" name="include_tuesday" value="on" />
             <input type="checkbox" defaultChecked disabled />
           </label>

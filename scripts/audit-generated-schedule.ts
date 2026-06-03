@@ -7,6 +7,7 @@ type Team = {
   name: string;
   division: string;
   center_name: string;
+  early_available: boolean;
 };
 
 type Assignment = {
@@ -41,7 +42,7 @@ main().catch((error) => {
 
 async function main() {
   const teams = await query<Team>(
-    `SELECT teams.id, teams.name, teams.division, centers.name as center_name
+    `SELECT teams.id, teams.name, teams.division, teams.early_available, centers.name as center_name
      FROM teams JOIN centers ON centers.id = teams.center_id
      WHERE teams.deleted_at IS NULL
      ORDER BY teams.division, centers.name, teams.name`
@@ -87,6 +88,7 @@ async function main() {
   }
 
   const issues = auditAssignments(assignments, teamById);
+  const tuesdayOptInIssues = auditTuesdayOptIn(assignments, teamById);
   const tournamentSegmentIssues = auditTournamentSegments(result.games);
   const severe = issues.filter((issue) => issue.severity >= 90).length;
   const high = issues.filter((issue) => issue.severity >= 70).length;
@@ -98,6 +100,8 @@ async function main() {
         unscheduledTournamentGames: result.unscheduledTournamentGames,
         severeIssues: severe,
         highIssues: high,
+        tuesdayOptInIssues: tuesdayOptInIssues.length,
+        tuesdayOptInExamples: tuesdayOptInIssues.slice(0, 20),
         tournamentSegmentIssues: tournamentSegmentIssues.length,
         tournamentSegmentExamples: tournamentSegmentIssues.slice(0, 20),
         issues: issues.slice(0, 80)
@@ -106,6 +110,19 @@ async function main() {
       2
     )
   );
+}
+
+function auditTuesdayOptIn(assignmentsByTeam: Map<number, Assignment[]>, teamsById: Map<number, Team>) {
+  const issues: string[] = [];
+  for (const [teamId, items] of assignmentsByTeam.entries()) {
+    const team = teamsById.get(teamId);
+    if (!team || team.early_available) continue;
+    for (const item of items) {
+      if (!isTuesday(item.startsAt)) continue;
+      issues.push(`${team.division} ${team.center_name} ${team.name}: ${item.startsAt.slice(0, 16)} ${item.role.toUpperCase()} C${item.court}`);
+    }
+  }
+  return issues.sort();
 }
 
 function auditTournamentSegments(games: GeneratedAuditGame[]) {
@@ -197,6 +214,10 @@ function fmt(minutes: number) {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function isTuesday(startsAt: string) {
+  return new Date(`${startsAt.slice(0, 10)}T00:00:00`).getDay() === 2;
 }
 
 function longestRun(values: string[]) {
