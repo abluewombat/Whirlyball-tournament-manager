@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { displayDateTime } from "@/lib/format";
 import { scheduleDefaults } from "@/lib/schedule-defaults";
+import { ScheduleEditor, type AdminScheduleGame } from "./schedule-editor";
 
 export const dynamic = "force-dynamic";
 
@@ -13,18 +14,10 @@ export default async function SchedulePage({
 }) {
   await requireAdmin();
   const params = await searchParams;
-  const games = await query<{
-      id: number;
-      phase: string;
-      division: string;
-      court: number;
-      starts_at: string;
-      team_1: string | null;
-      team_2: string | null;
-      ref_team: string | null;
-      label: string;
-    }>(
-      `SELECT games.*, t1.name as team_1, t2.name as team_2, tr.name as ref_team
+  const games = await query<AdminScheduleGame>(
+      `SELECT games.id, games.phase, games.division, games.court, games.starts_at,
+              games.label, t1.name as team_1, t2.name as team_2,
+              tr.name as ref_team, tr.division as ref_team_division
        FROM games
        LEFT JOIN teams t1 ON t1.id = games.team_1_id
        LEFT JOIN teams t2 ON t2.id = games.team_2_id
@@ -231,40 +224,17 @@ export default async function SchedulePage({
         )}
       </section>
 
-      <section className="section">
-        <h2>Current Draft</h2>
-        {games.length === 0 ? (
-          <p className="muted">No generated schedule yet.</p>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Court</th>
-                  <th>Division</th>
-                  <th>Game</th>
-                  <th>Teams</th>
-                  <th>Ref</th>
-                </tr>
-              </thead>
-              <tbody>
-                {games.map((game) => (
-                  <tr key={game.id}>
-                    <td>{displayDateTime(game.starts_at)}</td>
-                    <td>{game.court}</td>
-                    <td>{game.division}</td>
-                    <td>{game.label}</td>
-                    <td>
-                      {game.team_1 || "TBD"} vs {game.team_2 || "TBD"}
-                    </td>
-                    <td>{game.ref_team || "TBD"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <section className="section schedule-page">
+        <div className="section-heading">
+          <div>
+            <h2>Current Draft</h2>
+            <p className="muted">Drag a game to another court/time cell to move it. Dropping on another game swaps them.</p>
           </div>
-        )}
+          <a className="button secondary" href="/schedule">
+            Public View
+          </a>
+        </div>
+        <ScheduleEditor games={games} />
       </section>
     </main>
   );

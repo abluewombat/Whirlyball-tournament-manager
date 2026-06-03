@@ -327,3 +327,31 @@ export async function generateScheduleAction(formData: FormData) {
     `/admin/schedule?generated=${result.games.length}&unscheduled=${result.unscheduledSeedingGames}&unscheduled_tournament=${result.unscheduledTournamentGames}`
   );
 }
+
+export async function moveScheduleGameAction(input: { gameId: number; startsAt: string; court: number }) {
+  await requireAdmin();
+  const gameId = Number(input.gameId);
+  const targetCourt = Number(input.court);
+  const targetStartsAt = String(input.startsAt || "");
+  if (!Number.isInteger(gameId) || gameId <= 0 || !targetStartsAt || !Number.isInteger(targetCourt) || targetCourt < 1) return;
+
+  const [source] = await query<{ id: number; starts_at: string; court: number }>("SELECT id, starts_at, court FROM games WHERE id = $1", [gameId]);
+  if (!source) return;
+  if (source.starts_at === targetStartsAt && source.court === targetCourt) return;
+
+  const [target] = await query<{ id: number }>("SELECT id FROM games WHERE starts_at = $1 AND court = $2 AND id <> $3 ORDER BY id LIMIT 1", [
+    targetStartsAt,
+    targetCourt,
+    gameId
+  ]);
+
+  await withTransaction(async (client) => {
+    if (target) {
+      await client.query("UPDATE games SET starts_at = $1, court = $2 WHERE id = $3", [source.starts_at, source.court, target.id]);
+    }
+    await client.query("UPDATE games SET starts_at = $1, court = $2 WHERE id = $3", [targetStartsAt, targetCourt, gameId]);
+  });
+
+  revalidatePath("/admin/schedule");
+  revalidatePath("/schedule");
+}
