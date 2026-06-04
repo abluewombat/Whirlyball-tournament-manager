@@ -180,7 +180,7 @@ export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: 
 
 type FilterableScoreRow = {
   division: string;
-  court: number | null;
+  court: number | string | null;
   team_1: string | null;
   team_2: string | null;
 };
@@ -294,7 +294,7 @@ function teamOptions(games: FilterableScoreRow[], divisionFilter: string) {
 }
 
 function courtOptions(games: FilterableScoreRow[]) {
-  return [...new Set(games.map((game) => game.court).filter((court): court is number => court !== null))].sort((left, right) => left - right);
+  return [...new Set(games.map((game) => normalizeCourt(game.court)).filter((court): court is number => court !== null))].sort((left, right) => left - right);
 }
 
 function compareDivisions(left: string, right: string) {
@@ -307,12 +307,19 @@ function compareDivisions(left: string, right: string) {
 }
 
 function filterScoreRows<T extends FilterableScoreRow>(games: T[], divisionFilter: string, teamFilter: string, courtFilter: string) {
+  const selectedCourt = normalizeCourt(courtFilter);
   return games.filter((game) => {
     const divisionMatches = divisionFilter === "all" || game.division === divisionFilter;
     const teamMatches = teamFilter === "all" || game.team_1 === teamFilter || game.team_2 === teamFilter;
-    const courtMatches = courtFilter === "all" || game.court === Number(courtFilter);
+    const courtMatches = courtFilter === "all" || normalizeCourt(game.court) === selectedCourt;
     return divisionMatches && teamMatches && courtMatches;
   });
+}
+
+function normalizeCourt(court: number | string | null) {
+  if (court === null || court === "") return null;
+  const value = Number(court);
+  return Number.isInteger(value) && value > 0 ? value : null;
 }
 
 type DatedScoreRow = {
@@ -388,6 +395,7 @@ function BracketScheduleScoreGrid({ games, emptyText }: { games: EditableBracket
   const scheduledGames = games.filter((game) => game.starts_at && game.court);
   const unscheduledGames = games.filter((game) => !game.starts_at || !game.court);
   const rows = buildBracketScheduleScoreRows(scheduledGames);
+  if (!rows.rows.length && !unscheduledGames.length) return <p className="muted">{emptyText}</p>;
   return (
     <>
       {rows.rows.length ? (
@@ -427,12 +435,13 @@ function buildBracketScheduleScoreRows(games: EditableBracketGame[]) {
   const courts = courtOptions(games);
   const rows = new Map<string, { startsAt: string; gamesByCourt: Map<number, EditableBracketGame> }>();
   for (const game of [...games].sort((left, right) => (left.starts_at || "").localeCompare(right.starts_at || "") || (left.court || 0) - (right.court || 0))) {
-    if (!game.starts_at || !game.court) continue;
+    const court = normalizeCourt(game.court);
+    if (!game.starts_at || court === null) continue;
     const row = rows.get(game.starts_at) || { startsAt: game.starts_at, gamesByCourt: new Map<number, EditableBracketGame>() };
-    row.gamesByCourt.set(game.court, game);
+    row.gamesByCourt.set(court, game);
     rows.set(game.starts_at, row);
   }
-  return { courts, rows: [...rows.values()].sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
+  return { courts, rows: [...rows.values()].filter((row) => rowHasVisibleGame(row, courts)).sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
 }
 
 function BracketScoreCard({ game }: { game: EditableBracketGame }) {
@@ -545,6 +554,7 @@ function currentWinnerSide(game: EditableBracketGame) {
 function ScheduleScoreGrid({ games, emptyText }: { games: ScoreGame[]; emptyText: string }) {
   if (!games.length) return <p className="muted">{emptyText}</p>;
   const rows = buildScheduleScoreRows(games);
+  if (!rows.rows.length) return <p className="muted">{emptyText}</p>;
   return (
     <div className="score-schedule-grid" style={scoreGridColumns(rows.courts.length)}>
       <div className="score-schedule-heading">Time</div>
@@ -620,15 +630,21 @@ function buildScheduleScoreRows(games: ScoreGame[]) {
   const courts = courtOptions(games);
   const rows = new Map<string, { startsAt: string; gamesByCourt: Map<number, ScoreGame> }>();
   for (const game of [...games].sort((left, right) => left.starts_at.localeCompare(right.starts_at) || left.court - right.court)) {
+    const court = normalizeCourt(game.court);
+    if (court === null) continue;
     const row = rows.get(game.starts_at) || { startsAt: game.starts_at, gamesByCourt: new Map<number, ScoreGame>() };
-    row.gamesByCourt.set(game.court, game);
+    row.gamesByCourt.set(court, game);
     rows.set(game.starts_at, row);
   }
-  return { courts, rows: [...rows.values()].sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
+  return { courts, rows: [...rows.values()].filter((row) => rowHasVisibleGame(row, courts)).sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
 }
 
 function scoreGridColumns(courtCount: number) {
   return { gridTemplateColumns: `120px repeat(${Math.max(courtCount, 1)}, minmax(0, 1fr))` };
+}
+
+function rowHasVisibleGame<T>(row: { gamesByCourt: Map<number, T> }, courts: number[]) {
+  return courts.some((court) => row.gamesByCourt.has(court));
 }
 
 function ScheduleForfeitButton({ game, teamId, teamName }: { game: ScoreGame; teamId: number | null; teamName: string }) {
