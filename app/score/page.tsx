@@ -48,9 +48,14 @@ type EditableBracketGame = {
   team_2_score: number | null;
 };
 
-export default async function ScorePage({ searchParams }: { searchParams: Promise<{ error?: string; show_scored?: string }> }) {
+export default async function ScorePage({
+  searchParams
+}: {
+  searchParams: Promise<{ error?: string; show_scored?: string; show_scored_seeding?: string; show_scored_bracket?: string }>;
+}) {
   const params = await searchParams;
-  const showScored = params.show_scored === "1";
+  const showScoredSeeding = params.show_scored === "1" || params.show_scored_seeding === "1";
+  const showScoredBracket = params.show_scored === "1" || params.show_scored_bracket === "1";
   const access = await scoreEntryAccess();
   if (!access) {
     return (
@@ -101,8 +106,8 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
   const unscoredSeedingCount = seedingGames.filter((game) => game.team_1_score === null || game.team_2_score === null).length;
   const allSeedingScored = seedingGames.length > 0 && unscoredSeedingCount === 0;
   const bracketsReady = allSeedingScored && bracketGames.length > 0;
-  const visibleSeedingGames = showScored ? seedingGames : seedingGames.filter(isUnscoredScheduleGame);
-  const visibleBracketGames = showScored ? editableBracketGames : editableBracketGames.filter(isUnscoredBracketGame);
+  const visibleSeedingGames = showScoredSeeding ? seedingGames : seedingGames.filter(isUnscoredScheduleGame);
+  const visibleBracketGames = showScoredBracket ? editableBracketGames : editableBracketGames.filter(isUnscoredBracketGame);
   const unscoredBracketCount = editableBracketGames.filter(isUnscoredBracketGame).length;
 
   return (
@@ -151,30 +156,37 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
       </section>
 
       <div className="actions">
-        <span className="pill">{showScored ? "Showing scored games" : "Hiding scored games"}</span>
-        <a className="button secondary" href={showScored ? "/score" : "/score?show_scored=1"}>
-          {showScored ? "Hide Scored Games" : "Show Scored Games"}
+        <span className="pill">{showScoredSeeding ? "Seeding scored games shown" : "Seeding scored games hidden"}</span>
+        <a className="button secondary" href={scoreFilterHref({ showScoredSeeding: !showScoredSeeding, showScoredBracket })}>
+          {showScoredSeeding ? "Hide Scored Seeding Games" : "Show Scored Seeding Games"}
         </a>
       </div>
-
-      <details className="section card score-collapse" open={!bracketsReady}>
+      <details className="section card score-collapse" open={!bracketsReady || showScoredSeeding}>
         <summary>
           <span>Seeding Score Entry</span>
           <span className={allSeedingScored ? "pill ok" : "pill warn"}>
             {allSeedingScored ? "Complete" : `${unscoredSeedingCount} left`}
           </span>
         </summary>
-        <ScoreTable games={visibleSeedingGames} emptyText={showScored ? "No seeding games available." : "No unscored seeding games."} />
+        <ScoreTable games={visibleSeedingGames} emptyText={showScoredSeeding ? "No seeding games available." : "No unscored seeding games."} />
       </details>
 
       {editableBracketGames.length ? (
-        <details className="section card score-collapse" open={bracketsReady}>
-          <summary>
-            <span>Tournament Score Entry</span>
-            <span className={unscoredBracketCount ? "pill warn" : "pill ok"}>{unscoredBracketCount ? `${unscoredBracketCount} left` : "Complete"}</span>
-          </summary>
-          <BracketScoreTable games={visibleBracketGames} emptyText={showScored ? "No bracket games available." : "No unscored bracket games."} />
-        </details>
+        <>
+          <div className="actions">
+            <span className="pill">{showScoredBracket ? "Tournament scored games shown" : "Tournament scored games hidden"}</span>
+            <a className="button secondary" href={scoreFilterHref({ showScoredSeeding, showScoredBracket: !showScoredBracket })}>
+              {showScoredBracket ? "Hide Scored Tournament Games" : "Show Scored Tournament Games"}
+            </a>
+          </div>
+          <details className="section card score-collapse" open={bracketsReady || showScoredBracket}>
+            <summary>
+              <span>Tournament Score Entry</span>
+              <span className={unscoredBracketCount ? "pill warn" : "pill ok"}>{unscoredBracketCount ? `${unscoredBracketCount} left` : "Complete"}</span>
+            </summary>
+            <BracketScoreTable games={visibleBracketGames} emptyText={showScoredBracket ? "No bracket games available." : "No unscored bracket games."} />
+          </details>
+        </>
       ) : null}
 
       {bracketGames.length ? (
@@ -197,6 +209,20 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
       ) : null}
     </main>
   );
+}
+
+function scoreFilterHref({
+  showScoredSeeding,
+  showScoredBracket
+}: {
+  showScoredSeeding: boolean;
+  showScoredBracket: boolean;
+}) {
+  const params = new URLSearchParams();
+  if (showScoredSeeding) params.set("show_scored_seeding", "1");
+  if (showScoredBracket) params.set("show_scored_bracket", "1");
+  const queryString = params.toString();
+  return queryString ? `/score?${queryString}` : "/score";
 }
 
 function isUnscoredScheduleGame(game: ScoreGame) {
