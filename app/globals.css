@@ -355,6 +355,17 @@ th {
   width: 100%;
 }
 
+.score-filter-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  margin-top: 12px;
+}
+
+.score-filter-grid select {
+  width: 100%;
+}
+
 .stack {
   display: grid;
   gap: 14px;
@@ -897,6 +908,10 @@ th {
 
   .score-team-input input {
     font-size: 24px;
+  }
+
+  .score-filter-grid {
+    grid-template-columns: 1fr;
   }
 
   .schedule-grid-wrap,

@@ -39,18 +39,26 @@ type ScoreEntryTablesProps = {
 export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: ScoreEntryTablesProps) {
   const [showAllSeeding, setShowAllSeeding] = useState(false);
   const [showAllTournament, setShowAllTournament] = useState(false);
+  const [seedingDivisionFilter, setSeedingDivisionFilter] = useState("all");
+  const [seedingTeamFilter, setSeedingTeamFilter] = useState("all");
+  const [tournamentDivisionFilter, setTournamentDivisionFilter] = useState("all");
+  const [tournamentTeamFilter, setTournamentTeamFilter] = useState("all");
   const unscoredSeedingCount = useMemo(() => seedingGames.filter(isUnscoredScheduleGame).length, [seedingGames]);
   const unscoredBracketCount = useMemo(() => bracketGames.filter(isUnscoredBracketGame).length, [bracketGames]);
   const allSeedingScored = seedingGames.length > 0 && unscoredSeedingCount === 0;
   const [seedingOpen, setSeedingOpen] = useState(!bracketsReady || allSeedingScored);
   const [tournamentOpen, setTournamentOpen] = useState(bracketsReady || unscoredBracketCount === 0);
+  const seedingDivisions = useMemo(() => divisionOptions(seedingGames), [seedingGames]);
+  const tournamentDivisions = useMemo(() => divisionOptions(bracketGames), [bracketGames]);
+  const seedingTeams = useMemo(() => teamOptions(seedingGames, seedingDivisionFilter), [seedingGames, seedingDivisionFilter]);
+  const tournamentTeams = useMemo(() => teamOptions(bracketGames, tournamentDivisionFilter), [bracketGames, tournamentDivisionFilter]);
   const visibleSeedingGames = useMemo(
-    () => (showAllSeeding ? seedingGames : seedingGames.filter(isUnscoredScheduleGame)),
-    [seedingGames, showAllSeeding]
+    () => filterScoreRows(showAllSeeding ? seedingGames : seedingGames.filter(isUnscoredScheduleGame), seedingDivisionFilter, seedingTeamFilter),
+    [seedingGames, showAllSeeding, seedingDivisionFilter, seedingTeamFilter]
   );
   const visibleBracketGames = useMemo(
-    () => (showAllTournament ? bracketGames : bracketGames.filter(isUnscoredBracketGame)),
-    [bracketGames, showAllTournament]
+    () => filterScoreRows(showAllTournament ? bracketGames : bracketGames.filter(isUnscoredBracketGame), tournamentDivisionFilter, tournamentTeamFilter),
+    [bracketGames, showAllTournament, tournamentDivisionFilter, tournamentTeamFilter]
   );
 
   return (
@@ -67,6 +75,18 @@ export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: 
           showText="Show All Seeding Games"
           hideText="Hide Scored Seeding Games"
           onToggle={() => setShowAllSeeding((value) => !value)}
+        />
+        <ScoreScopeFilters
+          label="Seeding"
+          divisions={seedingDivisions}
+          teams={seedingTeams}
+          selectedDivision={seedingDivisionFilter}
+          selectedTeam={seedingTeamFilter}
+          onDivisionChange={(division) => {
+            setSeedingDivisionFilter(division);
+            setSeedingTeamFilter("all");
+          }}
+          onTeamChange={setSeedingTeamFilter}
         />
         <ScoreTable games={visibleSeedingGames} emptyText={showAllSeeding ? "No seeding games available." : "No unscored seeding games."} />
       </details>
@@ -85,11 +105,96 @@ export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: 
             hideText="Hide Scored Tournament Games"
             onToggle={() => setShowAllTournament((value) => !value)}
           />
+          <ScoreScopeFilters
+            label="Tournament"
+            divisions={tournamentDivisions}
+            teams={tournamentTeams}
+            selectedDivision={tournamentDivisionFilter}
+            selectedTeam={tournamentTeamFilter}
+            onDivisionChange={(division) => {
+              setTournamentDivisionFilter(division);
+              setTournamentTeamFilter("all");
+            }}
+            onTeamChange={setTournamentTeamFilter}
+          />
           <BracketScoreTable games={visibleBracketGames} emptyText={showAllTournament ? "No bracket games available." : "No unscored bracket games."} />
         </details>
       ) : null}
     </>
   );
+}
+
+type FilterableScoreRow = {
+  division: string;
+  team_1: string | null;
+  team_2: string | null;
+};
+
+function ScoreScopeFilters({
+  label,
+  divisions,
+  teams,
+  selectedDivision,
+  selectedTeam,
+  onDivisionChange,
+  onTeamChange
+}: {
+  label: string;
+  divisions: string[];
+  teams: string[];
+  selectedDivision: string;
+  selectedTeam: string;
+  onDivisionChange: (division: string) => void;
+  onTeamChange: (team: string) => void;
+}) {
+  return (
+    <div className="score-filter-grid" aria-label={`${label} score filters`}>
+      <label>
+        Division
+        <select value={selectedDivision} onChange={(event) => onDivisionChange(event.target.value)}>
+          <option value="all">All divisions</option>
+          {divisions.map((division) => (
+            <option value={division} key={division}>
+              {division}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Team
+        <select value={selectedTeam} onChange={(event) => onTeamChange(event.target.value)}>
+          <option value="all">All teams</option>
+          {teams.map((team) => (
+            <option value={team} key={team}>
+              {team}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
+function divisionOptions(games: FilterableScoreRow[]) {
+  return [...new Set(games.map((game) => game.division))].sort((left, right) => left.localeCompare(right));
+}
+
+function teamOptions(games: FilterableScoreRow[], divisionFilter: string) {
+  const scopedGames = divisionFilter === "all" ? games : games.filter((game) => game.division === divisionFilter);
+  const teams = new Set<string>();
+  for (const game of scopedGames) {
+    if (game.team_1) teams.add(game.team_1);
+    if (game.team_2) teams.add(game.team_2);
+  }
+  return [...teams].sort((left, right) => left.localeCompare(right));
+}
+
+function filterScoreRows<T extends FilterableScoreRow>(games: T[], divisionFilter: string, teamFilter: string) {
+  return games.filter((game) => {
+    const divisionMatches = divisionFilter === "all" || game.division === divisionFilter;
+    const teamMatches = teamFilter === "all" || game.team_1 === teamFilter || game.team_2 === teamFilter;
+    return divisionMatches && teamMatches;
+  });
 }
 
 function ScoreFilterControl({
