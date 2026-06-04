@@ -5,7 +5,8 @@ import {
   scorekeeperLoginAction,
   scorekeeperLogoutAction,
   submitBracketScoreAction,
-  submitGameScoreAction
+  submitGameScoreAction,
+  syncScheduleFromBracketsAction
 } from "@/app/actions";
 import { scoreEntryAccess } from "@/lib/auth";
 import { DIVISIONS, query } from "@/lib/db";
@@ -47,8 +48,9 @@ type EditableBracketGame = {
   team_2_score: number | null;
 };
 
-export default async function ScorePage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+export default async function ScorePage({ searchParams }: { searchParams: Promise<{ error?: string; show_scored?: string }> }) {
   const params = await searchParams;
+  const showScored = params.show_scored === "1";
   const access = await scoreEntryAccess();
   if (!access) {
     return (
@@ -99,6 +101,9 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
   const unscoredSeedingCount = seedingGames.filter((game) => game.team_1_score === null || game.team_2_score === null).length;
   const allSeedingScored = seedingGames.length > 0 && unscoredSeedingCount === 0;
   const bracketsReady = allSeedingScored && bracketGames.length > 0;
+  const visibleSeedingGames = showScored ? seedingGames : seedingGames.filter(isUnscoredScheduleGame);
+  const visibleBracketGames = showScored ? editableBracketGames : editableBracketGames.filter(isUnscoredBracketGame);
+  const unscoredBracketCount = editableBracketGames.filter(isUnscoredBracketGame).length;
 
   return (
     <main className="content">
@@ -124,14 +129,33 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
             </p>
           </div>
           {bracketsReady ? (
-            <span className="pill ok">Bracket generated</span>
+            <div className="actions">
+              <span className="pill ok">Bracket generated</span>
+              <form action={syncScheduleFromBracketsAction}>
+                <button className="button secondary">Sync Schedule</button>
+              </form>
+            </div>
           ) : (
-            <form action={generateBracketAction}>
-              <button className="button" disabled={!allSeedingScored}>Generate Bracket</button>
-            </form>
+            <div className="actions">
+              <form action={generateBracketAction}>
+                <button className="button" disabled={!allSeedingScored}>Generate Bracket</button>
+              </form>
+              {bracketGames.length ? (
+                <form action={syncScheduleFromBracketsAction}>
+                  <button className="button secondary">Sync Schedule</button>
+                </form>
+              ) : null}
+            </div>
           )}
         </div>
       </section>
+
+      <div className="actions">
+        <span className="pill">{showScored ? "Showing scored games" : "Hiding scored games"}</span>
+        <a className="button secondary" href={showScored ? "/score" : "/score?show_scored=1"}>
+          {showScored ? "Hide Scored Games" : "Show Scored Games"}
+        </a>
+      </div>
 
       <details className="section card score-collapse" open={!bracketsReady}>
         <summary>
@@ -140,16 +164,16 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
             {allSeedingScored ? "Complete" : `${unscoredSeedingCount} left`}
           </span>
         </summary>
-        <ScoreTable games={seedingGames} />
+        <ScoreTable games={visibleSeedingGames} emptyText={showScored ? "No seeding games available." : "No unscored seeding games."} />
       </details>
 
       {editableBracketGames.length ? (
         <details className="section card score-collapse" open={bracketsReady}>
           <summary>
             <span>Tournament Score Entry</span>
-            <span className="pill">Bracket games</span>
+            <span className={unscoredBracketCount ? "pill warn" : "pill ok"}>{unscoredBracketCount ? `${unscoredBracketCount} left` : "Complete"}</span>
           </summary>
-          <BracketScoreTable games={editableBracketGames} />
+          <BracketScoreTable games={visibleBracketGames} emptyText={showScored ? "No bracket games available." : "No unscored bracket games."} />
         </details>
       ) : null}
 
@@ -175,7 +199,16 @@ export default async function ScorePage({ searchParams }: { searchParams: Promis
   );
 }
 
-function BracketScoreTable({ games }: { games: EditableBracketGame[] }) {
+function isUnscoredScheduleGame(game: ScoreGame) {
+  return game.team_1_score === null || game.team_2_score === null;
+}
+
+function isUnscoredBracketGame(game: EditableBracketGame) {
+  return game.team_1_score === null || game.team_2_score === null;
+}
+
+function BracketScoreTable({ games, emptyText }: { games: EditableBracketGame[]; emptyText: string }) {
+  if (!games.length) return <p className="muted">{emptyText}</p>;
   return (
     <div className="table-wrap">
       <table>
@@ -232,8 +265,8 @@ function bracketGameLabel(game: EditableBracketGame) {
   return `${game.bracket_side === "losers" ? "Losers" : "Winners"} Round ${game.round} Game ${game.position}`;
 }
 
-function ScoreTable({ games }: { games: ScoreGame[] }) {
-  if (!games.length) return <p className="muted">No games available.</p>;
+function ScoreTable({ games, emptyText }: { games: ScoreGame[]; emptyText: string }) {
+  if (!games.length) return <p className="muted">{emptyText}</p>;
   return (
     <div className="table-wrap">
       <table>

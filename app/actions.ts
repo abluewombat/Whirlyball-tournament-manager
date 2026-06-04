@@ -511,6 +511,14 @@ export async function generateBracketAction() {
   revalidatePath("/schedule");
 }
 
+export async function syncScheduleFromBracketsAction() {
+  await requireScorekeeperOrAdmin();
+  await syncActiveBracketsToSchedule();
+  revalidatePath("/score");
+  revalidatePath("/brackets");
+  revalidatePath("/schedule");
+}
+
 export async function submitBracketScoreAction(formData: FormData) {
   await requireScorekeeperOrAdmin();
   await scoreBracketGame(num(formData, "bracket_game_id"), num(formData, "team_1_score"), num(formData, "team_2_score"));
