@@ -351,6 +351,65 @@ th {
   margin-top: 14px;
 }
 
+.score-schedule-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 120px minmax(0, 1fr) minmax(0, 1fr);
+  margin-top: 14px;
+}
+
+.score-schedule-heading {
+  background: #1e2a35;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 10px;
+  text-transform: uppercase;
+}
+
+.score-schedule-row {
+  display: contents;
+}
+
+.score-schedule-time,
+.score-schedule-cell {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.score-schedule-time {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  padding: 12px 10px;
+}
+
+.score-schedule-time span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.score-schedule-cell {
+  padding: 8px;
+}
+
+.score-schedule-cell > .muted {
+  display: block;
+  font-weight: 700;
+  min-height: 42px;
+  padding: 10px;
+}
+
+.score-schedule-cell .score-game-card {
+  border: 0;
+  padding: 10px;
+}
+
 .score-game-card {
   background: var(--panel-2);
   border: 1px solid var(--line);
@@ -990,6 +1049,46 @@ th {
 
   .score-game-header {
     display: grid;
+  }
+
+  .score-schedule-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .score-schedule-heading {
+    display: none;
+  }
+
+  .score-schedule-row {
+    display: grid;
+    gap: 8px;
+  }
+
+  .score-schedule-time::before {
+    color: var(--muted);
+    content: "Time";
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .score-schedule-cell:nth-child(2)::before,
+  .score-schedule-cell:nth-child(3)::before {
+    color: var(--muted);
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+  }
+
+  .score-schedule-cell:nth-child(2)::before {
+    content: "Court 1";
+  }
+
+  .score-schedule-cell:nth-child(3)::before {
+    content: "Court 2";
   }
 
   .score-card-actions .button,

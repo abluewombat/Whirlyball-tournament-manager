@@ -32,6 +32,13 @@ export type BracketScoreLock = {
   reset_lock_reason: string | null;
 };
 
+export type BracketScheduleSlot = {
+  bracket_game_id: number;
+  schedule_label: string | null;
+  starts_at: string | null;
+  court: number | null;
+};
+
 type BracketRow = {
   id: number;
   division: string;
@@ -218,6 +225,34 @@ export async function getActiveBracketScoreLocks() {
     });
   }
   return locks;
+}
+
+export async function getActiveBracketScheduleSlots() {
+  const brackets = await query<{ id: number; division: string }>("SELECT id, division FROM brackets WHERE status = 'active' ORDER BY division, id");
+  const slots = new Map<number, BracketScheduleSlot>();
+
+  for (const bracket of brackets) {
+    const bracketGames = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE bracket_id = $1", [bracket.id]);
+    const labels = bracketScheduleLabels(bracketGames);
+    const scheduleGames = await query<{ label: string | null; starts_at: string; court: number }>(
+      "SELECT label, starts_at, court FROM games WHERE phase = 'tournament' AND division = $1",
+      [bracket.division]
+    );
+    const scheduleByLabel = new Map(scheduleGames.filter((game) => game.label).map((game) => [game.label as string, game]));
+
+    for (const game of bracketGames) {
+      const scheduleLabel = labels.get(game.id) || null;
+      const scheduleGame = scheduleLabel ? scheduleByLabel.get(scheduleLabel) : null;
+      slots.set(game.id, {
+        bracket_game_id: game.id,
+        schedule_label: scheduleLabel,
+        starts_at: scheduleGame?.starts_at || null,
+        court: scheduleGame?.court || null
+      });
+    }
+  }
+
+  return slots;
 }
 
 export async function activeBracketExistsForDivision(division: string) {

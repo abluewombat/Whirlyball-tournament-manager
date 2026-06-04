@@ -5,7 +5,7 @@ import {
   syncScheduleFromBracketsAction
 } from "@/app/actions";
 import { scoreEntryAccess } from "@/lib/auth";
-import { getActiveBracketScoreLocks } from "@/lib/brackets";
+import { getActiveBracketScheduleSlots, getActiveBracketScoreLocks } from "@/lib/brackets";
 import { DIVISIONS, query } from "@/lib/db";
 import { ManagedBracketViewer, type ManagedBracketData } from "@/app/brackets/managed-bracket-viewer";
 import { ScoreEntryTables, type EditableBracketGame, type ScoreGame } from "@/app/score/score-entry-tables";
@@ -77,6 +77,7 @@ export default async function ScorePage({
   );
   const activeBracketDivisions = new Set(bracketGames.map((game) => game.division));
   const bracketScoreLocks = await getActiveBracketScoreLocks();
+  const bracketScheduleSlots = await getActiveBracketScheduleSlots();
   const seedingGames = games
     .filter((game) => game.phase === "seeding" && game.division !== "Unlimited")
     .map((game) => ({
@@ -88,8 +89,12 @@ export default async function ScorePage({
     }));
   const editableBracketGamesWithLocks = editableBracketGames.map((game) => {
     const lock = bracketScoreLocks.get(game.id);
+    const scheduleSlot = bracketScheduleSlots.get(game.id);
     return {
       ...game,
+      schedule_label: scheduleSlot?.schedule_label || null,
+      starts_at: scheduleSlot?.starts_at || null,
+      court: scheduleSlot?.court || null,
       result_locked: Boolean(lock?.result_locked),
       result_lock_reason: lock?.result_lock_reason || null,
       reset_locked: Boolean(lock?.reset_locked),
