@@ -107,6 +107,7 @@ const defaultBlockOrder = ["C", "B", "D", "A", "Unlimited"];
 const unlimitedDivision = "Unlimited";
 const unlimitedBlockMinutes = 40;
 const unlimitedSeriesGames = 3;
+const maxSeedingCoverageSpread = 2;
 
 function dateRange(start: string, end: string) {
   const days: Date[] = [];
@@ -564,7 +565,7 @@ function equalizeSeedingGameCounts(games: GeneratedGame[], byDivision: Map<strin
     const values = teamIds.map((teamId) => counts.get(teamId) || 0);
     const min = Math.min(...values);
     const max = Math.max(...values);
-    if (max - min <= 1) break;
+    if (max - min <= maxSeedingCoverageSpread) break;
 
     let removed = false;
     for (let index = games.length - 1; index >= 0; index--) {
@@ -572,7 +573,7 @@ function equalizeSeedingGameCounts(games: GeneratedGame[], byDivision: Map<strin
       if (game.phase !== "seeding" || game.team1Id === null || game.team2Id === null) continue;
       const team1Count = counts.get(game.team1Id) || 0;
       const team2Count = counts.get(game.team2Id) || 0;
-      if (Math.max(team1Count, team2Count) <= min + 1 || Math.min(team1Count, team2Count) <= min) continue;
+      if (Math.max(team1Count, team2Count) <= min + maxSeedingCoverageSpread || Math.min(team1Count, team2Count) <= min) continue;
       games.splice(index, 1);
       counts.set(game.team1Id, team1Count - 1);
       counts.set(game.team2Id, team2Count - 1);
