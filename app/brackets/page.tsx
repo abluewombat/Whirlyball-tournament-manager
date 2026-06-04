@@ -12,12 +12,22 @@ type BracketGame = {
   bracket_id: number;
   division: string;
   bracket_data_json: ManagedBracketData | null;
+  scored_games: string;
 };
 
 export default async function BracketsPage() {
   const isAdmin = unsign((await cookies()).get("admin_session")?.value) === "admin";
   const games = await query<BracketGame>(
-    `SELECT brackets.id as bracket_id, brackets.division, brackets.bracket_data_json
+    `SELECT brackets.id as bracket_id, brackets.division, brackets.bracket_data_json,
+            (
+              SELECT COUNT(*)
+              FROM bracket_games
+              WHERE bracket_games.bracket_id = brackets.id
+                AND (
+                  (bracket_games.team_1_score IS NOT NULL AND bracket_games.team_2_score IS NOT NULL)
+                  OR bracket_games.result_type = 'forfeit'
+                )
+            ) as scored_games
      FROM brackets
      WHERE brackets.status = 'active'
      ORDER BY brackets.division, brackets.id`
@@ -31,11 +41,11 @@ export default async function BracketsPage() {
           <h1>Brackets</h1>
           <p className="muted">Brackets appear automatically when all seeding games in a division are scored.</p>
         </div>
-        <a className="button secondary" href="/standings">Standings</a>
       </div>
 
       {bracketDivisions.map((division) => {
         const [divisionBracket] = games.filter((game) => game.division === division);
+        const scoredGameCount = Number(divisionBracket?.scored_games || 0);
         return (
           <section className="section card" key={division}>
             <div className="section-heading">
@@ -43,10 +53,13 @@ export default async function BracketsPage() {
               {isAdmin ? (
                 <form action={rebuildBracketAction}>
                   <input name="division" type="hidden" value={division} />
-                  <button className="button secondary">Rebuild Bracket</button>
+                  <button className="button secondary" disabled={scoredGameCount > 0}>
+                    Rebuild Bracket
+                  </button>
                 </form>
               ) : null}
             </div>
+            {scoredGameCount > 0 ? <p className="pill warn">Rebuild locked after {scoredGameCount} tournament results.</p> : null}
             {divisionBracket?.bracket_data_json ? (
               <details className="bracket-division-card" open={division === "A"}>
                 <summary>

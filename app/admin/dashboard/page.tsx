@@ -68,12 +68,6 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
     <main className="content">
       <div className="actions">
         <h1 style={{ marginRight: "auto" }}>Admin Dashboard</h1>
-        <a className="button secondary" href="/admin/schedule">
-          Schedule
-        </a>
-        <a className="button secondary" href="/api/export">
-          Export Excel
-        </a>
         <form action={adminLogoutAction}>
           <button className="button secondary">Log Out</button>
         </form>

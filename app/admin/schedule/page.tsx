@@ -1,5 +1,6 @@
 import { generateScheduleAction } from "@/app/actions";
 import { requireAdmin } from "@/lib/auth";
+import { recordedScoreCount } from "@/lib/brackets";
 import { query } from "@/lib/db";
 import { displayDateTime } from "@/lib/format";
 import { scheduleDefaults } from "@/lib/schedule-defaults";
@@ -17,13 +18,16 @@ export default async function SchedulePage({
     target_games?: string;
     unscheduled?: string;
     unscheduled_tournament?: string;
+    locked?: string;
   }>;
 }) {
   await requireAdmin();
   const params = await searchParams;
   const games = await query<AdminScheduleGame>(
       `SELECT games.id, games.phase, games.division, games.court, games.starts_at,
-              games.label, t1.name as team_1, t2.name as team_2,
+              games.label, games.team_1_score, games.team_2_score,
+              games.result_type,
+              t1.name as team_1, t2.name as team_2,
               tr.name as ref_team, tr.division as ref_team_division
        FROM games
        LEFT JOIN teams t1 ON t1.id = games.team_1_id
@@ -52,6 +56,7 @@ export default async function SchedulePage({
      ORDER BY team_availability_blocks.starts_at, centers.name, teams.name`
   );
   const activeTeamCount = teamCounts.reduce((sum, row) => sum + Number(row.count), 0);
+  const scoredResultCount = await recordedScoreCount();
   const fullTwoRoundDemand = teamCounts.reduce((sum, row) => {
     const count = Number(row.count);
     return sum + (count * Math.max(0, count - 1)) / 2 * 2;
@@ -74,12 +79,6 @@ export default async function SchedulePage({
     <main className="content">
       <div className="actions">
         <h1 style={{ marginRight: "auto" }}>Schedule Generator</h1>
-        <a className="button secondary" href="/admin/dashboard">
-          Admin Dashboard
-        </a>
-        <a className="button secondary" href="/api/export">
-          Export Excel
-        </a>
       </div>
 
       <section className="section card">
@@ -98,6 +97,11 @@ export default async function SchedulePage({
           ) : (
             <p className="pill warn">Generated 0 games. Add at least two active teams in a division before generating.</p>
           )
+        ) : null}
+        {params.locked === "scores" || scoredResultCount > 0 ? (
+          <p className="pill warn">
+            Schedule generation is locked because {scoredResultCount} score {scoredResultCount === 1 ? "entry has" : "entries have"} been recorded.
+          </p>
         ) : null}
         <p className="muted">
           Active teams: {activeTeamCount || 0}
@@ -206,7 +210,9 @@ export default async function SchedulePage({
             <input type="checkbox" defaultChecked disabled />
           </label>
           <div className="actions">
-            <button className="button">Generate Schedule</button>
+            <button className="button" disabled={scoredResultCount > 0}>
+              Generate Schedule
+            </button>
           </div>
         </form>
       </section>
@@ -249,7 +255,7 @@ export default async function SchedulePage({
         <div className="section-heading">
           <div>
             <h2>Current Draft</h2>
-            <p className="muted">Drag a game to another court/time cell to move it. Dropping on another game swaps them.</p>
+            <p className="muted">Drag a game to another court/time cell to move it. Dropping on another unscored game swaps them. Scored games are locked.</p>
           </div>
           <a className="button secondary" href="/schedule">
             Public View

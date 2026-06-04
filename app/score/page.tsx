@@ -5,6 +5,7 @@ import {
   syncScheduleFromBracketsAction
 } from "@/app/actions";
 import { scoreEntryAccess } from "@/lib/auth";
+import { getActiveBracketScoreLocks } from "@/lib/brackets";
 import { DIVISIONS, query } from "@/lib/db";
 import { ManagedBracketViewer, type ManagedBracketData } from "@/app/brackets/managed-bracket-viewer";
 import { ScoreEntryTables, type EditableBracketGame, type ScoreGame } from "@/app/score/score-entry-tables";
@@ -43,7 +44,8 @@ export default async function ScorePage({
 
   const games = await query<ScoreGame>(
     `SELECT games.id, games.phase, games.division, games.starts_at, games.court,
-            games.team_1_score, games.team_2_score, games.label,
+            games.team_1_id, games.team_2_id, games.winner_team_id, games.loser_team_id,
+            games.team_1_score, games.team_2_score, games.result_type, games.forfeit_team_id, games.label,
             t1.name as team_1, t2.name as team_2
      FROM games
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
@@ -59,7 +61,10 @@ export default async function ScorePage({
   );
   const editableBracketGames = await query<EditableBracketGame>(
     `SELECT bracket_games.id, brackets.division, bracket_games.game_key, bracket_games.bracket_side,
-            bracket_games.round, bracket_games.position, bracket_games.team_1_score, bracket_games.team_2_score,
+            bracket_games.round, bracket_games.position,
+            bracket_games.team_1_id, bracket_games.team_2_id, bracket_games.winner_team_id,
+            bracket_games.team_1_score, bracket_games.team_2_score,
+            bracket_games.result_type, bracket_games.forfeit_team_id,
             t1.name as team_1, t2.name as team_2
      FROM bracket_games
      JOIN brackets ON brackets.id = bracket_games.bracket_id
@@ -70,8 +75,28 @@ export default async function ScorePage({
               CASE bracket_games.bracket_side WHEN 'winners' THEN 1 WHEN 'losers' THEN 2 ELSE 3 END,
               bracket_games.round, bracket_games.position`
   );
-  const seedingGames = games.filter((game) => game.phase === "seeding" && game.division !== "Unlimited");
-  const unscoredSeedingCount = seedingGames.filter((game) => game.team_1_score === null || game.team_2_score === null).length;
+  const activeBracketDivisions = new Set(bracketGames.map((game) => game.division));
+  const bracketScoreLocks = await getActiveBracketScoreLocks();
+  const seedingGames = games
+    .filter((game) => game.phase === "seeding" && game.division !== "Unlimited")
+    .map((game) => ({
+      ...game,
+      score_locked: activeBracketDivisions.has(game.division),
+      score_lock_reason: activeBracketDivisions.has(game.division)
+        ? "Locked after bracket generation. Rebuild or void the bracket before changing seeding results."
+        : null
+    }));
+  const editableBracketGamesWithLocks = editableBracketGames.map((game) => {
+    const lock = bracketScoreLocks.get(game.id);
+    return {
+      ...game,
+      result_locked: Boolean(lock?.result_locked),
+      result_lock_reason: lock?.result_lock_reason || null,
+      reset_locked: Boolean(lock?.reset_locked),
+      reset_lock_reason: lock?.reset_lock_reason || null
+    };
+  });
+  const unscoredSeedingCount = seedingGames.filter((game) => (game.team_1_score === null || game.team_2_score === null) && game.result_type !== "forfeit").length;
   const allSeedingScored = seedingGames.length > 0 && unscoredSeedingCount === 0;
   const bracketsReady = allSeedingScored && bracketGames.length > 0;
 
@@ -120,7 +145,7 @@ export default async function ScorePage({
         </div>
       </section>
 
-      <ScoreEntryTables seedingGames={seedingGames} bracketGames={editableBracketGames} bracketsReady={bracketsReady} />
+      <ScoreEntryTables seedingGames={seedingGames} bracketGames={editableBracketGamesWithLocks} bracketsReady={bracketsReady} />
 
       {bracketGames.length ? (
         <section className="section card bracket-page">

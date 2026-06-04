@@ -25,6 +25,10 @@ type TeamGame = {
   team_2: string | null;
   team_1_score: number | null;
   team_2_score: number | null;
+  winner_team_id: number | null;
+  loser_team_id: number | null;
+  result_type: string | null;
+  forfeit_team_id: number | null;
   ref_team_id: number | null;
   ref_team: string | null;
   label: string | null;
@@ -45,6 +49,10 @@ type DivisionGame = {
   team_2_id: number;
   team_1_score: number | null;
   team_2_score: number | null;
+  winner_team_id: number | null;
+  loser_team_id: number | null;
+  result_type: string | null;
+  forfeit_team_id: number | null;
 };
 
 type OpponentReport = {
@@ -56,6 +64,8 @@ type OpponentReport = {
   remainingGames: number;
   wins: number;
   losses: number;
+  ties: number;
+  forfeits: number;
   pointsFor: number;
   pointsAgainst: number;
   pointDiff: number;
@@ -84,6 +94,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
   const games = await query<TeamGame>(
     `SELECT games.id, games.phase, games.division, games.starts_at, games.court,
             games.team_1_id, games.team_2_id, games.team_1_score, games.team_2_score,
+            games.winner_team_id, games.loser_team_id, games.result_type, games.forfeit_team_id,
             games.ref_team_id, games.label,
             t1.name as team_1, t2.name as team_2, tr.name as ref_team
      FROM games
@@ -103,7 +114,8 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
       [team.division]
     ),
     query<DivisionGame>(
-      `SELECT id, phase, starts_at, court, team_1_id, team_2_id, team_1_score, team_2_score
+      `SELECT id, phase, starts_at, court, team_1_id, team_2_id, team_1_score, team_2_score,
+              winner_team_id, loser_team_id, result_type, forfeit_team_id
        FROM games
        WHERE division = $1
          AND team_1_id IS NOT NULL
@@ -146,8 +158,8 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
             <strong>{seed ? `#${seed}` : "TBD"}</strong>
           </div>
           <div className="team-insight">
-            <span>Seeding Record</span>
-            <strong>{teamStanding ? `${teamStanding.wins}-${teamStanding.losses}` : "0-0"}</strong>
+            <span>Seeding Record (W-L-T)</span>
+            <strong>{teamStanding ? recordText(teamStanding.wins, teamStanding.losses, teamStanding.ties) : "0-0-0"}</strong>
           </div>
           <div className="team-insight">
             <span>Point Diff</span>
@@ -181,7 +193,10 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
                 <th>Opponent</th>
                 <th>Scheduled</th>
                 <th>Scored</th>
-                <th>Record</th>
+                <th>W</th>
+                <th>T</th>
+                <th>L</th>
+                <th>FF</th>
                 <th>PF</th>
                 <th>PA</th>
                 <th>Diff</th>
@@ -195,7 +210,10 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
                   <td>{row.center} - {row.team}</td>
                   <td>{row.scheduledGames}</td>
                   <td>{row.scoredGames}</td>
-                  <td>{row.wins}-{row.losses}</td>
+                  <td>{row.wins}</td>
+                  <td>{row.ties}</td>
+                  <td>{row.losses}</td>
+                  <td>{row.forfeits}</td>
                   <td>{row.pointsFor}</td>
                   <td>{row.pointsAgainst}</td>
                   <td className={diffClass(row.pointDiff)}>{formatDiff(row.pointDiff)}</td>
@@ -216,8 +234,11 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
               <tr>
                 <th>Seed</th>
                 <th>Team</th>
+                <th>Pts</th>
                 <th>W</th>
+                <th>T</th>
                 <th>L</th>
+                <th>FF</th>
                 <th>PF</th>
                 <th>PA</th>
                 <th>Diff</th>
@@ -229,8 +250,11 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
                 <tr key={row.team_id} className={row.team_id === team.id ? "team-highlight-row" : ""}>
                   <td>{index + 1}</td>
                   <td>{row.center} - {row.team}</td>
+                  <td>{row.standing_points}</td>
                   <td>{row.wins}</td>
+                  <td>{row.ties}</td>
                   <td>{row.losses}</td>
+                  <td>{row.forfeits}</td>
                   <td>{row.points_for}</td>
                   <td>{row.points_against}</td>
                   <td className={diffClass(row.point_diff)}>{formatDiff(row.point_diff)}</td>
@@ -306,13 +330,22 @@ function buildOpponentReports(teamId: number, teams: DivisionTeam[], games: Divi
         (acc, game) => {
           const teamScore = game.team_1_id === teamId ? game.team_1_score || 0 : game.team_2_score || 0;
           const opponentScore = game.team_1_id === teamId ? game.team_2_score || 0 : game.team_1_score || 0;
+          if (game.result_type === "forfeit") {
+            if (game.winner_team_id === teamId) acc.wins += 1;
+            else {
+              acc.losses += 1;
+              acc.forfeits += 1;
+            }
+            return acc;
+          }
           acc.pointsFor += teamScore;
           acc.pointsAgainst += opponentScore;
-          if (teamScore >= opponentScore) acc.wins += 1;
+          if (teamScore === opponentScore) acc.ties += 1;
+          else if (teamScore > opponentScore) acc.wins += 1;
           else acc.losses += 1;
           return acc;
         },
-        { wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0 }
+        { wins: 0, losses: 0, ties: 0, forfeits: 0, pointsFor: 0, pointsAgainst: 0 }
       );
       const next = unscoredGames.sort((left, right) => left.starts_at.localeCompare(right.starts_at))[0];
       return {
@@ -324,6 +357,8 @@ function buildOpponentReports(teamId: number, teams: DivisionTeam[], games: Divi
         remainingGames: unscoredGames.length,
         wins: totals.wins,
         losses: totals.losses,
+        ties: totals.ties,
+        forfeits: totals.forfeits,
         pointsFor: totals.pointsFor,
         pointsAgainst: totals.pointsAgainst,
         pointDiff: totals.pointsFor - totals.pointsAgainst,
@@ -353,11 +388,11 @@ function isPlaying(game: TeamGame, teamId: number) {
 }
 
 function isScored(game: TeamGame) {
-  return game.team_1_score !== null && game.team_2_score !== null;
+  return (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
 }
 
 function isDivisionGameScored(game: DivisionGame) {
-  return game.team_1_score !== null && game.team_2_score !== null;
+  return (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
 }
 
 function opponentLabel(game: TeamGame, teamId: number) {
@@ -368,10 +403,20 @@ function opponentLabel(game: TeamGame, teamId: number) {
 
 function scoreLabel(game: TeamGame, teamId: number) {
   if (!isScored(game)) return "";
+  if (game.result_type === "forfeit") {
+    const forfeitingTeam = game.forfeit_team_id === game.team_1_id ? game.team_1 : game.forfeit_team_id === game.team_2_id ? game.team_2 : "Team";
+    if (!isPlaying(game, teamId)) return `${forfeitingTeam} forfeited`;
+    return game.forfeit_team_id === teamId ? "L by forfeit" : "W by forfeit";
+  }
   if (!isPlaying(game, teamId)) return `${game.team_1_score}-${game.team_2_score}`;
   const teamScore = game.team_1_id === teamId ? game.team_1_score || 0 : game.team_2_score || 0;
   const opponentScore = game.team_1_id === teamId ? game.team_2_score || 0 : game.team_1_score || 0;
-  return `${teamScore}-${opponentScore} ${teamScore >= opponentScore ? "W" : "L"}`;
+  const result = teamScore === opponentScore ? "T" : teamScore > opponentScore ? "W" : "L";
+  return `${teamScore}-${opponentScore} ${result}`;
+}
+
+function recordText(wins: number, losses: number, ties: number) {
+  return `${wins}-${losses}-${ties}`;
 }
 
 function rolePillClass(playing: boolean, division: string) {

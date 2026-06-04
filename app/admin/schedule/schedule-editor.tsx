@@ -12,6 +12,9 @@ export type AdminScheduleGame = {
   starts_at: string;
   team_1: string | null;
   team_2: string | null;
+  team_1_score: number | null;
+  team_2_score: number | null;
+  result_type: string | null;
   ref_team: string | null;
   ref_team_division: string | null;
   label: string | null;
@@ -114,21 +117,29 @@ function renderGameCell(
   moveGame: (startsAt: string, court: number) => void
 ) {
   const isDragging = draggedGameId !== null && cell.game?.id === draggedGameId;
+  const lockedReason = cell.game ? scheduleLockReason(cell.game) : null;
+  const canDrop = !lockedReason;
   return (
     <td
-      className={`${gameCellClass(cell.division)} schedule-drop-cell ${isDragging ? "is-dragging" : ""}`.trim()}
-      onDragOver={(event) => event.preventDefault()}
+      className={`${gameCellClass(cell.division)} schedule-drop-cell ${isDragging ? "is-dragging" : ""} ${lockedReason ? "is-locked" : ""}`.trim()}
+      onDragOver={(event) => {
+        if (canDrop) event.preventDefault();
+      }}
       onDrop={(event) => {
         event.preventDefault();
+        if (!canDrop) return;
         moveGame(row.startsAt, court);
       }}
     >
       {cell.game ? (
         <button
           className="schedule-drag-button"
-          draggable
+          draggable={!lockedReason}
+          disabled={Boolean(lockedReason)}
           type="button"
+          title={lockedReason || "Move or swap this game"}
           onDragStart={(event) => {
+            if (lockedReason) return;
             event.dataTransfer.effectAllowed = "move";
             event.dataTransfer.setData("text/plain", String(cell.game?.id || ""));
             if (cell.game) setDraggedGameId(cell.game.id);
@@ -136,6 +147,7 @@ function renderGameCell(
           onDragEnd={() => setDraggedGameId(null)}
         >
           {cell.gameText}
+          {lockedReason ? <span className="schedule-lock-note">{lockedReason}</span> : null}
         </button>
       ) : (
         <span className="schedule-empty-slot">Drop game here</span>
@@ -183,6 +195,11 @@ function gameCellClass(division: string) {
 
 function refCellClass(division: string) {
   return `schedule-ref-cell ${divisionClassNames[division] || ""}`.trim();
+}
+
+function scheduleLockReason(game: AdminScheduleGame) {
+  if (game.team_1_score !== null || game.team_2_score !== null || game.result_type === "forfeit") return "Scored game locked";
+  return "";
 }
 
 function formatDay(value: string) {

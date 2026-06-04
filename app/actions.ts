@@ -17,7 +17,16 @@ import {
 import { hashSecret } from "@/lib/security";
 import { generateSchedule } from "@/lib/schedule";
 import { scheduleDefaults } from "@/lib/schedule-defaults";
-import { rebuildBracketForDivision, resetBracketGameScore, scoreBracketGame, syncActiveBracketsToSchedule } from "@/lib/brackets";
+import {
+  activeBracketExistsForDivision,
+  forfeitBracketGame,
+  rebuildBracketForDivision,
+  recordedScoreCount,
+  resetBracketGameScore,
+  scoredTournamentResultCountForDivision,
+  scoreBracketGame,
+  syncActiveBracketsToSchedule
+} from "@/lib/brackets";
 
 function text(formData: FormData, key: string) {
   return String(formData.get(key) || "").trim();
@@ -26,6 +35,10 @@ function text(formData: FormData, key: string) {
 function num(formData: FormData, key: string, fallback = 0) {
   const value = Number(formData.get(key));
   return Number.isFinite(value) ? value : fallback;
+}
+
+function validScore(value: number) {
+  return Number.isInteger(value) && value >= 0;
 }
 
 function checkbox(formData: FormData, key: string) {
@@ -367,6 +380,7 @@ export async function restoreSnapshotAction(formData: FormData) {
 
 export async function generateScheduleAction(formData: FormData) {
   await requireAdmin();
+  if ((await recordedScoreCount()) > 0) redirect("/admin/schedule?locked=scores");
   const targetGamesPerTeam = Math.max(scheduleDefaults.targetGamesPerTeam, num(formData, "target_games_per_team", scheduleDefaults.targetGamesPerTeam));
   const result = await generateSchedule({
     startDate: text(formData, "start_date") || scheduleDefaults.startDate,
@@ -419,15 +433,26 @@ export async function moveScheduleGameAction(input: { gameId: number; startsAt: 
   const targetStartsAt = String(input.startsAt || "");
   if (!Number.isInteger(gameId) || gameId <= 0 || !targetStartsAt || !Number.isInteger(targetCourt) || targetCourt < 1) return;
 
-  const [source] = await query<{ id: number; starts_at: string; court: number }>("SELECT id, starts_at, court FROM games WHERE id = $1", [gameId]);
+  const [source] = await query<{
+    id: number;
+    starts_at: string;
+    court: number;
+    team_1_score: number | null;
+    team_2_score: number | null;
+    result_type: string | null;
+  }>(
+    "SELECT id, starts_at, court, team_1_score, team_2_score, result_type FROM games WHERE id = $1",
+    [gameId]
+  );
   if (!source) return;
+  if (source.team_1_score !== null || source.team_2_score !== null || source.result_type === "forfeit") return;
   if (source.starts_at === targetStartsAt && source.court === targetCourt) return;
 
-  const [target] = await query<{ id: number }>("SELECT id FROM games WHERE starts_at = $1 AND court = $2 AND id <> $3 ORDER BY id LIMIT 1", [
-    targetStartsAt,
-    targetCourt,
-    gameId
-  ]);
+  const [target] = await query<{ id: number; team_1_score: number | null; team_2_score: number | null; result_type: string | null }>(
+    "SELECT id, team_1_score, team_2_score, result_type FROM games WHERE starts_at = $1 AND court = $2 AND id <> $3 ORDER BY id LIMIT 1",
+    [targetStartsAt, targetCourt, gameId]
+  );
+  if (target && (target.team_1_score !== null || target.team_2_score !== null || target.result_type === "forfeit")) return;
 
   await withTransaction(async (client) => {
     if (target) {
@@ -445,14 +470,17 @@ export async function submitGameScoreAction(formData: FormData) {
   const gameId = num(formData, "game_id");
   const team1Score = num(formData, "team_1_score");
   const team2Score = num(formData, "team_2_score");
-  const [game] = await query<{ division: string; team_1_id: number | null; team_2_id: number | null }>("SELECT * FROM games WHERE id = $1", [gameId]);
+  if (!validScore(team1Score) || !validScore(team2Score)) return;
+  const [game] = await query<{ phase: string; division: string; team_1_id: number | null; team_2_id: number | null }>("SELECT * FROM games WHERE id = $1", [gameId]);
   if (!game || game.team_1_id === null || game.team_2_id === null) return;
-  const winnerId = team1Score >= team2Score ? game.team_1_id : game.team_2_id;
-  const loserId = winnerId === game.team_1_id ? game.team_2_id : game.team_1_id;
+  if (game.phase === "tournament") return;
+  if (game.phase === "seeding" && (await activeBracketExistsForDivision(game.division))) return;
+  const winnerId = team1Score === team2Score ? null : team1Score > team2Score ? game.team_1_id : game.team_2_id;
+  const loserId = winnerId === null ? null : winnerId === game.team_1_id ? game.team_2_id : game.team_1_id;
   await exec(
     `UPDATE games
      SET team_1_score = $1, team_2_score = $2, winner_team_id = $3, loser_team_id = $4,
-         scored_by = 'scorekeeper', scored_at = NOW()
+         result_type = 'score', forfeit_team_id = NULL, scored_by = 'scorekeeper', scored_at = NOW()
      WHERE id = $5`,
     [team1Score, team2Score, winnerId, loserId, gameId]
   );
@@ -466,16 +494,41 @@ export async function resetGameScoreAction(formData: FormData) {
   await requireScorekeeperOrAdmin();
   const gameId = num(formData, "game_id");
   const [game] = await query<{ phase: string; division: string }>("SELECT phase, division FROM games WHERE id = $1", [gameId]);
+  if (game?.phase === "tournament") return;
+  if (game?.phase === "seeding" && (await activeBracketExistsForDivision(game.division))) return;
   await exec(
     `UPDATE games
      SET team_1_score = NULL, team_2_score = NULL, winner_team_id = NULL, loser_team_id = NULL,
-         scored_by = NULL, scored_at = NULL
+         result_type = NULL, forfeit_team_id = NULL, scored_by = NULL, scored_at = NULL
      WHERE id = $1`,
     [gameId]
   );
   if (game?.phase === "seeding") {
     await exec("UPDATE brackets SET status = 'archived', updated_at = NOW() WHERE division = $1 AND status = 'active'", [game.division]);
   }
+  revalidatePath("/score");
+  revalidatePath("/schedule");
+  revalidatePath("/standings");
+  revalidatePath("/brackets");
+}
+
+export async function submitGameForfeitAction(formData: FormData) {
+  await requireScorekeeperOrAdmin();
+  const gameId = num(formData, "game_id");
+  const forfeitingTeamId = num(formData, "forfeit_team_id");
+  const [game] = await query<{ phase: string; division: string; team_1_id: number | null; team_2_id: number | null }>("SELECT * FROM games WHERE id = $1", [gameId]);
+  if (!game || game.team_1_id === null || game.team_2_id === null) return;
+  if (game.phase === "tournament") return;
+  if (game.phase === "seeding" && (await activeBracketExistsForDivision(game.division))) return;
+  if (forfeitingTeamId !== game.team_1_id && forfeitingTeamId !== game.team_2_id) return;
+  const winnerId = forfeitingTeamId === game.team_1_id ? game.team_2_id : game.team_1_id;
+  await exec(
+    `UPDATE games
+     SET team_1_score = NULL, team_2_score = NULL, winner_team_id = $1, loser_team_id = $2,
+         result_type = 'forfeit', forfeit_team_id = $2, scored_by = 'scorekeeper', scored_at = NOW()
+     WHERE id = $3`,
+    [winnerId, forfeitingTeamId, gameId]
+  );
   revalidatePath("/score");
   revalidatePath("/schedule");
   revalidatePath("/standings");
@@ -491,6 +544,7 @@ export async function generateBracketAction() {
        AND division <> 'Unlimited'
        AND team_1_id IS NOT NULL
        AND team_2_id IS NOT NULL
+       AND result_type IS DISTINCT FROM 'forfeit'
        AND (team_1_score IS NULL OR team_2_score IS NULL)`
   );
   if (Number(remaining?.count || 0) > 0) return;
@@ -527,6 +581,14 @@ export async function submitBracketScoreAction(formData: FormData) {
   revalidatePath("/schedule");
 }
 
+export async function submitBracketForfeitAction(formData: FormData) {
+  await requireScorekeeperOrAdmin();
+  await forfeitBracketGame(num(formData, "bracket_game_id"), num(formData, "forfeit_team_id"));
+  revalidatePath("/score");
+  revalidatePath("/brackets");
+  revalidatePath("/schedule");
+}
+
 export async function resetBracketScoreAction(formData: FormData) {
   await requireScorekeeperOrAdmin();
   await resetBracketGameScore(num(formData, "bracket_game_id"));
@@ -539,6 +601,7 @@ export async function rebuildBracketAction(formData: FormData) {
   await requireAdmin();
   const division = safeDivision(text(formData, "division"));
   if (division === "Unlimited") return;
+  if ((await scoredTournamentResultCountForDivision(division)) > 0) return;
   await rebuildBracketForDivision(division);
   await syncActiveBracketsToSchedule();
   revalidatePath("/brackets");

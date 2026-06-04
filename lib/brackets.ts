@@ -16,10 +16,20 @@ type BracketGameRow = {
   team_2_score: number | null;
   winner_team_id: number | null;
   loser_team_id: number | null;
+  result_type: string | null;
+  forfeit_team_id: number | null;
   next_winner_game_key: string | null;
   next_winner_slot: number | null;
   next_loser_game_key: string | null;
   next_loser_slot: number | null;
+};
+
+export type BracketScoreLock = {
+  game_id: number;
+  result_locked: boolean;
+  result_lock_reason: string | null;
+  reset_locked: boolean;
+  reset_lock_reason: string | null;
 };
 
 type BracketRow = {
@@ -49,6 +59,7 @@ export async function maybeCreateBracketForDivision(division: string) {
 }
 
 export async function rebuildBracketForDivision(division: string) {
+  if ((await scoredTournamentResultCountForDivision(division)) > 0) return null;
   const standings = (await getStandings(division)).filter((row) => row.division === division);
   if (standings.length < 2) return null;
   const seeds = standings.map((row, index) => ({ seed: index + 1, teamId: row.team_id, team: row.team, center: row.center }));
@@ -117,16 +128,47 @@ async function createManagedDoubleEliminationBracket(division: string, seeds: Se
 }
 
 export async function scoreBracketGame(gameId: number, team1Score: number, team2Score: number) {
+  if (!isValidScore(team1Score) || !isValidScore(team2Score) || team1Score === team2Score) return;
   const [game] = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE id = $1", [gameId]);
   if (!game || game.team_1_id === null || game.team_2_id === null) return;
   const winnerId = team1Score >= team2Score ? game.team_1_id : game.team_2_id;
   const loserId = winnerId === game.team_1_id ? game.team_2_id : game.team_1_id;
-  await clearDownstreamFromGame(game);
+  const sameResult = winnerId === game.winner_team_id && loserId === game.loser_team_id;
+  if (!sameResult) {
+    const downstreamBlocker = await findScoredDownstreamGame(game);
+    if (downstreamBlocker) return;
+    await clearDownstreamFromGame(game);
+  }
   await exec(
     `UPDATE bracket_games
-     SET team_1_score = $1, team_2_score = $2, winner_team_id = $3, loser_team_id = $4
+     SET team_1_score = $1, team_2_score = $2, winner_team_id = $3, loser_team_id = $4,
+         result_type = 'score', forfeit_team_id = NULL
      WHERE id = $5`,
     [team1Score, team2Score, winnerId, loserId, gameId]
+  );
+  await advanceBracket(game.bracket_id);
+  await syncBracketToSchedule(game.bracket_id);
+}
+
+export async function forfeitBracketGame(gameId: number, forfeitingTeamId: number) {
+  const [game] = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE id = $1", [gameId]);
+  if (!game || game.team_1_id === null || game.team_2_id === null) return;
+  if (forfeitingTeamId !== game.team_1_id && forfeitingTeamId !== game.team_2_id) return;
+
+  const winnerId = forfeitingTeamId === game.team_1_id ? game.team_2_id : game.team_1_id;
+  const sameResult = winnerId === game.winner_team_id && forfeitingTeamId === game.loser_team_id;
+  if (!sameResult) {
+    const downstreamBlocker = await findScoredDownstreamGame(game);
+    if (downstreamBlocker) return;
+    await clearDownstreamFromGame(game);
+  }
+
+  await exec(
+    `UPDATE bracket_games
+     SET team_1_score = NULL, team_2_score = NULL, winner_team_id = $1, loser_team_id = $2,
+         result_type = 'forfeit', forfeit_team_id = $2
+     WHERE id = $3`,
+    [winnerId, forfeitingTeamId, gameId]
   );
   await advanceBracket(game.bracket_id);
   await syncBracketToSchedule(game.bracket_id);
@@ -135,15 +177,97 @@ export async function scoreBracketGame(gameId: number, team1Score: number, team2
 export async function resetBracketGameScore(gameId: number) {
   const [game] = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE id = $1", [gameId]);
   if (!game) return;
+  const downstreamBlocker = await findScoredDownstreamGame(game);
+  if (downstreamBlocker) return;
   await clearDownstreamFromGame(game);
   await exec(
     `UPDATE bracket_games
-     SET team_1_score = NULL, team_2_score = NULL, winner_team_id = NULL, loser_team_id = NULL
+     SET team_1_score = NULL, team_2_score = NULL, winner_team_id = NULL, loser_team_id = NULL,
+         result_type = NULL, forfeit_team_id = NULL
      WHERE id = $1`,
     [gameId]
   );
   await advanceBracket(game.bracket_id);
   await syncBracketToSchedule(game.bracket_id);
+}
+
+export async function getActiveBracketScoreLocks() {
+  const games = await query<BracketGameRow & { division: string }>(
+    `SELECT bracket_games.*, brackets.division
+     FROM bracket_games
+     JOIN brackets ON brackets.id = bracket_games.bracket_id
+     WHERE brackets.status = 'active'
+     ORDER BY brackets.division,
+              CASE bracket_games.bracket_side WHEN 'winners' THEN 1 WHEN 'losers' THEN 2 ELSE 3 END,
+              bracket_games.round, bracket_games.position`
+  );
+  const byBracketId = new Map<number, BracketGameRow[]>();
+  for (const game of games) byBracketId.set(game.bracket_id, [...(byBracketId.get(game.bracket_id) || []), game]);
+
+  const locks = new Map<number, BracketScoreLock>();
+  for (const game of games) {
+    const blocker = findScoredDownstreamGameInList(game, byBracketId.get(game.bracket_id) || []);
+    if (!blocker) continue;
+    const blockerLabel = bracketGameLabel(blocker);
+    locks.set(game.id, {
+      game_id: game.id,
+      result_locked: true,
+      result_lock_reason: `Winner is locked because ${blockerLabel} is already scored. Same-winner score corrections are still allowed.`,
+      reset_locked: true,
+      reset_lock_reason: `Cannot reset because ${blockerLabel} is already scored.`
+    });
+  }
+  return locks;
+}
+
+export async function activeBracketExistsForDivision(division: string) {
+  const [row] = await query<{ count: string }>("SELECT COUNT(*) as count FROM brackets WHERE division = $1 AND status = 'active'", [division]);
+  return Number(row?.count || 0) > 0;
+}
+
+export async function scoredTournamentResultCountForDivision(division: string) {
+  const [row] = await query<{ count: string }>(
+    `SELECT (
+       SELECT COUNT(*)
+       FROM bracket_games
+       JOIN brackets ON brackets.id = bracket_games.bracket_id
+       WHERE brackets.status = 'active'
+         AND brackets.division = $1
+         AND (
+           (bracket_games.team_1_score IS NOT NULL AND bracket_games.team_2_score IS NOT NULL)
+           OR bracket_games.result_type = 'forfeit'
+         )
+     ) + (
+       SELECT COUNT(*)
+       FROM games
+       WHERE phase IN ('tournament', 'unlimited')
+         AND division = $1
+         AND (
+           (team_1_score IS NOT NULL AND team_2_score IS NOT NULL)
+           OR result_type = 'forfeit'
+         )
+     ) as count`,
+    [division]
+  );
+  return Number(row?.count || 0);
+}
+
+export async function recordedScoreCount() {
+  const [row] = await query<{ count: string }>(
+    `SELECT (
+       SELECT COUNT(*)
+       FROM games
+       WHERE phase <> 'tournament'
+         AND (team_1_score IS NOT NULL OR team_2_score IS NOT NULL OR result_type = 'forfeit')
+     ) + (
+       SELECT COUNT(*)
+       FROM bracket_games
+       WHERE team_1_score IS NOT NULL
+          OR team_2_score IS NOT NULL
+          OR result_type = 'forfeit'
+     ) as count`
+  );
+  return Number(row?.count || 0);
 }
 
 export async function advanceBracket(bracketId: number) {
@@ -300,9 +424,20 @@ export async function syncBracketToSchedule(bracketId: number) {
     await exec(
       `UPDATE games
        SET team_1_id = $1, team_2_id = $2, team_1_score = $3, team_2_score = $4,
-           winner_team_id = $5, loser_team_id = $6
-       WHERE phase = 'tournament' AND division = $7 AND label = $8`,
-      [game.team_1_id, game.team_2_id, game.team_1_score, game.team_2_score, game.winner_team_id, game.loser_team_id, bracket.division, label]
+           winner_team_id = $5, loser_team_id = $6, result_type = $7, forfeit_team_id = $8
+       WHERE phase = 'tournament' AND division = $9 AND label = $10`,
+      [
+        game.team_1_id,
+        game.team_2_id,
+        game.team_1_score,
+        game.team_2_score,
+        game.winner_team_id,
+        game.loser_team_id,
+        game.result_type,
+        game.forfeit_team_id,
+        bracket.division,
+        label
+      ]
     );
   }
 }
@@ -372,7 +507,7 @@ async function refreshBracketViewerData(bracketId: number) {
     if (!bracketGame) continue;
     match.opponent1 = managedOpponent(bracketGame.team_1_id, bracketGame.team_1_score, bracketGame.winner_team_id, participantByTeamId);
     match.opponent2 = managedOpponent(bracketGame.team_2_id, bracketGame.team_2_score, bracketGame.winner_team_id, participantByTeamId);
-    match.status = bracketGame.team_1_score !== null && bracketGame.team_2_score !== null ? 4 : bracketGame.team_1_id !== null && bracketGame.team_2_id !== null ? 2 : 0;
+    match.status = isCompleteResult(bracketGame) ? 4 : bracketGame.team_1_id !== null && bracketGame.team_2_id !== null ? 2 : 0;
   }
 
   await exec("UPDATE brackets SET bracket_data_json = $1::jsonb, updated_at = NOW() WHERE id = $2", [JSON.stringify(data), bracketId]);
@@ -393,6 +528,65 @@ function gameKeyForManagedMatch(groupNumber: number, roundNumber: number, matchN
   return "";
 }
 
+function isValidScore(score: number) {
+  return Number.isInteger(score) && score >= 0;
+}
+
+function isCompleteResult(game: Pick<BracketGameRow, "team_1_score" | "team_2_score" | "result_type">) {
+  return (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
+}
+
+function bracketGameLabel(game: Pick<BracketGameRow, "game_key" | "bracket_side" | "round" | "position">) {
+  if (game.game_key === "F1") return "Championship";
+  if (game.game_key === "F2") return "If-needed Championship";
+  return `${game.bracket_side === "losers" ? "Losers" : "Winners"} Round ${game.round} Game ${game.position}`;
+}
+
+async function findScoredDownstreamGame(game: BracketGameRow) {
+  const games = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE bracket_id = $1", [game.bracket_id]);
+  return findScoredDownstreamGameInList(game, games);
+}
+
+function findScoredDownstreamGameInList(game: BracketGameRow, games: BracketGameRow[], seen = new Set<number>()): BracketGameRow | null {
+  if (seen.has(game.id)) return null;
+  seen.add(game.id);
+
+  for (const target of downstreamTargetsForCurrentResult(game, games)) {
+    if (isCompleteResult(target)) return target;
+    const nested = findScoredDownstreamGameInList(target, games, seen);
+    if (nested) return nested;
+  }
+
+  return null;
+}
+
+function downstreamTargetsForCurrentResult(game: BracketGameRow, games: BracketGameRow[]) {
+  const targets: BracketGameRow[] = [];
+  const byKey = new Map(games.map((candidate) => [candidate.game_key, candidate]));
+
+  if (game.winner_team_id !== null && game.next_winner_game_key && game.next_winner_slot) {
+    const target = downstreamSlotTarget(byKey, game.next_winner_game_key, game.next_winner_slot, game.winner_team_id);
+    if (target) targets.push(target);
+  }
+  if (game.loser_team_id !== null && game.next_loser_game_key && game.next_loser_slot) {
+    const target = downstreamSlotTarget(byKey, game.next_loser_game_key, game.next_loser_slot, game.loser_team_id);
+    if (target) targets.push(target);
+  }
+  if (game.game_key === "F1") {
+    const finalReset = byKey.get("F2");
+    if (finalReset) targets.push(finalReset);
+  }
+
+  return targets;
+}
+
+function downstreamSlotTarget(byKey: Map<string, BracketGameRow>, gameKey: string, slot: number, teamId: number) {
+  const target = byKey.get(gameKey);
+  if (!target) return null;
+  const currentTeamId = slot === 1 ? target.team_1_id : target.team_2_id;
+  return currentTeamId === teamId ? target : null;
+}
+
 async function clearDownstreamFromGame(game: BracketGameRow, seen = new Set<number>()) {
   if (seen.has(game.id)) return;
   seen.add(game.id);
@@ -410,7 +604,7 @@ async function clearDownstreamFromGame(game: BracketGameRow, seen = new Set<numb
       await exec(
         `UPDATE bracket_games
          SET team_1_id = NULL, team_2_id = NULL, team_1_score = NULL, team_2_score = NULL,
-             winner_team_id = NULL, loser_team_id = NULL
+             winner_team_id = NULL, loser_team_id = NULL, result_type = NULL, forfeit_team_id = NULL
          WHERE id = $1`,
         [finalReset.id]
       );
@@ -429,7 +623,8 @@ async function clearDownstreamSlot(bracketId: number, gameKey: string, slot: num
   await clearDownstreamFromGame(target, seen);
   await exec(
     `UPDATE bracket_games
-     SET ${column} = NULL, team_1_score = NULL, team_2_score = NULL, winner_team_id = NULL, loser_team_id = NULL
+     SET ${column} = NULL, team_1_score = NULL, team_2_score = NULL, winner_team_id = NULL, loser_team_id = NULL,
+         result_type = NULL, forfeit_team_id = NULL
      WHERE id = $1`,
     [target.id]
   );

@@ -1,7 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { resetGameScoreAction, resetBracketScoreAction, submitBracketScoreAction, submitGameScoreAction } from "@/app/actions";
+import { useMemo, useState, type ChangeEvent } from "react";
+import {
+  resetGameScoreAction,
+  resetBracketScoreAction,
+  submitBracketForfeitAction,
+  submitBracketScoreAction,
+  submitGameForfeitAction,
+  submitGameScoreAction
+} from "@/app/actions";
 import { displayDateTime } from "@/lib/format";
 
 export type ScoreGame = {
@@ -10,11 +17,19 @@ export type ScoreGame = {
   division: string;
   starts_at: string;
   court: number;
+  team_1_id: number | null;
+  team_2_id: number | null;
   team_1: string | null;
   team_2: string | null;
   team_1_score: number | null;
   team_2_score: number | null;
+  winner_team_id: number | null;
+  loser_team_id: number | null;
+  result_type: string | null;
+  forfeit_team_id: number | null;
   label: string | null;
+  score_locked?: boolean;
+  score_lock_reason?: string | null;
 };
 
 export type EditableBracketGame = {
@@ -24,10 +39,19 @@ export type EditableBracketGame = {
   bracket_side: string;
   round: number;
   position: number;
+  team_1_id: number | null;
+  team_2_id: number | null;
   team_1: string | null;
   team_2: string | null;
   team_1_score: number | null;
   team_2_score: number | null;
+  winner_team_id: number | null;
+  result_type: string | null;
+  forfeit_team_id: number | null;
+  result_locked?: boolean;
+  result_lock_reason?: string | null;
+  reset_locked?: boolean;
+  reset_lock_reason?: string | null;
 };
 
 type ScoreEntryTablesProps = {
@@ -223,11 +247,19 @@ function ScoreFilterControl({
 }
 
 function isUnscoredScheduleGame(game: ScoreGame) {
-  return game.team_1_score === null || game.team_2_score === null;
+  return !isCompleteScheduleResult(game);
 }
 
 function isUnscoredBracketGame(game: EditableBracketGame) {
-  return game.team_1_score === null || game.team_2_score === null;
+  return !isCompleteBracketResult(game);
+}
+
+function isCompleteScheduleResult(game: ScoreGame) {
+  return (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
+}
+
+function isCompleteBracketResult(game: EditableBracketGame) {
+  return (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
 }
 
 function BracketScoreTable({ games, emptyText }: { games: EditableBracketGame[]; emptyText: string }) {
@@ -235,37 +267,80 @@ function BracketScoreTable({ games, emptyText }: { games: EditableBracketGame[];
   return (
     <div className="score-entry-list">
       {games.map((game) => (
-        <article key={`bracket-${game.id}`} className={`score-game-card ${isUnscoredBracketGame(game) ? "" : "muted-game-row"}`.trim()}>
-          <div className="score-game-header">
-            <div>
-              <h3>{bracketGameLabel(game)}</h3>
-              <p className="muted">
-                {game.division} {game.game_key}
-              </p>
-            </div>
-            <span className={isUnscoredBracketGame(game) ? "pill warn" : "pill ok"}>{isUnscoredBracketGame(game) ? "Needs score" : "Scored"}</span>
-          </div>
-          {game.team_1 && game.team_2 ? (
-            <div className="score-card-actions">
-              <form action={submitBracketScoreAction} className="score-card-form">
-                <input name="bracket_game_id" type="hidden" value={game.id} />
-                <ScoreTeamInput name="team_1_score" team={game.team_1} defaultValue={game.team_1_score} />
-                <ScoreTeamInput name="team_2_score" team={game.team_2} defaultValue={game.team_2_score} />
-                <button className="button">Save Score</button>
-              </form>
-              {game.team_1_score !== null && game.team_2_score !== null ? (
-                <form action={resetBracketScoreAction}>
-                  <input name="bracket_game_id" type="hidden" value={game.id} />
-                  <button className="button danger">Reset</button>
-                </form>
-              ) : null}
-            </div>
-          ) : (
-            <p className="muted">Waiting on bracket results</p>
-          )}
-        </article>
+        <BracketScoreCard game={game} key={`bracket-${game.id}`} />
       ))}
     </div>
+  );
+}
+
+function BracketScoreCard({ game }: { game: EditableBracketGame }) {
+  const [team1Score, setTeam1Score] = useState(game.team_1_score === null ? "" : String(game.team_1_score));
+  const [team2Score, setTeam2Score] = useState(game.team_2_score === null ? "" : String(game.team_2_score));
+  const currentWinner = currentWinnerSide(game);
+  const nextWinner = winnerSide(scoreValue(team1Score), scoreValue(team2Score));
+  const invalidScore = !validScoreText(team1Score) || !validScoreText(team2Score);
+  const tiedScore = team1Score !== "" && team2Score !== "" && Number(team1Score) === Number(team2Score);
+  const winnerChangeBlocked = Boolean(game.result_locked && currentWinner && nextWinner && currentWinner !== nextWinner);
+  const saveDisabled = invalidScore || tiedScore || winnerChangeBlocked;
+  const resultText = bracketResultText(game);
+
+  return (
+    <article className={`score-game-card ${isUnscoredBracketGame(game) ? "" : "muted-game-row"}`.trim()}>
+      <div className="score-game-header">
+        <div>
+          <h3>{bracketGameLabel(game)}</h3>
+          <p className="muted">
+            {game.division} {game.game_key}
+          </p>
+        </div>
+        <span className={isUnscoredBracketGame(game) ? "pill warn" : "pill ok"}>{isUnscoredBracketGame(game) ? "Needs score" : resultText}</span>
+      </div>
+      {game.team_1 && game.team_2 ? (
+        <div className="score-card-actions">
+          {game.result_locked ? <p className={winnerChangeBlocked ? "pill warn" : "muted"}>{game.result_lock_reason}</p> : null}
+          {tiedScore ? <p className="pill warn">Tournament games need a winner before saving.</p> : null}
+          <form action={submitBracketScoreAction} className="score-card-form">
+            <input name="bracket_game_id" type="hidden" value={game.id} />
+            <ScoreTeamInput name="team_1_score" team={game.team_1} value={team1Score} onChange={setTeam1Score} />
+            <ScoreTeamInput name="team_2_score" team={game.team_2} value={team2Score} onChange={setTeam2Score} />
+            <button className="button" disabled={saveDisabled}>
+              Save Score
+            </button>
+          </form>
+          <div className="forfeit-actions">
+            <span className="muted">Forfeit</span>
+            <BracketForfeitButton game={game} teamId={game.team_1_id} teamName={game.team_1} />
+            <BracketForfeitButton game={game} teamId={game.team_2_id} teamName={game.team_2} />
+          </div>
+          {isCompleteBracketResult(game) ? (
+            <form action={resetBracketScoreAction}>
+              <input name="bracket_game_id" type="hidden" value={game.id} />
+              {game.reset_locked ? <p className="pill warn">{game.reset_lock_reason}</p> : null}
+              <button className="button danger" disabled={Boolean(game.reset_locked)}>
+                Reset
+              </button>
+            </form>
+          ) : null}
+        </div>
+      ) : (
+        <p className="muted">Waiting on bracket results</p>
+      )}
+    </article>
+  );
+}
+
+function BracketForfeitButton({ game, teamId, teamName }: { game: EditableBracketGame; teamId: number | null; teamName: string }) {
+  const currentWinner = currentWinnerSide(game);
+  const forfeitWinner = teamId === game.team_1_id ? "team_2" : "team_1";
+  const winnerChangeBlocked = Boolean(game.result_locked && currentWinner && currentWinner !== forfeitWinner);
+  return (
+    <form action={submitBracketForfeitAction}>
+      <input name="bracket_game_id" type="hidden" value={game.id} />
+      <input name="forfeit_team_id" type="hidden" value={teamId ?? ""} />
+      <button className="button danger" disabled={!teamId || winnerChangeBlocked}>
+        {teamName}
+      </button>
+    </form>
   );
 }
 
@@ -273,6 +348,36 @@ function bracketGameLabel(game: EditableBracketGame) {
   if (game.game_key === "F1") return "Championship";
   if (game.game_key === "F2") return "If-needed Championship";
   return `${game.bracket_side === "losers" ? "Losers" : "Winners"} Round ${game.round} Game ${game.position}`;
+}
+
+function bracketResultText(game: EditableBracketGame) {
+  if (game.result_type === "forfeit") {
+    if (game.forfeit_team_id === game.team_1_id) return `${game.team_1 || "Team 1"} forfeited`;
+    if (game.forfeit_team_id === game.team_2_id) return `${game.team_2 || "Team 2"} forfeited`;
+    return "Forfeit";
+  }
+  if (game.team_1_score !== null && game.team_2_score !== null) return `${game.team_1_score}-${game.team_2_score}`;
+  return "Scored";
+}
+
+function scoreValue(value: string) {
+  if (!validScoreText(value)) return null;
+  return Number(value);
+}
+
+function validScoreText(value: string) {
+  return value !== "" && Number.isInteger(Number(value)) && Number(value) >= 0;
+}
+
+function winnerSide(team1Score: number | null, team2Score: number | null) {
+  if (team1Score === null || team2Score === null || team1Score === team2Score) return null;
+  return team1Score > team2Score ? "team_1" : "team_2";
+}
+
+function currentWinnerSide(game: EditableBracketGame) {
+  if (game.winner_team_id !== null && game.winner_team_id === game.team_1_id) return "team_1";
+  if (game.winner_team_id !== null && game.winner_team_id === game.team_2_id) return "team_2";
+  return winnerSide(game.team_1_score, game.team_2_score);
 }
 
 function ScoreTable({ games, emptyText }: { games: ScoreGame[]; emptyText: string }) {
@@ -288,22 +393,38 @@ function ScoreTable({ games, emptyText }: { games: ScoreGame[]; emptyText: strin
                 {game.division} {game.phase}
               </p>
             </div>
-            <span className={isUnscoredScheduleGame(game) ? "pill warn" : "pill ok"}>{isUnscoredScheduleGame(game) ? "Needs score" : "Scored"}</span>
+            <span className={isUnscoredScheduleGame(game) ? "pill warn" : "pill ok"}>{isUnscoredScheduleGame(game) ? "Needs score" : scheduleResultText(game)}</span>
           </div>
           {game.team_1 && game.team_2 ? (
             <div className="score-card-actions">
-              <form action={submitGameScoreAction} className="score-card-form">
-                <input name="game_id" type="hidden" value={game.id} />
-                <ScoreTeamInput name="team_1_score" team={game.team_1} defaultValue={game.team_1_score} />
-                <ScoreTeamInput name="team_2_score" team={game.team_2} defaultValue={game.team_2_score} />
-                <button className="button">Save Score</button>
-              </form>
-              {game.team_1_score !== null && game.team_2_score !== null ? (
-                <form action={resetGameScoreAction}>
-                  <input name="game_id" type="hidden" value={game.id} />
-                  <button className="button danger">Reset</button>
-                </form>
-              ) : null}
+              {game.score_locked ? (
+                <>
+                  <p className="pill warn">{game.score_lock_reason}</p>
+                  <p className="muted">
+                    Current result: {scheduleResultText(game)}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <form action={submitGameScoreAction} className="score-card-form">
+                    <input name="game_id" type="hidden" value={game.id} />
+                    <ScoreTeamInput name="team_1_score" team={game.team_1} defaultValue={game.team_1_score} />
+                    <ScoreTeamInput name="team_2_score" team={game.team_2} defaultValue={game.team_2_score} />
+                    <button className="button">Save Score</button>
+                  </form>
+                  <div className="forfeit-actions">
+                    <span className="muted">Forfeit</span>
+                    <ScheduleForfeitButton game={game} teamId={game.team_1_id} teamName={game.team_1} />
+                    <ScheduleForfeitButton game={game} teamId={game.team_2_id} teamName={game.team_2} />
+                  </div>
+                  {isCompleteScheduleResult(game) ? (
+                    <form action={resetGameScoreAction}>
+                      <input name="game_id" type="hidden" value={game.id} />
+                      <button className="button danger">Reset</button>
+                    </form>
+                  ) : null}
+                </>
+              )}
             </div>
           ) : (
             <p className="muted">Waiting on teams</p>
@@ -314,11 +435,52 @@ function ScoreTable({ games, emptyText }: { games: ScoreGame[]; emptyText: strin
   );
 }
 
-function ScoreTeamInput({ name, team, defaultValue }: { name: string; team: string; defaultValue: number | null }) {
+function ScheduleForfeitButton({ game, teamId, teamName }: { game: ScoreGame; teamId: number | null; teamName: string }) {
+  return (
+    <form action={submitGameForfeitAction}>
+      <input name="game_id" type="hidden" value={game.id} />
+      <input name="forfeit_team_id" type="hidden" value={teamId ?? ""} />
+      <button className="button danger" disabled={!teamId}>
+        {teamName}
+      </button>
+    </form>
+  );
+}
+
+function scheduleResultText(game: ScoreGame) {
+  if (game.result_type === "forfeit") {
+    if (game.forfeit_team_id === game.team_1_id) return `${game.team_1 || "Team 1"} forfeited`;
+    if (game.forfeit_team_id === game.team_2_id) return `${game.team_2 || "Team 2"} forfeited`;
+    return "Forfeit";
+  }
+  if (game.team_1_score !== null && game.team_2_score !== null) return `${game.team_1_score}-${game.team_2_score}`;
+  return "Scored";
+}
+
+function ScoreTeamInput({
+  name,
+  team,
+  defaultValue,
+  value,
+  onChange
+}: {
+  name: string;
+  team: string;
+  defaultValue?: number | null;
+  value?: string;
+  onChange?: (value: string) => void;
+}) {
+  const controlledProps =
+    value === undefined
+      ? { defaultValue: defaultValue ?? "" }
+      : {
+          value,
+          onChange: (event: ChangeEvent<HTMLInputElement>) => onChange?.(event.currentTarget.value)
+        };
   return (
     <label className="score-team-input">
       <span>{team}</span>
-      <input name={name} type="number" inputMode="numeric" min="0" defaultValue={defaultValue ?? ""} aria-label={`${team} score`} />
+      <input name={name} type="number" inputMode="numeric" min="0" required aria-label={`${team} score`} {...controlledProps} />
     </label>
   );
 }

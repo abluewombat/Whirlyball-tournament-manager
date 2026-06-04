@@ -113,6 +113,8 @@ export async function initDb() {
       ALTER TABLE games ADD COLUMN IF NOT EXISTS team_2_score INTEGER;
       ALTER TABLE games ADD COLUMN IF NOT EXISTS winner_team_id INTEGER;
       ALTER TABLE games ADD COLUMN IF NOT EXISTS loser_team_id INTEGER;
+      ALTER TABLE games ADD COLUMN IF NOT EXISTS result_type TEXT;
+      ALTER TABLE games ADD COLUMN IF NOT EXISTS forfeit_team_id INTEGER;
       ALTER TABLE games ADD COLUMN IF NOT EXISTS scored_by TEXT;
       ALTER TABLE games ADD COLUMN IF NOT EXISTS scored_at TIMESTAMPTZ;
 
@@ -160,6 +162,8 @@ export async function initDb() {
         team_2_score INTEGER,
         winner_team_id INTEGER REFERENCES teams(id),
         loser_team_id INTEGER REFERENCES teams(id),
+        result_type TEXT,
+        forfeit_team_id INTEGER REFERENCES teams(id),
         next_winner_game_key TEXT,
         next_winner_slot INTEGER,
         next_loser_game_key TEXT,
@@ -167,6 +171,9 @@ export async function initDb() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE (bracket_id, game_key)
       );
+
+      ALTER TABLE bracket_games ADD COLUMN IF NOT EXISTS result_type TEXT;
+      ALTER TABLE bracket_games ADD COLUMN IF NOT EXISTS forfeit_team_id INTEGER REFERENCES teams(id);
 
       CREATE TABLE IF NOT EXISTS state_snapshots (
         id SERIAL PRIMARY KEY,

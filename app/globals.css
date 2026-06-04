@@ -33,14 +33,19 @@ a {
 }
 
 .topbar {
-  align-items: center;
   background: #080c10;
   border-bottom: 1px solid var(--line);
   color: var(--ink);
+  padding: 12px 24px 0;
+}
+
+.topbar-row {
+  align-items: center;
   display: flex;
-  gap: 20px;
-  justify-content: space-between;
-  padding: 14px 24px;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  margin: 0 auto;
+  max-width: 1240px;
 }
 
 .announcement-banner {
@@ -64,10 +69,57 @@ a {
   margin-left: 6px;
 }
 
+.main-nav,
+.sub-nav,
 .nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+}
+
+.main-nav {
+  margin-left: auto;
+}
+
+.sub-nav {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  flex-basis: 100%;
+  padding: 10px 0 11px;
+}
+
+.main-nav a,
+.sub-nav a {
+  align-items: center;
+  border-radius: 6px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 14px;
+  font-weight: 700;
+  min-height: 34px;
+  padding: 8px 10px;
+  text-decoration: none;
+}
+
+.main-nav a {
+  background: #111922;
+  border: 1px solid #1d2833;
+}
+
+.main-nav a.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.sub-nav a {
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.sub-nav a.active {
+  background: #172330;
+  border-color: var(--line);
+  color: var(--ink);
 }
 
 .nav a,
@@ -333,6 +385,13 @@ th {
 .score-card-form {
   display: grid;
   gap: 10px;
+}
+
+.forfeit-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .score-team-input {
@@ -788,6 +847,10 @@ th {
   outline: 3px solid rgba(23, 107, 135, 0.55);
 }
 
+.schedule-drop-cell.is-locked:hover {
+  outline: none;
+}
+
 .schedule-drag-button {
   background: transparent;
   border: 0;
@@ -804,6 +867,19 @@ th {
 
 .schedule-drag-button:active {
   cursor: grabbing;
+}
+
+.schedule-drag-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.82;
+}
+
+.schedule-lock-note {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  margin-top: 4px;
+  opacity: 0.78;
 }
 
 .schedule-game-cell.is-dragging {
@@ -829,16 +905,21 @@ th {
   }
 
   .topbar {
+    padding: 12px 12px 0;
+  }
+
+  .topbar-row {
     align-items: flex-start;
-    flex-direction: column;
-    gap: 12px;
-    padding: 12px;
+    display: grid;
+    gap: 10px;
   }
 
   .brand {
     font-size: 16px;
   }
 
+  .main-nav,
+  .sub-nav,
   .nav {
     display: grid;
     gap: 8px;
@@ -846,6 +927,16 @@ th {
     width: 100%;
   }
 
+  .main-nav {
+    margin-left: 0;
+  }
+
+  .sub-nav {
+    padding-bottom: 10px;
+  }
+
+  .main-nav a,
+  .sub-nav a,
   .nav a,
   .nav button {
     justify-content: center;

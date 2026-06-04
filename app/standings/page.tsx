@@ -27,8 +27,11 @@ export default async function StandingsPage() {
                   <tr>
                     <th>Seed</th>
                     <th>Team</th>
+                    <th>Pts</th>
                     <th>W</th>
+                    <th>T</th>
                     <th>L</th>
+                    <th>FF</th>
                     <th>PF</th>
                     <th>PA</th>
                     <th>Diff</th>
@@ -41,8 +44,11 @@ export default async function StandingsPage() {
                       <td>
                         <a href={`/teams/${row.team_id}`}>{row.center} - {row.team}</a>
                       </td>
+                      <td>{row.standing_points}</td>
                       <td>{row.wins}</td>
+                      <td>{row.ties}</td>
                       <td>{row.losses}</td>
+                      <td>{row.forfeits}</td>
                       <td>{row.points_for}</td>
                       <td>{row.points_against}</td>
                       <td>{row.point_diff}</td>

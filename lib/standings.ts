@@ -7,6 +7,9 @@ export type StandingRow = {
   division: string;
   wins: number;
   losses: number;
+  ties: number;
+  forfeits: number;
+  standing_points: number;
   points_for: number;
   points_against: number;
   point_diff: number;
@@ -18,8 +21,12 @@ type ScoredGameRow = {
   division: string;
   team_1_id: number;
   team_2_id: number;
-  team_1_score: number;
-  team_2_score: number;
+  team_1_score: number | null;
+  team_2_score: number | null;
+  winner_team_id: number | null;
+  loser_team_id: number | null;
+  result_type: string | null;
+  forfeit_team_id: number | null;
 };
 
 type TeamRow = {
@@ -38,13 +45,16 @@ export async function getStandings(division?: string) {
     division ? [division] : []
   );
   const games = await query<ScoredGameRow>(
-    `SELECT division, team_1_id, team_2_id, team_1_score, team_2_score
+    `SELECT division, team_1_id, team_2_id, team_1_score, team_2_score,
+            winner_team_id, loser_team_id, result_type, forfeit_team_id
      FROM games
      WHERE phase = 'seeding'
        AND team_1_id IS NOT NULL
        AND team_2_id IS NOT NULL
-       AND team_1_score IS NOT NULL
-       AND team_2_score IS NOT NULL
+       AND (
+         (team_1_score IS NOT NULL AND team_2_score IS NOT NULL)
+         OR result_type = 'forfeit'
+       )
        ${division ? "AND division = $1" : ""}`,
     division ? [division] : []
   );
@@ -58,6 +68,9 @@ export async function getStandings(division?: string) {
       division: team.division,
       wins: 0,
       losses: 0,
+      ties: 0,
+      forfeits: 0,
+      standing_points: 0,
       points_for: 0,
       points_against: 0,
       point_diff: 0,
@@ -72,15 +85,35 @@ export async function getStandings(division?: string) {
     if (!team1 || !team2) continue;
     team1.games_played += 1;
     team2.games_played += 1;
+
+    if (game.result_type === "forfeit") {
+      const winner = game.winner_team_id ? rows.get(game.winner_team_id) : null;
+      const loser = game.loser_team_id ? rows.get(game.loser_team_id) : null;
+      if (!winner || !loser) continue;
+      winner.wins += 1;
+      winner.standing_points += 2;
+      loser.losses += 1;
+      loser.forfeits += 1;
+      continue;
+    }
+
+    if (game.team_1_score === null || game.team_2_score === null) continue;
     team1.points_for += game.team_1_score;
     team1.points_against += game.team_2_score;
     team2.points_for += game.team_2_score;
     team2.points_against += game.team_1_score;
-    if (game.team_1_score >= game.team_2_score) {
+    if (game.team_1_score === game.team_2_score) {
+      team1.ties += 1;
+      team2.ties += 1;
+      team1.standing_points += 1;
+      team2.standing_points += 1;
+    } else if (game.team_1_score > game.team_2_score) {
       team1.wins += 1;
+      team1.standing_points += 2;
       team2.losses += 1;
     } else {
       team2.wins += 1;
+      team2.standing_points += 2;
       team1.losses += 1;
     }
   }
@@ -97,6 +130,7 @@ export async function seedingCompleteForDivision(division: string) {
        AND division = $1
        AND team_1_id IS NOT NULL
        AND team_2_id IS NOT NULL
+       AND result_type IS DISTINCT FROM 'forfeit'
        AND (team_1_score IS NULL OR team_2_score IS NULL)`,
     [division]
   );
@@ -105,6 +139,7 @@ export async function seedingCompleteForDivision(division: string) {
 
 function compareStandings(left: StandingRow, right: StandingRow) {
   if (left.division !== right.division) return left.division.localeCompare(right.division);
+  if (left.standing_points !== right.standing_points) return right.standing_points - left.standing_points;
   if (left.wins !== right.wins) return right.wins - left.wins;
   if (left.point_diff !== right.point_diff) return right.point_diff - left.point_diff;
   if (left.points_against !== right.points_against) return left.points_against - right.points_against;

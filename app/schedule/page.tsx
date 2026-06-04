@@ -9,12 +9,16 @@ type PublicScheduleGame = {
   division: string;
   court: number;
   starts_at: string;
+  team_1_id: number | null;
+  team_2_id: number | null;
   team_1: string | null;
   team_2: string | null;
   ref_team: string | null;
   ref_team_division: string | null;
   team_1_score: number | null;
   team_2_score: number | null;
+  result_type: string | null;
+  forfeit_team_id: number | null;
   label: string | null;
 };
 
@@ -45,7 +49,8 @@ export default async function PublicSchedulePage() {
   await syncActiveBracketsToSchedule();
   const games = await query<PublicScheduleGame>(
     `SELECT games.phase, games.division, games.court, games.starts_at,
-            games.team_1_score, games.team_2_score,
+            games.team_1_id, games.team_2_id, games.team_1_score, games.team_2_score,
+            games.result_type, games.forfeit_team_id,
             t1.name as team_1, t2.name as team_2,
             tr.name as ref_team, tr.division as ref_team_division, games.label
      FROM games
@@ -67,9 +72,6 @@ export default async function PublicSchedulePage() {
             {games.length ? `${games.length} scheduled games${lastUpdated ? ` loaded ${lastUpdated}` : ""}.` : "No tournament schedule has been generated yet."}
           </p>
         </div>
-        <a className="button secondary" href="/">
-          Public Teams
-        </a>
       </div>
 
       {gridRows.length ? (
@@ -138,9 +140,9 @@ function buildScheduleGrid(games: PublicScheduleGame[]) {
         court2Ref: "",
         court2RefDivision: ""
       };
-    const scoreText = game.team_1_score !== null && game.team_2_score !== null ? ` (${game.team_1_score}-${game.team_2_score})` : "";
-    const gameText = game.team_1 && game.team_2 ? `${game.division}: ${game.team_1} vs. ${game.team_2}${scoreText}` : `${game.division}: ${game.label || "Game"}${scoreText}`;
-    const scored = game.team_1_score !== null && game.team_2_score !== null;
+    const resultText = publicResultText(game);
+    const gameText = game.team_1 && game.team_2 ? `${game.division}: ${game.team_1} vs. ${game.team_2}${resultText}` : `${game.division}: ${game.label || "Game"}${resultText}`;
+    const scored = isCompleteResult(game);
 
     if (game.court === 1) {
       row.court1Ref = game.ref_team || "";
@@ -160,6 +162,20 @@ function buildScheduleGrid(games: PublicScheduleGame[]) {
   }
 
   return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row);
+}
+
+function isCompleteResult(game: PublicScheduleGame) {
+  return (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
+}
+
+function publicResultText(game: PublicScheduleGame) {
+  if (game.result_type === "forfeit") {
+    if (game.forfeit_team_id === game.team_1_id) return ` (${game.team_1 || "Team 1"} forfeited)`;
+    if (game.forfeit_team_id === game.team_2_id) return ` (${game.team_2 || "Team 2"} forfeited)`;
+    return " (forfeit)";
+  }
+  if (game.team_1_score !== null && game.team_2_score !== null) return ` (${game.team_1_score}-${game.team_2_score})`;
+  return "";
 }
 
 function gameCellClass(division: string, scored = false) {
