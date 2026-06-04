@@ -399,39 +399,12 @@ function isScoreableGame(game: FilterableScoreRow) {
 function BracketScheduleScoreGrid({ games, emptyText }: { games: EditableBracketGame[]; emptyText: string }) {
   if (!games.length) return <p className="muted">{emptyText}</p>;
   const scheduledGames = games.filter((game) => game.starts_at && game.court);
-  const unscheduledGames = games.filter((game) => !game.starts_at || !game.court);
   const rows = buildBracketScheduleScoreRows(scheduledGames);
-  if (!rows.rows.length && !unscheduledGames.length) return <p className="muted">{emptyText}</p>;
+  if (!rows.rows.length) return <p className="muted">{emptyText}</p>;
   return (
-    <>
-      {rows.rows.length ? (
-        <div className="score-schedule-list">
-          {rows.rows.map((row) => (
-            <div className="score-schedule-list-row" key={row.startsAt}>
-              <div className="score-schedule-time">
-                <strong>{timeLabel(row.startsAt)}</strong>
-                <span>{dayLabel(row.startsAt)}</span>
-              </div>
-              <div className="score-schedule-games">
-                {row.games.map((game) => (
-                  <div className="score-schedule-cell" data-court-label={`Court ${game.court}`} key={`bracket-${game.id}`}>
-                    <BracketScoreCard game={game} />
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {unscheduledGames.length ? (
-        <div className="score-entry-list">
-          <p className="muted">These bracket games do not have synced schedule slots yet.</p>
-          {unscheduledGames.map((game) => (
-            <BracketScoreCard game={game} key={`bracket-${game.id}`} />
-          ))}
-        </div>
-      ) : null}
-    </>
+    <div className="score-schedule-list">
+      {rows.rows.flatMap((row) => row.games.map((game) => <BracketScoreCard game={game} key={`bracket-${game.id}`} />))}
+    </div>
   );
 }
 
@@ -463,9 +436,7 @@ function BracketScoreCard({ game }: { game: EditableBracketGame }) {
       <div className="score-game-header">
         <div>
           <h3>{bracketGameLabel(game)}</h3>
-          <p className="muted">
-            {game.division} {game.game_key}{game.court ? ` · Court ${game.court}` : ""}
-          </p>
+          <p className="score-game-meta">{scoreMetaLabel(game, "Tournament")}</p>
         </div>
         <span className={isUnscoredBracketGame(game) ? "pill warn" : "pill ok"}>{isUnscoredBracketGame(game) ? "Needs score" : resultText}</span>
       </div>
@@ -560,21 +531,7 @@ function ScheduleScoreGrid({ games, emptyText }: { games: ScoreGame[]; emptyText
   if (!rows.rows.length) return <p className="muted">{emptyText}</p>;
   return (
     <div className="score-schedule-list">
-      {rows.rows.map((row) => (
-        <div className="score-schedule-list-row" key={row.startsAt}>
-          <div className="score-schedule-time">
-            <strong>{timeLabel(row.startsAt)}</strong>
-            <span>{dayLabel(row.startsAt)}</span>
-          </div>
-          <div className="score-schedule-games">
-            {row.games.map((game) => (
-              <div className="score-schedule-cell" data-court-label={`Court ${game.court}`} key={`seeding-${game.id}`}>
-                <ScoreGameCard game={game} />
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
+      {rows.rows.flatMap((row) => row.games.map((game) => <ScoreGameCard game={game} key={`seeding-${game.id}`} />))}
     </div>
   );
 }
@@ -585,9 +542,7 @@ function ScoreGameCard({ game }: { game: ScoreGame }) {
       <div className="score-game-header">
         <div>
           <h3>{game.team_1 && game.team_2 ? `${game.team_1} vs. ${game.team_2}` : game.label || `Court ${game.court}`}</h3>
-          <p className="muted">
-            {game.division} seeding · Court {game.court}
-          </p>
+          <p className="score-game-meta">{scoreMetaLabel(game, "Seeding")}</p>
         </div>
         <span className={isUnscoredScheduleGame(game) ? "pill warn" : "pill ok"}>{isUnscoredScheduleGame(game) ? "Needs score" : scheduleResultText(game)}</span>
       </div>
@@ -637,6 +592,14 @@ function buildScheduleScoreRows(games: ScoreGame[]) {
     rows.set(game.starts_at, row);
   }
   return { rows: [...rows.values()].filter((row) => row.games.length > 0).sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
+}
+
+function scoreMetaLabel(game: { starts_at: string | null; court: number | string | null; division: string }, phase: string) {
+  const pieces = [];
+  if (game.starts_at) pieces.push(timeLabel(game.starts_at), dayLabel(game.starts_at));
+  pieces.push(`${game.division} ${phase}`);
+  if (game.court) pieces.push(`Court ${game.court}`);
+  return pieces.join(" - ");
 }
 
 function ScheduleForfeitButton({ game, teamId, teamName }: { game: ScoreGame; teamId: number | null; teamName: string }) {
