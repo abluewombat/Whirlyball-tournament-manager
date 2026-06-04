@@ -63,6 +63,8 @@ type ScoreEntryTablesProps = {
 };
 
 export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: ScoreEntryTablesProps) {
+  const scoreableSeedingGames = useMemo(() => seedingGames.filter(isScoreableGame), [seedingGames]);
+  const scoreableBracketGames = useMemo(() => bracketGames.filter((game) => isScoreableGame(game) && game.starts_at && game.court), [bracketGames]);
   const [showAllSeeding, setShowAllSeeding] = useState(false);
   const [showAllTournament, setShowAllTournament] = useState(false);
   const [seedingDayFilter, setSeedingDayFilter] = useState("");
@@ -73,17 +75,17 @@ export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: 
   const [tournamentDivisionFilter, setTournamentDivisionFilter] = useState("all");
   const [tournamentTeamFilter, setTournamentTeamFilter] = useState("all");
   const [tournamentCourtFilter, setTournamentCourtFilter] = useState("all");
-  const unscoredSeedingCount = useMemo(() => seedingGames.filter(isUnscoredScheduleGame).length, [seedingGames]);
-  const unscoredBracketCount = useMemo(() => bracketGames.filter(isUnscoredBracketGame).length, [bracketGames]);
-  const allSeedingScored = seedingGames.length > 0 && unscoredSeedingCount === 0;
+  const unscoredSeedingCount = useMemo(() => scoreableSeedingGames.filter(isUnscoredScheduleGame).length, [scoreableSeedingGames]);
+  const unscoredBracketCount = useMemo(() => scoreableBracketGames.filter(isUnscoredBracketGame).length, [scoreableBracketGames]);
+  const allSeedingScored = scoreableSeedingGames.length > 0 && unscoredSeedingCount === 0;
   const [seedingOpen, setSeedingOpen] = useState(!bracketsReady || allSeedingScored);
   const [tournamentOpen, setTournamentOpen] = useState(bracketsReady || unscoredBracketCount === 0);
-  const seedingDays = useMemo(() => dayOptions(seedingGames), [seedingGames]);
+  const seedingDays = useMemo(() => dayOptions(scoreableSeedingGames), [scoreableSeedingGames]);
   const selectedSeedingDay = seedingDayFilter || defaultDayFilter(seedingDays);
-  const tournamentDays = useMemo(() => dayOptions(bracketGames), [bracketGames]);
+  const tournamentDays = useMemo(() => dayOptions(scoreableBracketGames), [scoreableBracketGames]);
   const selectedTournamentDay = tournamentDayFilter || defaultDayFilter(tournamentDays);
-  const seedingBaseGames = useMemo(() => filterByDay(showAllSeeding ? seedingGames : seedingGames.filter(isUnscoredScheduleGame), selectedSeedingDay), [seedingGames, showAllSeeding, selectedSeedingDay]);
-  const tournamentBaseGames = useMemo(() => filterByDay(showAllTournament ? bracketGames : bracketGames.filter(isUnscoredBracketGame), selectedTournamentDay), [bracketGames, showAllTournament, selectedTournamentDay]);
+  const seedingBaseGames = useMemo(() => filterByDay(showAllSeeding ? scoreableSeedingGames : scoreableSeedingGames.filter(isUnscoredScheduleGame), selectedSeedingDay), [scoreableSeedingGames, showAllSeeding, selectedSeedingDay]);
+  const tournamentBaseGames = useMemo(() => filterByDay(showAllTournament ? scoreableBracketGames : scoreableBracketGames.filter(isUnscoredBracketGame), selectedTournamentDay), [scoreableBracketGames, showAllTournament, selectedTournamentDay]);
   const seedingDivisions = useMemo(() => divisionOptions(seedingBaseGames), [seedingBaseGames]);
   const tournamentDivisions = useMemo(() => divisionOptions(tournamentBaseGames), [tournamentBaseGames]);
   const seedingTeams = useMemo(() => teamOptions(seedingBaseGames, seedingDivisionFilter), [seedingBaseGames, seedingDivisionFilter]);
@@ -143,7 +145,7 @@ export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: 
         <ScheduleScoreGrid games={visibleSeedingGames} emptyText={showAllSeeding ? "No seeding games available for this day." : "No unscored seeding games for this day."} />
       </details>
 
-      {bracketGames.length ? (
+      {scoreableBracketGames.length ? (
         <details className="section card score-collapse" open={tournamentOpen} onToggle={(event) => setTournamentOpen(event.currentTarget.open)}>
           <summary>
             <span>Tournament Score Entry</span>
@@ -390,6 +392,10 @@ function isCompleteBracketResult(game: EditableBracketGame) {
   return (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
 }
 
+function isScoreableGame(game: FilterableScoreRow) {
+  return Boolean(game.team_1 && game.team_2);
+}
+
 function BracketScheduleScoreGrid({ games, emptyText }: { games: EditableBracketGame[]; emptyText: string }) {
   if (!games.length) return <p className="muted">{emptyText}</p>;
   const scheduledGames = games.filter((game) => game.starts_at && game.court);
@@ -399,22 +405,20 @@ function BracketScheduleScoreGrid({ games, emptyText }: { games: EditableBracket
   return (
     <>
       {rows.rows.length ? (
-        <div className="score-schedule-grid" style={scoreGridColumns(rows.courts.length)}>
-          <div className="score-schedule-heading">Time</div>
-          {rows.courts.map((court) => (
-            <div className="score-schedule-heading" key={`bracket-court-heading-${court}`}>Court {court}</div>
-          ))}
+        <div className="score-schedule-list">
           {rows.rows.map((row) => (
-            <div className="score-schedule-row" key={row.startsAt}>
+            <div className="score-schedule-list-row" key={row.startsAt}>
               <div className="score-schedule-time">
                 <strong>{timeLabel(row.startsAt)}</strong>
                 <span>{dayLabel(row.startsAt)}</span>
               </div>
-              {rows.courts.map((court) => (
-                <div className="score-schedule-cell" data-court-label={`Court ${court}`} key={`bracket-${row.startsAt}-${court}`}>
-                  {row.gamesByCourt.get(court) ? <BracketScoreCard game={row.gamesByCourt.get(court)!} /> : <span className="muted">No game</span>}
-                </div>
-              ))}
+              <div className="score-schedule-games">
+                {row.games.map((game) => (
+                  <div className="score-schedule-cell" data-court-label={`Court ${game.court}`} key={`bracket-${game.id}`}>
+                    <BracketScoreCard game={game} />
+                  </div>
+                ))}
+              </div>
             </div>
           ))}
         </div>
@@ -432,16 +436,15 @@ function BracketScheduleScoreGrid({ games, emptyText }: { games: EditableBracket
 }
 
 function buildBracketScheduleScoreRows(games: EditableBracketGame[]) {
-  const courts = courtOptions(games);
-  const rows = new Map<string, { startsAt: string; gamesByCourt: Map<number, EditableBracketGame> }>();
+  const rows = new Map<string, { startsAt: string; games: EditableBracketGame[] }>();
   for (const game of [...games].sort((left, right) => (left.starts_at || "").localeCompare(right.starts_at || "") || (left.court || 0) - (right.court || 0))) {
     const court = normalizeCourt(game.court);
     if (!game.starts_at || court === null) continue;
-    const row = rows.get(game.starts_at) || { startsAt: game.starts_at, gamesByCourt: new Map<number, EditableBracketGame>() };
-    row.gamesByCourt.set(court, game);
+    const row = rows.get(game.starts_at) || { startsAt: game.starts_at, games: [] };
+    row.games.push(game);
     rows.set(game.starts_at, row);
   }
-  return { courts, rows: [...rows.values()].filter((row) => rowHasVisibleGame(row, courts)).sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
+  return { rows: [...rows.values()].filter((row) => row.games.length > 0).sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
 }
 
 function BracketScoreCard({ game }: { game: EditableBracketGame }) {
@@ -461,7 +464,7 @@ function BracketScoreCard({ game }: { game: EditableBracketGame }) {
         <div>
           <h3>{bracketGameLabel(game)}</h3>
           <p className="muted">
-            {game.division} {game.game_key}
+            {game.division} {game.game_key}{game.court ? ` · Court ${game.court}` : ""}
           </p>
         </div>
         <span className={isUnscoredBracketGame(game) ? "pill warn" : "pill ok"}>{isUnscoredBracketGame(game) ? "Needs score" : resultText}</span>
@@ -556,22 +559,20 @@ function ScheduleScoreGrid({ games, emptyText }: { games: ScoreGame[]; emptyText
   const rows = buildScheduleScoreRows(games);
   if (!rows.rows.length) return <p className="muted">{emptyText}</p>;
   return (
-    <div className="score-schedule-grid" style={scoreGridColumns(rows.courts.length)}>
-      <div className="score-schedule-heading">Time</div>
-      {rows.courts.map((court) => (
-        <div className="score-schedule-heading" key={`seeding-court-heading-${court}`}>Court {court}</div>
-      ))}
+    <div className="score-schedule-list">
       {rows.rows.map((row) => (
-        <div className="score-schedule-row" key={row.startsAt}>
+        <div className="score-schedule-list-row" key={row.startsAt}>
           <div className="score-schedule-time">
             <strong>{timeLabel(row.startsAt)}</strong>
             <span>{dayLabel(row.startsAt)}</span>
           </div>
-          {rows.courts.map((court) => (
-            <div className="score-schedule-cell" data-court-label={`Court ${court}`} key={`seeding-${row.startsAt}-${court}`}>
-              {row.gamesByCourt.get(court) ? <ScoreGameCard game={row.gamesByCourt.get(court)!} /> : <span className="muted">No game</span>}
-            </div>
-          ))}
+          <div className="score-schedule-games">
+            {row.games.map((game) => (
+              <div className="score-schedule-cell" data-court-label={`Court ${game.court}`} key={`seeding-${game.id}`}>
+                <ScoreGameCard game={game} />
+              </div>
+            ))}
+          </div>
         </div>
       ))}
     </div>
@@ -585,7 +586,7 @@ function ScoreGameCard({ game }: { game: ScoreGame }) {
         <div>
           <h3>{game.team_1 && game.team_2 ? `${game.team_1} vs. ${game.team_2}` : game.label || `Court ${game.court}`}</h3>
           <p className="muted">
-            {game.division} seeding
+            {game.division} seeding · Court {game.court}
           </p>
         </div>
         <span className={isUnscoredScheduleGame(game) ? "pill warn" : "pill ok"}>{isUnscoredScheduleGame(game) ? "Needs score" : scheduleResultText(game)}</span>
@@ -627,24 +628,15 @@ function ScoreGameCard({ game }: { game: ScoreGame }) {
 }
 
 function buildScheduleScoreRows(games: ScoreGame[]) {
-  const courts = courtOptions(games);
-  const rows = new Map<string, { startsAt: string; gamesByCourt: Map<number, ScoreGame> }>();
+  const rows = new Map<string, { startsAt: string; games: ScoreGame[] }>();
   for (const game of [...games].sort((left, right) => left.starts_at.localeCompare(right.starts_at) || left.court - right.court)) {
     const court = normalizeCourt(game.court);
     if (court === null) continue;
-    const row = rows.get(game.starts_at) || { startsAt: game.starts_at, gamesByCourt: new Map<number, ScoreGame>() };
-    row.gamesByCourt.set(court, game);
+    const row = rows.get(game.starts_at) || { startsAt: game.starts_at, games: [] };
+    row.games.push(game);
     rows.set(game.starts_at, row);
   }
-  return { courts, rows: [...rows.values()].filter((row) => rowHasVisibleGame(row, courts)).sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
-}
-
-function scoreGridColumns(courtCount: number) {
-  return { gridTemplateColumns: `120px repeat(${Math.max(courtCount, 1)}, minmax(0, 1fr))` };
-}
-
-function rowHasVisibleGame<T>(row: { gamesByCourt: Map<number, T> }, courts: number[]) {
-  return courts.some((court) => row.gamesByCourt.has(court));
+  return { rows: [...rows.values()].filter((row) => row.games.length > 0).sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
 }
 
 function ScheduleForfeitButton({ game, teamId, teamName }: { game: ScoreGame; teamId: number | null; teamName: string }) {

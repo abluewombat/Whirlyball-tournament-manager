@@ -358,6 +358,25 @@ th {
   margin-top: 14px;
 }
 
+.score-schedule-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.score-schedule-list-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 120px minmax(0, 1fr);
+}
+
+.score-schedule-games {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  min-width: 0;
+}
+
 .score-schedule-heading {
   background: #1e2a35;
   border: 1px solid var(--line);
@@ -1053,6 +1072,11 @@ th {
 
   .score-schedule-grid {
     display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .score-schedule-list-row,
+  .score-schedule-games {
     grid-template-columns: 1fr;
   }
 
