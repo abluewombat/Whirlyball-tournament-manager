@@ -476,7 +476,7 @@ th {
 .score-filter-grid {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   margin-top: 12px;
 }
 
@@ -1073,22 +1073,14 @@ th {
     text-transform: uppercase;
   }
 
-  .score-schedule-cell:nth-child(2)::before,
-  .score-schedule-cell:nth-child(3)::before {
+  .score-schedule-cell::before {
     color: var(--muted);
+    content: attr(data-court-label);
     display: block;
     font-size: 11px;
     font-weight: 700;
     margin-bottom: 6px;
     text-transform: uppercase;
-  }
-
-  .score-schedule-cell:nth-child(2)::before {
-    content: "Court 1";
-  }
-
-  .score-schedule-cell:nth-child(3)::before {
-    content: "Court 2";
   }
 
   .score-card-actions .button,

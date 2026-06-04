@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import {
   resetGameScoreAction,
   resetBracketScoreAction,
@@ -69,29 +69,47 @@ export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: 
   const [tournamentDayFilter, setTournamentDayFilter] = useState("");
   const [seedingDivisionFilter, setSeedingDivisionFilter] = useState("all");
   const [seedingTeamFilter, setSeedingTeamFilter] = useState("all");
+  const [seedingCourtFilter, setSeedingCourtFilter] = useState("all");
   const [tournamentDivisionFilter, setTournamentDivisionFilter] = useState("all");
   const [tournamentTeamFilter, setTournamentTeamFilter] = useState("all");
+  const [tournamentCourtFilter, setTournamentCourtFilter] = useState("all");
   const unscoredSeedingCount = useMemo(() => seedingGames.filter(isUnscoredScheduleGame).length, [seedingGames]);
   const unscoredBracketCount = useMemo(() => bracketGames.filter(isUnscoredBracketGame).length, [bracketGames]);
   const allSeedingScored = seedingGames.length > 0 && unscoredSeedingCount === 0;
   const [seedingOpen, setSeedingOpen] = useState(!bracketsReady || allSeedingScored);
   const [tournamentOpen, setTournamentOpen] = useState(bracketsReady || unscoredBracketCount === 0);
-  const seedingDivisions = useMemo(() => divisionOptions(seedingGames), [seedingGames]);
   const seedingDays = useMemo(() => dayOptions(seedingGames), [seedingGames]);
   const selectedSeedingDay = seedingDayFilter || defaultDayFilter(seedingDays);
-  const tournamentDivisions = useMemo(() => divisionOptions(bracketGames), [bracketGames]);
   const tournamentDays = useMemo(() => dayOptions(bracketGames), [bracketGames]);
   const selectedTournamentDay = tournamentDayFilter || defaultDayFilter(tournamentDays);
-  const seedingTeams = useMemo(() => teamOptions(seedingGames, seedingDivisionFilter), [seedingGames, seedingDivisionFilter]);
-  const tournamentTeams = useMemo(() => teamOptions(bracketGames, tournamentDivisionFilter), [bracketGames, tournamentDivisionFilter]);
+  const seedingBaseGames = useMemo(() => filterByDay(showAllSeeding ? seedingGames : seedingGames.filter(isUnscoredScheduleGame), selectedSeedingDay), [seedingGames, showAllSeeding, selectedSeedingDay]);
+  const tournamentBaseGames = useMemo(() => filterByDay(showAllTournament ? bracketGames : bracketGames.filter(isUnscoredBracketGame), selectedTournamentDay), [bracketGames, showAllTournament, selectedTournamentDay]);
+  const seedingDivisions = useMemo(() => divisionOptions(seedingBaseGames), [seedingBaseGames]);
+  const tournamentDivisions = useMemo(() => divisionOptions(tournamentBaseGames), [tournamentBaseGames]);
+  const seedingTeams = useMemo(() => teamOptions(seedingBaseGames, seedingDivisionFilter), [seedingBaseGames, seedingDivisionFilter]);
+  const tournamentTeams = useMemo(() => teamOptions(tournamentBaseGames, tournamentDivisionFilter), [tournamentBaseGames, tournamentDivisionFilter]);
+  const seedingCourts = useMemo(() => courtOptions(seedingBaseGames), [seedingBaseGames]);
+  const tournamentCourts = useMemo(() => courtOptions(tournamentBaseGames), [tournamentBaseGames]);
   const visibleSeedingGames = useMemo(
-    () => filterScoreRows(filterByDay(showAllSeeding ? seedingGames : seedingGames.filter(isUnscoredScheduleGame), selectedSeedingDay), seedingDivisionFilter, seedingTeamFilter),
-    [seedingGames, showAllSeeding, selectedSeedingDay, seedingDivisionFilter, seedingTeamFilter]
+    () => filterScoreRows(seedingBaseGames, seedingDivisionFilter, seedingTeamFilter, seedingCourtFilter),
+    [seedingBaseGames, seedingDivisionFilter, seedingTeamFilter, seedingCourtFilter]
   );
   const visibleBracketGames = useMemo(
-    () => filterScoreRows(filterByDay(showAllTournament ? bracketGames : bracketGames.filter(isUnscoredBracketGame), selectedTournamentDay), tournamentDivisionFilter, tournamentTeamFilter),
-    [bracketGames, showAllTournament, selectedTournamentDay, tournamentDivisionFilter, tournamentTeamFilter]
+    () => filterScoreRows(tournamentBaseGames, tournamentDivisionFilter, tournamentTeamFilter, tournamentCourtFilter),
+    [tournamentBaseGames, tournamentDivisionFilter, tournamentTeamFilter, tournamentCourtFilter]
   );
+
+  useEffect(() => {
+    if (seedingDivisionFilter !== "all" && !seedingDivisions.includes(seedingDivisionFilter)) setSeedingDivisionFilter("all");
+    if (seedingTeamFilter !== "all" && !seedingTeams.includes(seedingTeamFilter)) setSeedingTeamFilter("all");
+    if (seedingCourtFilter !== "all" && !seedingCourts.includes(Number(seedingCourtFilter))) setSeedingCourtFilter("all");
+  }, [seedingCourtFilter, seedingCourts, seedingDivisionFilter, seedingDivisions, seedingTeamFilter, seedingTeams]);
+
+  useEffect(() => {
+    if (tournamentDivisionFilter !== "all" && !tournamentDivisions.includes(tournamentDivisionFilter)) setTournamentDivisionFilter("all");
+    if (tournamentTeamFilter !== "all" && !tournamentTeams.includes(tournamentTeamFilter)) setTournamentTeamFilter("all");
+    if (tournamentCourtFilter !== "all" && !tournamentCourts.includes(Number(tournamentCourtFilter))) setTournamentCourtFilter("all");
+  }, [tournamentCourtFilter, tournamentCourts, tournamentDivisionFilter, tournamentDivisions, tournamentTeamFilter, tournamentTeams]);
 
   return (
     <>
@@ -111,13 +129,16 @@ export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: 
           label="Seeding"
           divisions={seedingDivisions}
           teams={seedingTeams}
+          courts={seedingCourts}
           selectedDivision={seedingDivisionFilter}
           selectedTeam={seedingTeamFilter}
+          selectedCourt={seedingCourtFilter}
           onDivisionChange={(division) => {
             setSeedingDivisionFilter(division);
             setSeedingTeamFilter("all");
           }}
           onTeamChange={setSeedingTeamFilter}
+          onCourtChange={setSeedingCourtFilter}
         />
         <ScheduleScoreGrid games={visibleSeedingGames} emptyText={showAllSeeding ? "No seeding games available for this day." : "No unscored seeding games for this day."} />
       </details>
@@ -139,13 +160,16 @@ export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: 
             label="Tournament"
             divisions={tournamentDivisions}
             teams={tournamentTeams}
+            courts={tournamentCourts}
             selectedDivision={tournamentDivisionFilter}
             selectedTeam={tournamentTeamFilter}
+            selectedCourt={tournamentCourtFilter}
             onDivisionChange={(division) => {
               setTournamentDivisionFilter(division);
               setTournamentTeamFilter("all");
             }}
             onTeamChange={setTournamentTeamFilter}
+            onCourtChange={setTournamentCourtFilter}
           />
           <BracketScheduleScoreGrid games={visibleBracketGames} emptyText={showAllTournament ? "No bracket games available for this day." : "No unscored bracket games for this day."} />
         </details>
@@ -156,26 +180,35 @@ export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: 
 
 type FilterableScoreRow = {
   division: string;
+  court: number | null;
   team_1: string | null;
   team_2: string | null;
 };
+
+const divisionOrder = ["A", "B", "C", "D", "Unlimited"];
 
 function ScoreScopeFilters({
   label,
   divisions,
   teams,
+  courts,
   selectedDivision,
   selectedTeam,
+  selectedCourt,
   onDivisionChange,
-  onTeamChange
+  onTeamChange,
+  onCourtChange
 }: {
   label: string;
   divisions: string[];
   teams: string[];
+  courts: number[];
   selectedDivision: string;
   selectedTeam: string;
+  selectedCourt: string;
   onDivisionChange: (division: string) => void;
   onTeamChange: (team: string) => void;
+  onCourtChange: (court: string) => void;
 }) {
   return (
     <div className="score-filter-grid" aria-label={`${label} score filters`}>
@@ -197,6 +230,17 @@ function ScoreScopeFilters({
           {teams.map((team) => (
             <option value={team} key={team}>
               {team}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Court
+        <select value={selectedCourt} onChange={(event) => onCourtChange(event.target.value)}>
+          <option value="all">All courts</option>
+          {courts.map((court) => (
+            <option value={String(court)} key={court}>
+              Court {court}
             </option>
           ))}
         </select>
@@ -236,7 +280,7 @@ function ScoreDayFilter({
 }
 
 function divisionOptions(games: FilterableScoreRow[]) {
-  return [...new Set(games.map((game) => game.division))].sort((left, right) => left.localeCompare(right));
+  return [...new Set(games.map((game) => game.division))].sort(compareDivisions);
 }
 
 function teamOptions(games: FilterableScoreRow[], divisionFilter: string) {
@@ -249,11 +293,25 @@ function teamOptions(games: FilterableScoreRow[], divisionFilter: string) {
   return [...teams].sort((left, right) => left.localeCompare(right));
 }
 
-function filterScoreRows<T extends FilterableScoreRow>(games: T[], divisionFilter: string, teamFilter: string) {
+function courtOptions(games: FilterableScoreRow[]) {
+  return [...new Set(games.map((game) => game.court).filter((court): court is number => court !== null))].sort((left, right) => left - right);
+}
+
+function compareDivisions(left: string, right: string) {
+  const leftIndex = divisionOrder.indexOf(left);
+  const rightIndex = divisionOrder.indexOf(right);
+  if (leftIndex !== -1 && rightIndex !== -1) return leftIndex - rightIndex;
+  if (leftIndex !== -1) return -1;
+  if (rightIndex !== -1) return 1;
+  return left.localeCompare(right);
+}
+
+function filterScoreRows<T extends FilterableScoreRow>(games: T[], divisionFilter: string, teamFilter: string, courtFilter: string) {
   return games.filter((game) => {
     const divisionMatches = divisionFilter === "all" || game.division === divisionFilter;
     const teamMatches = teamFilter === "all" || game.team_1 === teamFilter || game.team_2 === teamFilter;
-    return divisionMatches && teamMatches;
+    const courtMatches = courtFilter === "all" || game.court === Number(courtFilter);
+    return divisionMatches && teamMatches && courtMatches;
   });
 }
 
@@ -332,19 +390,23 @@ function BracketScheduleScoreGrid({ games, emptyText }: { games: EditableBracket
   const rows = buildBracketScheduleScoreRows(scheduledGames);
   return (
     <>
-      {rows.length ? (
-        <div className="score-schedule-grid">
+      {rows.rows.length ? (
+        <div className="score-schedule-grid" style={scoreGridColumns(rows.courts.length)}>
           <div className="score-schedule-heading">Time</div>
-          <div className="score-schedule-heading">Court 1</div>
-          <div className="score-schedule-heading">Court 2</div>
-          {rows.map((row) => (
+          {rows.courts.map((court) => (
+            <div className="score-schedule-heading" key={`bracket-court-heading-${court}`}>Court {court}</div>
+          ))}
+          {rows.rows.map((row) => (
             <div className="score-schedule-row" key={row.startsAt}>
               <div className="score-schedule-time">
                 <strong>{timeLabel(row.startsAt)}</strong>
                 <span>{dayLabel(row.startsAt)}</span>
               </div>
-              <div className="score-schedule-cell">{row.court1 ? <BracketScoreCard game={row.court1} /> : <span className="muted">No game</span>}</div>
-              <div className="score-schedule-cell">{row.court2 ? <BracketScoreCard game={row.court2} /> : <span className="muted">No game</span>}</div>
+              {rows.courts.map((court) => (
+                <div className="score-schedule-cell" data-court-label={`Court ${court}`} key={`bracket-${row.startsAt}-${court}`}>
+                  {row.gamesByCourt.get(court) ? <BracketScoreCard game={row.gamesByCourt.get(court)!} /> : <span className="muted">No game</span>}
+                </div>
+              ))}
             </div>
           ))}
         </div>
@@ -362,15 +424,15 @@ function BracketScheduleScoreGrid({ games, emptyText }: { games: EditableBracket
 }
 
 function buildBracketScheduleScoreRows(games: EditableBracketGame[]) {
-  const rows = new Map<string, { startsAt: string; court1: EditableBracketGame | null; court2: EditableBracketGame | null }>();
+  const courts = courtOptions(games);
+  const rows = new Map<string, { startsAt: string; gamesByCourt: Map<number, EditableBracketGame> }>();
   for (const game of [...games].sort((left, right) => (left.starts_at || "").localeCompare(right.starts_at || "") || (left.court || 0) - (right.court || 0))) {
-    if (!game.starts_at) continue;
-    const row = rows.get(game.starts_at) || { startsAt: game.starts_at, court1: null, court2: null };
-    if (game.court === 1) row.court1 = game;
-    if (game.court === 2) row.court2 = game;
+    if (!game.starts_at || !game.court) continue;
+    const row = rows.get(game.starts_at) || { startsAt: game.starts_at, gamesByCourt: new Map<number, EditableBracketGame>() };
+    row.gamesByCourt.set(game.court, game);
     rows.set(game.starts_at, row);
   }
-  return [...rows.values()].sort((left, right) => left.startsAt.localeCompare(right.startsAt));
+  return { courts, rows: [...rows.values()].sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
 }
 
 function BracketScoreCard({ game }: { game: EditableBracketGame }) {
@@ -484,18 +546,22 @@ function ScheduleScoreGrid({ games, emptyText }: { games: ScoreGame[]; emptyText
   if (!games.length) return <p className="muted">{emptyText}</p>;
   const rows = buildScheduleScoreRows(games);
   return (
-    <div className="score-schedule-grid">
+    <div className="score-schedule-grid" style={scoreGridColumns(rows.courts.length)}>
       <div className="score-schedule-heading">Time</div>
-      <div className="score-schedule-heading">Court 1</div>
-      <div className="score-schedule-heading">Court 2</div>
-      {rows.map((row) => (
+      {rows.courts.map((court) => (
+        <div className="score-schedule-heading" key={`seeding-court-heading-${court}`}>Court {court}</div>
+      ))}
+      {rows.rows.map((row) => (
         <div className="score-schedule-row" key={row.startsAt}>
           <div className="score-schedule-time">
             <strong>{timeLabel(row.startsAt)}</strong>
             <span>{dayLabel(row.startsAt)}</span>
           </div>
-          <div className="score-schedule-cell">{row.court1 ? <ScoreGameCard game={row.court1} /> : <span className="muted">No game</span>}</div>
-          <div className="score-schedule-cell">{row.court2 ? <ScoreGameCard game={row.court2} /> : <span className="muted">No game</span>}</div>
+          {rows.courts.map((court) => (
+            <div className="score-schedule-cell" data-court-label={`Court ${court}`} key={`seeding-${row.startsAt}-${court}`}>
+              {row.gamesByCourt.get(court) ? <ScoreGameCard game={row.gamesByCourt.get(court)!} /> : <span className="muted">No game</span>}
+            </div>
+          ))}
         </div>
       ))}
     </div>
@@ -551,14 +617,18 @@ function ScoreGameCard({ game }: { game: ScoreGame }) {
 }
 
 function buildScheduleScoreRows(games: ScoreGame[]) {
-  const rows = new Map<string, { startsAt: string; court1: ScoreGame | null; court2: ScoreGame | null }>();
+  const courts = courtOptions(games);
+  const rows = new Map<string, { startsAt: string; gamesByCourt: Map<number, ScoreGame> }>();
   for (const game of [...games].sort((left, right) => left.starts_at.localeCompare(right.starts_at) || left.court - right.court)) {
-    const row = rows.get(game.starts_at) || { startsAt: game.starts_at, court1: null, court2: null };
-    if (game.court === 1) row.court1 = game;
-    if (game.court === 2) row.court2 = game;
+    const row = rows.get(game.starts_at) || { startsAt: game.starts_at, gamesByCourt: new Map<number, ScoreGame>() };
+    row.gamesByCourt.set(game.court, game);
     rows.set(game.starts_at, row);
   }
-  return [...rows.values()].sort((left, right) => left.startsAt.localeCompare(right.startsAt));
+  return { courts, rows: [...rows.values()].sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
+}
+
+function scoreGridColumns(courtCount: number) {
+  return { gridTemplateColumns: `120px repeat(${Math.max(courtCount, 1)}, minmax(0, 1fr))` };
 }
 
 function ScheduleForfeitButton({ game, teamId, teamName }: { game: ScoreGame; teamId: number | null; teamName: string }) {
