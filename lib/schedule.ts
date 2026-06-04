@@ -62,6 +62,10 @@ type SeedingSlot = {
 type TournamentEntry = {
   division: string;
   label: string;
+  side: "winners" | "losers" | "finals";
+  round: number;
+  position: number;
+  order: number;
 };
 
 type TournamentSlot = {
@@ -203,10 +207,7 @@ function tournamentDivisionsForDay(dayIndex: number) {
 function buildTournamentEntriesByDivision(divisions: string[], byDivision: Map<string, TeamRow[]>) {
   const entriesByDivision = new Map<string, TournamentEntry[]>();
   for (const division of divisions) {
-    entriesByDivision.set(
-      division,
-      bracketLabels((byDivision.get(division) || []).length).map((label) => ({ division, label }))
-    );
+    entriesByDivision.set(division, bracketEntries(division, (byDivision.get(division) || []).length));
   }
   return entriesByDivision;
 }
@@ -2029,20 +2030,59 @@ function nextDivisionWithGames(blockOrder: string[], queues: Map<string, Matchup
   return fallback ? { division: fallback[0], cursor } : null;
 }
 
-function bracketLabels(count: number) {
+function bracketSizeForTeamCount(count: number) {
+  let size = 1;
+  while (size < count) size *= 2;
+  return size;
+}
+
+function bracketEntries(division: string, count: number): TournamentEntry[] {
   if (count <= 1) return [];
-  const labels: string[] = [];
-  const firstRound = Math.ceil(count / 2);
-  for (let i = 1; i <= firstRound; i++) labels.push(`Winners R1 Game ${i}`);
-  const winnersAfterFirstRound = Array.from({ length: Math.max(0, count - 1 - firstRound) }, (_, index) => `Winners bracket Game ${firstRound + index + 1}`);
-  const losers = Array.from({ length: Math.max(0, count - 2) }, (_, index) => `Losers bracket Game ${index + 1}`);
-  for (let index = 0; index < Math.max(winnersAfterFirstRound.length, losers.length); index++) {
-    if (index < losers.length) labels.push(losers[index]);
-    if (index < winnersAfterFirstRound.length) labels.push(winnersAfterFirstRound[index]);
+  const size = bracketSizeForTeamCount(count);
+  const entries: TournamentEntry[] = [];
+  let order = 0;
+  let winnerIndex = 0;
+  let loserIndex = 0;
+  const firstRoundGames = count === size ? size / 2 : count - size / 2;
+  const winnerGameTotal = count - 1;
+  const loserGameTotal = Math.max(0, count - 2);
+
+  const addWinner = (round: number, position: number) => {
+    winnerIndex++;
+    entries.push({
+      division,
+      label: round === 1 ? `Winners R1 Game ${winnerIndex}` : `Winners bracket Game ${winnerIndex}`,
+      side: "winners",
+      round,
+      position,
+      order: order++
+    });
+  };
+  const addLoser = (position: number) => {
+    loserIndex++;
+    entries.push({
+      division,
+      label: `Losers bracket Game ${loserIndex}`,
+      side: "losers",
+      round: Math.ceil(position / Math.max(1, firstRoundGames)),
+      position,
+      order: order++
+    });
+  };
+
+  for (let position = 1; position <= firstRoundGames; position++) addWinner(1, position);
+  let winnerPosition = 1;
+  while (loserIndex < loserGameTotal || winnerIndex < winnerGameTotal) {
+    if (loserIndex < loserGameTotal) addLoser(loserIndex + 1);
+    if (winnerIndex < winnerGameTotal) addWinner(2 + Math.floor((winnerPosition - 1) / Math.max(1, firstRoundGames)), winnerPosition++);
   }
-  labels.push("Championship");
-  labels.push("If-needed Championship");
-  return labels;
+  entries.push({ division, label: "Championship", side: "finals", round: 99, position: 1, order: order++ });
+  entries.push({ division, label: "If-needed Championship", side: "finals", round: 100, position: 1, order: order++ });
+  return entries;
+}
+
+function bracketLabels(count: number) {
+  return bracketEntries("", count).map((entry) => entry.label);
 }
 
 export async function generateSchedule(input: ScheduleInput): Promise<{

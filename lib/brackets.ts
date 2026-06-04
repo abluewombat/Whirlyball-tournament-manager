@@ -304,19 +304,41 @@ async function syncBracketToSchedule(bracketId: number) {
 
 function bracketScheduleLabels(games: BracketGameRow[]) {
   const labels = new Map<number, string>();
-  let winnerIndex = 0;
-  for (const game of games
-    .filter((candidate) => candidate.bracket_side === "winners" && candidate.game_key !== "F1" && candidate.game_key !== "F2")
-    .sort((left, right) => left.round - right.round || left.position - right.position)) {
-    winnerIndex++;
-    labels.set(game.id, game.round === 1 ? `Winners R1 Game ${game.position}` : `Winners bracket Game ${winnerIndex}`);
+  const teamIds = new Set<number>();
+  for (const game of games.filter((candidate) => candidate.bracket_side === "winners" && candidate.round === 1)) {
+    if (game.team_1_id !== null) teamIds.add(game.team_1_id);
+    if (game.team_2_id !== null) teamIds.add(game.team_2_id);
   }
-  let loserIndex = 0;
-  for (const game of games
+  const teamCount = teamIds.size;
+  const loserGameTotal = Math.max(0, teamCount - 2);
+  const firstRoundGames = games
+    .filter((candidate) => candidate.bracket_side === "winners" && candidate.round === 1 && !isFirstRoundBye(candidate))
+    .sort((left, right) => left.position - right.position);
+  const laterWinnerGames = games
+    .filter((candidate) => candidate.bracket_side === "winners" && candidate.round > 1 && candidate.game_key !== "F1" && candidate.game_key !== "F2")
+    .sort((left, right) => left.round - right.round || left.position - right.position);
+  const loserGames = games
     .filter((candidate) => candidate.bracket_side === "losers")
-    .sort((left, right) => left.round - right.round || left.position - right.position)) {
-    loserIndex++;
-    labels.set(game.id, `Losers bracket Game ${loserIndex}`);
+    .sort((left, right) => left.round - right.round || left.position - right.position)
+    .slice(0, loserGameTotal);
+  let winnerIndex = 0;
+  let loserIndex = 0;
+
+  for (const game of firstRoundGames) {
+    winnerIndex++;
+    labels.set(game.id, `Winners R1 Game ${winnerIndex}`);
+  }
+  for (let index = 0; index < Math.max(loserGames.length, laterWinnerGames.length); index++) {
+    const loser = loserGames[index];
+    if (loser) {
+      loserIndex++;
+      labels.set(loser.id, `Losers bracket Game ${loserIndex}`);
+    }
+    const winner = laterWinnerGames[index];
+    if (winner) {
+      winnerIndex++;
+      labels.set(winner.id, `Winners bracket Game ${winnerIndex}`);
+    }
   }
   for (const game of games) {
     if (game.game_key === "F1") labels.set(game.id, "Championship");
