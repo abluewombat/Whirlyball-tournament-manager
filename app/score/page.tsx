@@ -155,38 +155,42 @@ export default async function ScorePage({
         </div>
       </section>
 
-      <div className="actions">
-        <span className="pill">{showScoredSeeding ? "Seeding scored games shown" : "Seeding scored games hidden"}</span>
-        <a className="button secondary" href={scoreFilterHref({ showScoredSeeding: !showScoredSeeding, showScoredBracket })}>
-          {showScoredSeeding ? "Hide Scored Seeding Games" : "Show Scored Seeding Games"}
-        </a>
-      </div>
-      <details className="section card score-collapse" open={!bracketsReady || showScoredSeeding}>
+      <details className="section card score-collapse" open={!bracketsReady || showScoredSeeding || allSeedingScored}>
         <summary>
           <span>Seeding Score Entry</span>
           <span className={allSeedingScored ? "pill ok" : "pill warn"}>
             {allSeedingScored ? "Complete" : `${unscoredSeedingCount} left`}
           </span>
         </summary>
+        <ScoreFilterControl
+          isShowingAll={showScoredSeeding}
+          hiddenLabel="Showing only unscored seeding games"
+          shownLabel="Showing all seeding games"
+          showHref={scoreFilterHref({ showScoredSeeding: true, showScoredBracket })}
+          hideHref={scoreFilterHref({ showScoredSeeding: false, showScoredBracket })}
+          showText="Show All Seeding Games"
+          hideText="Hide Scored Seeding Games"
+        />
         <ScoreTable games={visibleSeedingGames} emptyText={showScoredSeeding ? "No seeding games available." : "No unscored seeding games."} />
       </details>
 
       {editableBracketGames.length ? (
-        <>
-          <div className="actions">
-            <span className="pill">{showScoredBracket ? "Tournament scored games shown" : "Tournament scored games hidden"}</span>
-            <a className="button secondary" href={scoreFilterHref({ showScoredSeeding, showScoredBracket: !showScoredBracket })}>
-              {showScoredBracket ? "Hide Scored Tournament Games" : "Show Scored Tournament Games"}
-            </a>
-          </div>
-          <details className="section card score-collapse" open={bracketsReady || showScoredBracket}>
-            <summary>
-              <span>Tournament Score Entry</span>
-              <span className={unscoredBracketCount ? "pill warn" : "pill ok"}>{unscoredBracketCount ? `${unscoredBracketCount} left` : "Complete"}</span>
-            </summary>
-            <BracketScoreTable games={visibleBracketGames} emptyText={showScoredBracket ? "No bracket games available." : "No unscored bracket games."} />
-          </details>
-        </>
+        <details className="section card score-collapse" open={bracketsReady || showScoredBracket || unscoredBracketCount === 0}>
+          <summary>
+            <span>Tournament Score Entry</span>
+            <span className={unscoredBracketCount ? "pill warn" : "pill ok"}>{unscoredBracketCount ? `${unscoredBracketCount} left` : "Complete"}</span>
+          </summary>
+          <ScoreFilterControl
+            isShowingAll={showScoredBracket}
+            hiddenLabel="Showing only unscored tournament games"
+            shownLabel="Showing all tournament games"
+            showHref={scoreFilterHref({ showScoredSeeding, showScoredBracket: true })}
+            hideHref={scoreFilterHref({ showScoredSeeding, showScoredBracket: false })}
+            showText="Show All Tournament Games"
+            hideText="Hide Scored Tournament Games"
+          />
+          <BracketScoreTable games={visibleBracketGames} emptyText={showScoredBracket ? "No bracket games available." : "No unscored bracket games."} />
+        </details>
       ) : null}
 
       {bracketGames.length ? (
@@ -223,6 +227,33 @@ function scoreFilterHref({
   if (showScoredBracket) params.set("show_scored_bracket", "1");
   const queryString = params.toString();
   return queryString ? `/score?${queryString}` : "/score";
+}
+
+function ScoreFilterControl({
+  isShowingAll,
+  hiddenLabel,
+  shownLabel,
+  showHref,
+  hideHref,
+  showText,
+  hideText
+}: {
+  isShowingAll: boolean;
+  hiddenLabel: string;
+  shownLabel: string;
+  showHref: string;
+  hideHref: string;
+  showText: string;
+  hideText: string;
+}) {
+  return (
+    <div className="actions">
+      <span className="pill">{isShowingAll ? shownLabel : hiddenLabel}</span>
+      <a className="button secondary" href={isShowingAll ? hideHref : showHref}>
+        {isShowingAll ? hideText : showText}
+      </a>
+    </div>
+  );
 }
 
 function isUnscoredScheduleGame(game: ScoreGame) {
