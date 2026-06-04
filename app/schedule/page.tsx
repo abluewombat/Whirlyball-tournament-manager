@@ -1,5 +1,6 @@
 import { query } from "@/lib/db";
 import { LiveRefresh } from "@/app/live-refresh";
+import { syncActiveBracketsToSchedule } from "@/lib/brackets";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +42,7 @@ const divisionClassNames: Record<string, string> = {
 };
 
 export default async function PublicSchedulePage() {
+  await syncActiveBracketsToSchedule();
   const games = await query<PublicScheduleGame>(
     `SELECT games.phase, games.division, games.court, games.starts_at,
             games.team_1_score, games.team_2_score,

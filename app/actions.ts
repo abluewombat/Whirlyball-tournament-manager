@@ -17,7 +17,7 @@ import {
 import { hashSecret } from "@/lib/security";
 import { generateSchedule } from "@/lib/schedule";
 import { scheduleDefaults } from "@/lib/schedule-defaults";
-import { rebuildBracketForDivision, resetBracketGameScore, scoreBracketGame } from "@/lib/brackets";
+import { rebuildBracketForDivision, resetBracketGameScore, scoreBracketGame, syncActiveBracketsToSchedule } from "@/lib/brackets";
 
 function text(formData: FormData, key: string) {
   return String(formData.get(key) || "").trim();
@@ -404,7 +404,9 @@ export async function generateScheduleAction(formData: FormData) {
       );
     }
   });
+  await syncActiveBracketsToSchedule();
   revalidatePath("/admin/schedule");
+  revalidatePath("/schedule");
   redirect(
     `/admin/schedule?generated=${result.games.length}&seeding_scheduled=${result.scheduledSeedingGames}&seeding_target=${result.targetSeedingGames}&unscheduled=${result.unscheduledSeedingGames}&unscheduled_tournament=${result.unscheduledTournamentGames}&target_games=${targetGamesPerTeam}`
   );
@@ -503,6 +505,7 @@ export async function generateBracketAction() {
      ORDER BY division`
   );
   for (const { division } of divisions) await rebuildBracketForDivision(division);
+  await syncActiveBracketsToSchedule();
   revalidatePath("/score");
   revalidatePath("/brackets");
   revalidatePath("/schedule");
@@ -529,6 +532,7 @@ export async function rebuildBracketAction(formData: FormData) {
   const division = safeDivision(text(formData, "division"));
   if (division === "Unlimited") return;
   await rebuildBracketForDivision(division);
+  await syncActiveBracketsToSchedule();
   revalidatePath("/brackets");
   revalidatePath("/score");
   revalidatePath("/schedule");

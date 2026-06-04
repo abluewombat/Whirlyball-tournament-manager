@@ -284,7 +284,12 @@ async function fillSlot(bracketId: number, gameKey: string, slot: number, teamId
   return true;
 }
 
-async function syncBracketToSchedule(bracketId: number) {
+export async function syncActiveBracketsToSchedule() {
+  const brackets = await query<{ id: number }>("SELECT id FROM brackets WHERE status = 'active' ORDER BY division, id");
+  for (const bracket of brackets) await syncBracketToSchedule(bracket.id);
+}
+
+export async function syncBracketToSchedule(bracketId: number) {
   const [bracket] = await query<{ id: number; division: string }>("SELECT id, division FROM brackets WHERE id = $1", [bracketId]);
   if (!bracket) return;
   const games = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE bracket_id = $1", [bracketId]);
