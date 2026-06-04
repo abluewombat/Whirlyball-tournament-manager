@@ -377,24 +377,28 @@ function tournamentDivisionOrder(entries: TournamentEntry[], preferredOrder?: st
 
 function placeTournamentEntriesInSlots(entries: TournamentEntry[], slots: TournamentSlot[], preferredOrder?: string[]) {
   const finalLabels = new Set(["Championship", "If-needed Championship"]);
+  const entryCountsByDivision = countTournamentEntriesByDivision(entries);
   const finalDivisions = tournamentDivisionOrder(
     entries.filter((entry) => finalLabels.has(entry.label)),
     preferredOrder
-  );
+  ).sort((left, right) => {
+    const countDiff = (entryCountsByDivision.get(left) || 0) - (entryCountsByDivision.get(right) || 0);
+    return countDiff || (preferredOrder || []).indexOf(left) - (preferredOrder || []).indexOf(right);
+  });
   const rows = groupTournamentSlotsByStart(slots);
 
-  if (finalDivisions.length > 1 && rows.length >= 2) {
-    const finalRows = rows.slice(-2);
-    const regularSlots = rows.slice(0, -2).flat();
+  if (finalDivisions.length > 1 && rows.length >= finalDivisions.length * 2) {
+    const finalRows = rows.slice(-(finalDivisions.length * 2));
+    const regularSlots = rows.slice(0, -(finalDivisions.length * 2)).flat();
     const regularEntries = entries.filter((entry) => !finalLabels.has(entry.label));
     const finalEntries = entries.filter((entry) => finalLabels.has(entry.label));
     const regularPlan = placeTournamentEntriesGreedily(regularEntries, regularSlots, preferredOrder);
     const placements = [...regularPlan.placements];
     const placedFinals = new Set<TournamentEntry>();
 
-    for (const [rowIndex, label] of ["Championship", "If-needed Championship"].entries()) {
-      const row = [...finalRows[rowIndex]];
-      for (const division of finalDivisions) {
+    for (const [divisionIndex, division] of finalDivisions.entries()) {
+      for (const [labelIndex, label] of ["Championship", "If-needed Championship"].entries()) {
+        const row = [...finalRows[divisionIndex * 2 + labelIndex]];
         const entry = finalEntries.find((candidate) => candidate.division === division && candidate.label === label);
         const slot = row.shift();
         if (!entry || !slot) continue;
@@ -554,27 +558,27 @@ function equalizeSeedingGameCounts(games: GeneratedGame[], byDivision: Map<strin
     counts.set(game.team2Id, (counts.get(game.team2Id) || 0) + 1);
   }
 
-  for (const [division, teams] of byDivision.entries()) {
-    if (!teams.length) continue;
-    while (true) {
-      const values = teams.map((team) => counts.get(team.id) || 0);
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-      if (max - min <= 1) break;
+  const teamIds = [...counts.keys()];
+  while (teamIds.length) {
+    const values = teamIds.map((teamId) => counts.get(teamId) || 0);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    if (max - min <= 1) break;
 
-      let removed = false;
-      for (let index = games.length - 1; index >= 0; index--) {
-        const game = games[index];
-        if (game.phase !== "seeding" || game.division !== division || game.team1Id === null || game.team2Id === null) continue;
-        if ((counts.get(game.team1Id) || 0) <= min + 1 || (counts.get(game.team2Id) || 0) <= min + 1) continue;
-        games.splice(index, 1);
-        counts.set(game.team1Id, (counts.get(game.team1Id) || 0) - 1);
-        counts.set(game.team2Id, (counts.get(game.team2Id) || 0) - 1);
-        removed = true;
-        break;
-      }
-      if (!removed) break;
+    let removed = false;
+    for (let index = games.length - 1; index >= 0; index--) {
+      const game = games[index];
+      if (game.phase !== "seeding" || game.team1Id === null || game.team2Id === null) continue;
+      const team1Count = counts.get(game.team1Id) || 0;
+      const team2Count = counts.get(game.team2Id) || 0;
+      if (Math.max(team1Count, team2Count) <= min + 1 || Math.min(team1Count, team2Count) <= min) continue;
+      games.splice(index, 1);
+      counts.set(game.team1Id, team1Count - 1);
+      counts.set(game.team2Id, team2Count - 1);
+      removed = true;
+      break;
     }
+    if (!removed) break;
   }
 
   return counts;
@@ -1001,6 +1005,7 @@ function incrementNested<K>(map: Map<K, Map<number, number>>, key: K, nestedKey:
 }
 
 function refEligible(gameDivision: string, team: TeamRow) {
+  if (team.division === unlimitedDivision) return false;
   const gameRank = rank[gameDivision] || 2;
   if (gameDivision === "D") return team.division === "C" || team.division === "D";
   return Math.abs((rank[team.division] || 2) - gameRank) <= 1;
@@ -1937,8 +1942,12 @@ function bracketLabels(count: number) {
   const labels: string[] = [];
   const firstRound = Math.ceil(count / 2);
   for (let i = 1; i <= firstRound; i++) labels.push(`Winners R1 Game ${i}`);
-  for (let i = firstRound + 1; i <= count - 1; i++) labels.push(`Winners bracket Game ${i}`);
-  for (let i = 1; i <= Math.max(0, count - 2); i++) labels.push(`Losers bracket Game ${i}`);
+  const winnersAfterFirstRound = Array.from({ length: Math.max(0, count - 1 - firstRound) }, (_, index) => `Winners bracket Game ${firstRound + index + 1}`);
+  const losers = Array.from({ length: Math.max(0, count - 2) }, (_, index) => `Losers bracket Game ${index + 1}`);
+  for (let index = 0; index < Math.max(winnersAfterFirstRound.length, losers.length); index++) {
+    if (index < losers.length) labels.push(losers[index]);
+    if (index < winnersAfterFirstRound.length) labels.push(winnersAfterFirstRound[index]);
+  }
   labels.push("Championship");
   labels.push("If-needed Championship");
   return labels;
@@ -2255,6 +2264,8 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
       reservations: unlimitedReservations
     });
   }
+  equalizeSeedingGameCounts(games, seedingByDivision);
+  rebuildSeedingTracking(games, teamGameCounts, pairPlayCounts, courtCountsByTeam, matchupCourtCounts);
 
   const overflowTournamentPlan = placeTournamentEntriesInSlots(overflowTournamentEntries, overflowTournamentSlots, overflowTournamentDivisions);
   let unscheduledTournamentGames = overflowTournamentPlan.unscheduledEntries.length + tournamentPlans.reduce((sum, plan) => sum + plan.unscheduledEntries.length, 0);
