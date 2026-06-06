@@ -9,13 +9,9 @@ const centerFaqs = [
 ];
 
 const adminFaqs = [
-  ["When should I take a snapshot?", "Take one before a large roster change, schedule regeneration, draft lock, or other major operation. Restoring a snapshot replaces tournament state with that saved version."],
-  ["Can I regenerate the schedule?", "Yes, until recorded results make regeneration unsafe. Confirm teams, availability, courts, dates, and game lengths first."],
-  ["When should I generate brackets?", "After all applicable seeding games are final. Bracket generation locks those seeding results unless the bracket is rebuilt or voided."],
-  ["How do stream timestamps advance?", "Saving a stream URL currently starts the first unscored game on that court. Each game's first final score ends that game and starts the next ready game. Score corrections do not advance twice."],
-  ["Does the YouTube key need to own the channel?", "No. A generic server-side YouTube Data API key can read public stream timing. Keep it in Vercel as YOUTUBE_API_KEY and never expose it as a NEXT_PUBLIC variable."],
-  ["What should the streamer enable?", "Schedule each court/day broadcast in advance, enable DVR and recording, use Public or Unlisted visibility, and keep each stream under 12 hours when possible."],
-  ["What happens to completed tournaments?", "They remain publicly viewable. Only one tournament is active at a time, and the admin chooses each tournament's URL slug."]
+  ["How do I find a game?", "Use the day, division, team, or court filters. By default, completed games are hidden so the remaining games are easy to find."],
+  ["What if I enter the wrong score?", "Choose Show All Seeding Games or Show All Tournament Games, find the completed game, and update or reset its score. Ask the tournament director before changing a bracket result that has already advanced another team."],
+  ["What if a team forfeits?", "Use the Forfeit button for the team that forfeited. Do not enter a made-up score."]
 ];
 
 function FaqSection({ items }: { items: string[][] }) {
@@ -91,70 +87,41 @@ export default async function HelpPage() {
   return (
     <main className="content help-page">
       <section className="card">
-        <p className="eyebrow">Tournament Administrator Manual</p>
-        <h1>Operations Guide</h1>
-        <p className="muted">A practical sequence from tournament setup through archived results.</p>
+        <p className="eyebrow">Scorekeeper Guide</p>
+        <h1>How to Enter Scores</h1>
+        <p className="muted">The schedule is ready. Your only job is to enter each completed game's result.</p>
       </section>
 
       <section className="section help-grid">
         <article className="card">
-          <h2>1. Create the tournament</h2>
+          <h2>1. Open Score Entry</h2>
           <ol>
-            <li>Create the event under Tournaments with its name, slug, type, dates, location, and registration deadline.</li>
-            <li>Configure divisions. Nationals normally use A, B, C, D, and Unlimited; draft events can use optional level names.</li>
-            <li>Set center passcodes and the scorekeeper passcode.</li>
-            <li>Mark the correct event active when it should appear at the main site URL.</li>
+            <li>Open Operations, then Score Entry.</li>
+            <li>Enter the shared scorekeeper passcode if prompted.</li>
+            <li>Use the court, team, or division filters to find the game.</li>
           </ol>
         </article>
         <article className="card">
-          <h2>2. Complete registration</h2>
+          <h2>2. Save the Final Score</h2>
           <ol>
-            <li>Monitor center teams, players, public requests, shirts, payments, and availability.</li>
-            <li>Override center data only when a correction is needed.</li>
-            <li>For draft events, assign player levels, create teams, fill five-player rosters, and lock the draft.</li>
-            <li>Take a snapshot before major changes.</li>
+            <li>Confirm both team names before entering anything.</li>
+            <li>Enter each team's final score.</li>
+            <li>Select Save Score once.</li>
+            <li>The completed game disappears from the default list.</li>
           </ol>
         </article>
         <article className="card">
-          <h2>3. Generate the schedule</h2>
+          <h2>3. Handle Exceptions</h2>
           <ol>
-            <li>Confirm teams, courts, game durations, dates, and availability first.</li>
-            <li>Generate round-robin seeding and review unscheduled games or conflicts.</li>
-            <li>Use the schedule editor for necessary court or time adjustments.</li>
-            <li>Publish operational announcements from the dashboard.</li>
-          </ol>
-        </article>
-        <article className="card">
-          <h2>4. Run scorekeeping</h2>
-          <ol>
-            <li>Give operators the shared scorekeeper passcode.</li>
-            <li>Add each court/day YouTube URL in Score Entry.</li>
-            <li>Enter each final score once. The standings and court timeline update automatically.</li>
-            <li>Use the forfeit controls when applicable and correct mistakes carefully.</li>
-          </ol>
-        </article>
-        <article className="card">
-          <h2>5. Run brackets</h2>
-          <ol>
-            <li>Finish all required seeding games before generating brackets.</li>
-            <li>Generate the double-elimination brackets and synchronize their schedule slots.</li>
-            <li>Score bracket games through Score Entry so winners advance correctly.</li>
-            <li>Unlimited is exhibition-only and does not use seeding.</li>
-          </ol>
-        </article>
-        <article className="card">
-          <h2>6. Close and archive</h2>
-          <ol>
-            <li>Verify final scores, standings, brackets, and video replay links.</li>
-            <li>Export tournament data and take a final labeled snapshot.</li>
-            <li>Mark the event past. Its public pages remain available through its slug.</li>
-            <li>Create the next tournament without deleting prior event data.</li>
+            <li>For a forfeit, select the button for the team that forfeited.</li>
+            <li>For a mistake, show completed games and correct or reset the result.</li>
+            <li>Do not change a locked result. Contact the tournament director.</li>
           </ol>
         </article>
       </section>
 
       <section className="section">
-        <h2>Tournament Admin FAQ</h2>
+        <h2>Score Entry FAQ</h2>
         <FaqSection items={adminFaqs} />
       </section>
     </main>
