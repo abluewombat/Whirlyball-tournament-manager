@@ -7,14 +7,19 @@ type PublicTeamsListProps = {
   divisions: readonly string[];
   players: PlayerRow[];
   teams: TeamRow[];
+  basePath?: string;
+  hideDivisionLabels?: boolean;
 };
 
-export function PublicTeamsList({ divisions, players, teams }: PublicTeamsListProps) {
+export function PublicTeamsList({ divisions, players, teams, basePath = "", hideDivisionLabels = false }: PublicTeamsListProps) {
   const [divisionFilter, setDivisionFilter] = useState("all");
   const [divisionSort, setDivisionSort] = useState<"ascending" | "descending">("ascending");
   const playersByTeam = useMemo(() => {
     const map = new Map<number, PlayerRow[]>();
-    for (const player of players) map.set(player.team_id, [...(map.get(player.team_id) || []), player]);
+    for (const player of players) {
+      if (player.team_id === null) continue;
+      map.set(player.team_id, [...(map.get(player.team_id) || []), player]);
+    }
     return map;
   }, [players]);
   const visibleDivisions = useMemo(() => {
@@ -24,7 +29,7 @@ export function PublicTeamsList({ divisions, players, teams }: PublicTeamsListPr
 
   return (
     <>
-      <div className="score-filter-grid public-team-controls" aria-label="Team list sorting">
+      {!hideDivisionLabels ? <div className="score-filter-grid public-team-controls" aria-label="Team list sorting">
         <label>
           Division
           <select value={divisionFilter} onChange={(event) => setDivisionFilter(event.currentTarget.value)}>
@@ -39,17 +44,17 @@ export function PublicTeamsList({ divisions, players, teams }: PublicTeamsListPr
         <label>
           Division order
           <select value={divisionSort} onChange={(event) => setDivisionSort(event.currentTarget.value as "ascending" | "descending")}>
-            <option value="ascending">A to Unlimited</option>
-            <option value="descending">Unlimited to A</option>
+            <option value="ascending">Configured order</option>
+            <option value="descending">Reverse order</option>
           </select>
         </label>
-      </div>
+      </div> : null}
 
       {visibleDivisions.map((division) => {
         const divisionTeams = teams.filter((team) => team.division === division);
         return (
           <section className="section" key={division}>
-            <h2>{division} Division</h2>
+            {!hideDivisionLabels ? <h2>{division} Division</h2> : null}
             {divisionTeams.length === 0 ? (
               <p className="muted">No teams yet.</p>
             ) : (
@@ -57,7 +62,7 @@ export function PublicTeamsList({ divisions, players, teams }: PublicTeamsListPr
                 {divisionTeams.map((team) => (
                   <article className="card" key={team.id}>
                     <h3>
-                      <a href={`/teams/${team.id}`}>{team.name}</a>
+                      <a href={`${basePath === "/" ? "" : basePath}/teams/${team.id}`}>{team.name}</a>
                     </h3>
                     <p className="muted">{team.center_name}</p>
                     <p>{team.early_available ? <span className="pill ok">Tuesday opt-in</span> : null}</p>

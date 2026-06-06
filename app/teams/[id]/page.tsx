@@ -1,8 +1,9 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
-import { query } from "@/lib/db";
+import { listTournamentDivisions, query } from "@/lib/db";
 import { getStandings } from "@/lib/standings";
 import { LiveRefresh } from "@/app/live-refresh";
+import { currentTournament, tournamentPath } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,7 @@ type Team = {
   name: string;
   division: string;
   center: string;
+  tournament_id: number;
 };
 
 type TeamGame = {
@@ -83,13 +85,16 @@ const divisionClassNames: Record<string, string> = {
 export default async function TeamPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const teamId = Number(id);
+  const tournament = await currentTournament();
+  const divisionRows = await listTournamentDivisions(tournament.id);
   const [team] = await query<Team>(
-    `SELECT teams.id, teams.name, teams.division, centers.name as center
-     FROM teams JOIN centers ON centers.id = teams.center_id
-     WHERE teams.id = $1 AND teams.deleted_at IS NULL`,
-    [teamId]
+    `SELECT teams.id, teams.tournament_id, teams.name, teams.division, COALESCE(centers.name, 'Draft') as center
+     FROM teams LEFT JOIN centers ON centers.id = teams.center_id
+     WHERE teams.id = $1 AND teams.tournament_id = $2 AND teams.deleted_at IS NULL`,
+    [teamId, tournament.id]
   );
   if (!team) notFound();
+  const hideDivisionLabel = divisionRows.length === 1 && divisionRows[0].public_label_hidden;
 
   const games = await query<TeamGame>(
     `SELECT games.id, games.phase, games.division, games.starts_at, games.court,
@@ -101,29 +106,30 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
      LEFT JOIN teams t2 ON t2.id = games.team_2_id
      LEFT JOIN teams tr ON tr.id = games.ref_team_id
-     WHERE games.team_1_id = $1 OR games.team_2_id = $1 OR games.ref_team_id = $1
+     WHERE games.tournament_id = $2 AND (games.team_1_id = $1 OR games.team_2_id = $1 OR games.ref_team_id = $1)
      ORDER BY games.starts_at, games.court`,
-    [teamId]
+    [teamId, tournament.id]
   );
   const [divisionTeams, divisionGames, standings] = await Promise.all([
     query<DivisionTeam>(
-      `SELECT teams.id, teams.name, centers.name as center
-       FROM teams JOIN centers ON centers.id = teams.center_id
-       WHERE teams.division = $1 AND teams.deleted_at IS NULL
+      `SELECT teams.id, teams.name, COALESCE(centers.name, 'Draft') as center
+       FROM teams LEFT JOIN centers ON centers.id = teams.center_id
+       WHERE teams.tournament_id = $1 AND teams.division = $2 AND teams.deleted_at IS NULL
        ORDER BY centers.name, teams.name`,
-      [team.division]
+      [tournament.id, team.division]
     ),
     query<DivisionGame>(
       `SELECT id, phase, starts_at, court, team_1_id, team_2_id, team_1_score, team_2_score,
               winner_team_id, loser_team_id, result_type, forfeit_team_id
        FROM games
-       WHERE division = $1
+       WHERE tournament_id = $1
+         AND division = $2
          AND team_1_id IS NOT NULL
          AND team_2_id IS NOT NULL
        ORDER BY starts_at, court`,
-      [team.division]
+      [tournament.id, team.division]
     ),
-    getStandings(team.division)
+    getStandings(tournament.id, team.division)
   ]);
   const teamStandings = standings.filter((row) => row.division === team.division);
   const teamStanding = teamStandings.find((row) => row.team_id === team.id);
@@ -134,7 +140,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
   const noMeetingOpponents = opponentReports.filter((row) => row.scheduledGames === 0).map((row) => row.team);
   const leader = teamStandings[0];
   const host = (await headers()).get("host") || "whirlyball-manager.vercel.app";
-  const url = `https://${host}/teams/${team.id}`;
+  const url = `https://${host}${tournamentPath(tournament) === "/" ? "" : tournamentPath(tournament)}/teams/${team.id}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(url)}`;
 
   return (
@@ -144,7 +150,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
         <div className="section-heading">
           <div>
             <h1>{team.name}</h1>
-            <p className="muted">{team.center} - {team.division} Division</p>
+            <p className="muted">{hideDivisionLabel ? team.center : `${team.center} - ${team.division} Division`}</p>
           </div>
           <img alt={`${team.name} QR code`} className="qr-code" src={qrUrl} />
         </div>
@@ -227,7 +233,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
       </section>
 
       <section className="section card">
-        <h2>{team.division} Division Differential</h2>
+        <h2>{hideDivisionLabel ? "Tournament Differential" : `${team.division} Division Differential`}</h2>
         <div className="table-wrap">
           <table className="team-analytics-table">
             <thead>

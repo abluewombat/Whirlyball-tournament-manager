@@ -6,12 +6,12 @@ import {
 } from "@/app/actions";
 import { scoreEntryAccess } from "@/lib/auth";
 import { getActiveBracketScheduleSlots, getActiveBracketScoreLocks } from "@/lib/brackets";
-import { DIVISIONS, query } from "@/lib/db";
+import { query } from "@/lib/db";
 import { ManagedBracketViewer, type ManagedBracketData } from "@/app/brackets/managed-bracket-viewer";
 import { ScoreEntryTables, type EditableBracketGame, type ScoreGame } from "@/app/score/score-entry-tables";
+import { currentTournament, tournamentDivisionNames } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
-const bracketDivisions = DIVISIONS.filter((division) => division !== "Unlimited");
 
 type BracketScoreGame = {
   bracket_id: number;
@@ -25,7 +25,9 @@ export default async function ScorePage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const params = await searchParams;
-  const access = await scoreEntryAccess();
+  const tournament = await currentTournament();
+  const bracketDivisions = await tournamentDivisionNames(tournament.id, false);
+  const access = await scoreEntryAccess(tournament.id);
   if (!access) {
     return (
       <main className="content">
@@ -34,6 +36,7 @@ export default async function ScorePage({
           <p className="muted">Enter the event scorekeeper passcode.</p>
           {params.error ? <p className="pill warn">Wrong passcode.</p> : null}
           <form action={scorekeeperLoginAction} className="stack">
+            <input name="tournament_id" type="hidden" value={tournament.id} />
             <input name="passcode" type="password" required />
             <button className="button">Enter Scorekeeper Mode</button>
           </form>
@@ -50,14 +53,16 @@ export default async function ScorePage({
      FROM games
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
      LEFT JOIN teams t2 ON t2.id = games.team_2_id
-     WHERE games.team_1_id IS NOT NULL AND games.team_2_id IS NOT NULL
-     ORDER BY games.starts_at, games.court`
+     WHERE games.tournament_id = $1 AND games.team_1_id IS NOT NULL AND games.team_2_id IS NOT NULL
+     ORDER BY games.starts_at, games.court`,
+    [tournament.id]
   );
   const bracketGames = await query<BracketScoreGame>(
     `SELECT brackets.id as bracket_id, brackets.division, brackets.bracket_data_json
      FROM brackets
-     WHERE brackets.status = 'active'
-     ORDER BY brackets.division, brackets.id`
+     WHERE brackets.tournament_id = $1 AND brackets.status = 'active'
+     ORDER BY brackets.division, brackets.id`,
+    [tournament.id]
   );
   const editableBracketGames = await query<EditableBracketGame>(
     `SELECT bracket_games.id, brackets.division, bracket_games.game_key, bracket_games.bracket_side,
@@ -70,14 +75,15 @@ export default async function ScorePage({
      JOIN brackets ON brackets.id = bracket_games.bracket_id
      LEFT JOIN teams t1 ON t1.id = bracket_games.team_1_id
      LEFT JOIN teams t2 ON t2.id = bracket_games.team_2_id
-     WHERE brackets.status = 'active'
+     WHERE brackets.tournament_id = $1 AND brackets.status = 'active'
      ORDER BY brackets.division,
               CASE bracket_games.bracket_side WHEN 'winners' THEN 1 WHEN 'losers' THEN 2 ELSE 3 END,
-              bracket_games.round, bracket_games.position`
+              bracket_games.round, bracket_games.position`,
+    [tournament.id]
   );
   const activeBracketDivisions = new Set(bracketGames.map((game) => game.division));
-  const bracketScoreLocks = await getActiveBracketScoreLocks();
-  const bracketScheduleSlots = await getActiveBracketScheduleSlots();
+  const bracketScoreLocks = await getActiveBracketScoreLocks(tournament.id);
+  const bracketScheduleSlots = await getActiveBracketScheduleSlots(tournament.id);
   const seedingGames = games
     .filter((game) => game.phase === "seeding" && game.division !== "Unlimited")
     .map((game) => ({
@@ -132,16 +138,19 @@ export default async function ScorePage({
             <div className="actions">
               <span className="pill ok">Bracket generated</span>
               <form action={syncScheduleFromBracketsAction}>
+                <input name="tournament_id" type="hidden" value={tournament.id} />
                 <button className="button secondary">Sync Schedule</button>
               </form>
             </div>
           ) : (
             <div className="actions">
               <form action={generateBracketAction}>
+                <input name="tournament_id" type="hidden" value={tournament.id} />
                 <button className="button" disabled={!allSeedingScored}>Generate Bracket</button>
               </form>
               {bracketGames.length ? (
                 <form action={syncScheduleFromBracketsAction}>
+                  <input name="tournament_id" type="hidden" value={tournament.id} />
                   <button className="button secondary">Sync Schedule</button>
                 </form>
               ) : null}

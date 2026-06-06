@@ -1,11 +1,16 @@
-import { DIVISIONS } from "@/lib/db";
 import { getStandings } from "@/lib/standings";
 import { LiveRefresh } from "@/app/live-refresh";
+import { currentTournament, tournamentPath } from "@/lib/tournaments";
+import { listTournamentDivisions } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 export default async function StandingsPage() {
-  const standings = await getStandings();
+  const tournament = await currentTournament();
+  const divisionRows = (await listTournamentDivisions(tournament.id)).filter((division) => !division.is_exhibition);
+  const divisions = divisionRows.map((division) => division.name);
+  const hideDivisionLabels = divisionRows.length === 1 && divisionRows[0].public_label_hidden;
+  const standings = await getStandings(tournament.id);
   return (
     <main className="content">
       <LiveRefresh seconds={30} />
@@ -15,12 +20,12 @@ export default async function StandingsPage() {
           <p className="muted">Updated from scored seeding games.</p>
         </div>
       </div>
-      {DIVISIONS.map((division) => {
+      {divisions.map((division) => {
         const rows = standings.filter((row) => row.division === division);
         if (!rows.length) return null;
         return (
           <section className="section card" key={division}>
-            <h2>{division} Division</h2>
+            <h2>{hideDivisionLabels ? "Tournament Standings" : `${division} Division`}</h2>
             <div className="table-wrap">
               <table>
                 <thead>
@@ -42,7 +47,7 @@ export default async function StandingsPage() {
                     <tr key={row.team_id}>
                       <td>{index + 1}</td>
                       <td>
-                        <a href={`/teams/${row.team_id}`}>{row.center} - {row.team}</a>
+                        <a href={`${tournamentPath(tournament) === "/" ? "" : tournamentPath(tournament)}/teams/${row.team_id}`}>{row.center} - {row.team}</a>
                       </td>
                       <td>{row.standing_points}</td>
                       <td>{row.wins}</td>

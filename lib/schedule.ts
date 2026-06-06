@@ -3,6 +3,9 @@ import { TeamAvailabilityBlockRow, TeamRow } from "./queries";
 import { scheduleDefaults } from "./schedule-defaults";
 
 type ScheduleInput = {
+  tournamentId: number;
+  divisions: string[];
+  exhibitionDivision?: string | null;
   startDate: string;
   endDate: string;
   dayStart: string;
@@ -201,8 +204,11 @@ function parseBlockOrder(value: string | undefined) {
   return parsed.length ? parsed : defaultBlockOrder;
 }
 
-function tournamentDivisionsForDay(dayIndex: number) {
-  return dayIndex === 0 ? ["C", "B"] : ["A", "D"];
+function tournamentDivisionsForDay(dayIndex: number, divisions: string[] = ["A", "B", "C", "D"]) {
+  if (["A", "B", "C", "D"].every((division) => divisions.includes(division))) {
+    return dayIndex === 0 ? ["C", "B"] : ["A", "D"];
+  }
+  return divisions.filter((_, index) => index % 2 === dayIndex % 2);
 }
 
 function buildTournamentEntriesByDivision(divisions: string[], byDivision: Map<string, TeamRow[]>) {
@@ -1139,8 +1145,8 @@ function dailyExperiencePenalty(teamId: number, game: GeneratedGame, games: Gene
   return penalty;
 }
 
-function tournamentDivisionsByDate(tournamentDays: Date[]) {
-  return new Map(tournamentDays.map((day, dayIndex) => [isoDate(day), new Set(tournamentDivisionsForDay(dayIndex))]));
+function tournamentDivisionsByDate(tournamentDays: Date[], divisions: string[]) {
+  return new Map(tournamentDays.map((day, dayIndex) => [isoDate(day), new Set(tournamentDivisionsForDay(dayIndex, divisions))]));
 }
 
 function refScore({
@@ -1229,7 +1235,10 @@ function chooseRefTeamForSchedule({
 function assignRefsForSchedule(games: GeneratedGame[], teams: TeamRow[], availability: AvailabilityMap, input: ScheduleInput, tournamentDays: Date[]) {
   const teamById = new Map(teams.map((team) => [team.id, team]));
   const refCounts = new Map<number, number>();
-  const tournamentDateDivisions = tournamentDivisionsByDate(tournamentDays);
+  const tournamentDateDivisions = tournamentDivisionsByDate(
+    tournamentDays,
+    input.divisions.filter((division) => division !== input.exhibitionDivision)
+  );
   const sortedGames = [...games].sort((left, right) => left.startsAt.localeCompare(right.startsAt) || left.court - right.court);
 
   for (const game of sortedGames) game.refTeamId = null;
@@ -1689,7 +1698,11 @@ function spreadSeedingGamesAcrossDays({
     const nextDay = new Date(day);
     nextDay.setDate(nextDay.getDate() + 1);
     const nextTournamentDayIndex = tournamentDays.findIndex((tournamentDay) => isoDate(tournamentDay) === isoDate(nextDay));
-    const nextDayTournamentDivisions = new Set(nextTournamentDayIndex >= 0 ? tournamentDivisionsForDay(nextTournamentDayIndex) : []);
+    const nextDayTournamentDivisions = new Set(
+      nextTournamentDayIndex >= 0
+        ? tournamentDivisionsForDay(nextTournamentDayIndex, input.divisions.filter((division) => division !== input.exhibitionDivision))
+        : []
+    );
     const output: Array<{ startsAt: string; court: number; rowMinute: number }> = [];
     for (let row = 0; row < rowCapacity; row++) {
       const rowMinute = startsAtMinute + row * input.seedingMinutes;
@@ -1783,7 +1796,11 @@ function compactSeedingGamesIntoOpenSlots({
     const nextDay = new Date(day);
     nextDay.setDate(nextDay.getDate() + 1);
     const nextTournamentDayIndex = tournamentDays.findIndex((tournamentDay) => isoDate(tournamentDay) === isoDate(nextDay));
-    const nextDayTournamentDivisions = new Set(nextTournamentDayIndex >= 0 ? tournamentDivisionsForDay(nextTournamentDayIndex) : []);
+    const nextDayTournamentDivisions = new Set(
+      nextTournamentDayIndex >= 0
+        ? tournamentDivisionsForDay(nextTournamentDayIndex, input.divisions.filter((division) => division !== input.exhibitionDivision))
+        : []
+    );
     const lateCutoff = dayEndMinutes - Math.max(0, input.lateNightRows ?? scheduleDefaults.lateNightRows) * input.seedingMinutes;
     const currentDayLateTeamIds = new Set<number>();
 
@@ -2094,22 +2111,42 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
   unscheduledTournamentGames: number;
 }> {
   const teams = await query<TeamRow>(
-    `SELECT teams.*, centers.name as center_name
-     FROM teams JOIN centers ON centers.id = teams.center_id
-     WHERE teams.deleted_at IS NULL
-     ORDER BY teams.division, centers.name, teams.name`
+    `SELECT teams.*, COALESCE(centers.name, 'Draft') as center_name
+     FROM teams LEFT JOIN centers ON centers.id = teams.center_id
+     WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL
+     ORDER BY teams.division, COALESCE(centers.name, 'Draft'), teams.name`,
+    [input.tournamentId]
   );
   const availabilityBlocks = await query<TeamAvailabilityBlockRow>(
     `SELECT team_availability_blocks.*
      FROM team_availability_blocks
      JOIN teams ON teams.id = team_availability_blocks.team_id
-     WHERE teams.deleted_at IS NULL
-     ORDER BY team_availability_blocks.starts_at, team_availability_blocks.id`
+     WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL
+     ORDER BY team_availability_blocks.starts_at, team_availability_blocks.id`,
+    [input.tournamentId]
   );
+  const [sharedExhibitionPlayers] = input.exhibitionDivision
+    ? await query<{ count: string }>(
+        `SELECT COUNT(DISTINCT competitive.person_id) as count
+         FROM players competitive
+         JOIN teams competitive_team ON competitive_team.id = competitive.team_id
+         JOIN players exhibition ON exhibition.person_id = competitive.person_id
+         JOIN teams exhibition_team ON exhibition_team.id = exhibition.team_id
+         WHERE competitive.tournament_id = $1
+           AND competitive.person_id IS NOT NULL
+           AND competitive.deleted_at IS NULL
+           AND exhibition.deleted_at IS NULL
+           AND competitive_team.division <> $2
+           AND exhibition_team.division = $2`,
+        [input.tournamentId, input.exhibitionDivision]
+      )
+    : [{ count: "0" }];
   const availability = buildAvailabilityMap(availabilityBlocks);
   const byDivision = new Map<string, TeamRow[]>();
   for (const team of teams) byDivision.set(team.division, [...(byDivision.get(team.division) || []), team]);
-  const seedingByDivision = new Map([...byDivision.entries()].filter(([division]) => division !== unlimitedDivision));
+  const exhibitionDivision = input.exhibitionDivision || null;
+  const seedingByDivision = new Map([...byDivision.entries()].filter(([division]) => division !== exhibitionDivision));
+  const competitiveDivisions = input.divisions.filter((division) => division !== exhibitionDivision);
 
   const days = dateRange(input.startDate, input.endDate);
   const seedingDays = days.slice(0, Math.max(1, days.length - 2));
@@ -2125,17 +2162,23 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
   const lateNightRows = Math.max(0, input.lateNightRows ?? scheduleDefaults.lateNightRows);
   const blockRows = Math.max(1, input.blockRows || scheduleDefaults.blockRows);
   const blockOrder = parseBlockOrder(input.blockOrder).filter((division) => seedingByDivision.has(division));
-  const unlimitedTeamCount = (byDivision.get(unlimitedDivision) || []).length;
+  const unlimitedTeamCount = exhibitionDivision ? (byDivision.get(exhibitionDivision) || []).length : 0;
   const unlimitedReservations = buildUnlimitedReservations(input, bracketLabels(unlimitedTeamCount).length);
+  const scheduleReservations =
+    Number(sharedExhibitionPlayers?.count || 0) > 0
+      ? unlimitedReservations.flatMap((reservation) =>
+          Array.from({ length: input.courts }, (_, index) => ({ ...reservation, court: index + 1 }))
+        )
+      : unlimitedReservations;
   const games: GeneratedGame[] = [];
   const tournamentPlans = tournamentDays.map((day, dayIndex) => {
-    const divisions = tournamentDivisionsForDay(dayIndex).filter((division) => seedingByDivision.has(division));
+    const divisions = tournamentDivisionsForDay(dayIndex, competitiveDivisions).filter((division) => seedingByDivision.has(division));
     const entriesByDivision = buildTournamentEntriesByDivision(divisions, seedingByDivision);
     const dayEnd = dayIndex === tournamentDays.length - 1 ? finalDayEnd : tournamentEnd;
     const configuredRows = Math.max(0, Math.floor((dayEnd - tournamentStart) / input.tournamentMinutes));
     const requiredSlots = tournamentSlotsNeeded(flattenTournamentEntries(divisions, entriesByDivision), input.courts, divisions);
     const rowCapacity = Math.max(configuredRows, Math.ceil(requiredSlots / Math.max(1, input.courts)));
-    const slots = buildTournamentDaySlots(day, tournamentStart, rowCapacity, input.tournamentMinutes, input.courts, unlimitedReservations);
+    const slots = buildTournamentDaySlots(day, tournamentStart, rowCapacity, input.tournamentMinutes, input.courts, scheduleReservations);
     return planTournamentDay(day, divisions, entriesByDivision, slots, true);
   });
   const overflowTournamentEntries = tournamentPlans.flatMap((plan) => plan.overflowEntries);
@@ -2160,7 +2203,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
     end,
     input.seedingMinutes,
     input.includeTuesday,
-    unlimitedReservations
+    scheduleReservations
   );
   const seedingMode = input.seedingMode || scheduleDefaults.seedingMode;
   const maxPairRepeats = Math.max(1, input.roundsPerPair);
@@ -2198,7 +2241,9 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
     const nextDay = new Date(day);
     nextDay.setDate(nextDay.getDate() + 1);
     const nextTournamentDayIndex = tournamentDays.findIndex((tournamentDay) => isoDate(tournamentDay) === isoDate(nextDay));
-    const nextDayTournamentDivisions = new Set(nextTournamentDayIndex >= 0 ? tournamentDivisionsForDay(nextTournamentDayIndex) : []);
+    const nextDayTournamentDivisions = new Set(
+      nextTournamentDayIndex >= 0 ? tournamentDivisionsForDay(nextTournamentDayIndex, competitiveDivisions) : []
+    );
 
     for (let row = 0; row < rowCapacity && hasQueuedGames(queues); ) {
       const dayBlockOrder = orderSeedingDivisions({
@@ -2379,7 +2424,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
   for (const [dayIndex, day] of tournamentDays.entries()) {
     addTournamentMorningWarmups({
       day,
-      divisions: tournamentDivisionsForDay(dayIndex).filter((division) => seedingByDivision.has(division)),
+      divisions: tournamentDivisionsForDay(dayIndex, competitiveDivisions).filter((division) => seedingByDivision.has(division)),
       games,
       queues,
       teams,
@@ -2394,7 +2439,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
       refCounts,
       dayStart: start,
       tournamentStart,
-      reservations: unlimitedReservations
+      reservations: scheduleReservations
     });
   }
   equalizeSeedingGameCounts(games, seedingByDivision);
@@ -2444,7 +2489,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
     }
   }
 
-  games.push(...buildUnlimitedGames(byDivision, unlimitedReservations));
+  if (exhibitionDivision === unlimitedDivision) games.push(...buildUnlimitedGames(byDivision, unlimitedReservations));
   assignRefsForSchedule(games, teams, availability, input, tournamentDays);
   const scheduledSeedingGames = games.filter((game) => game.phase === "seeding" && game.team1Id !== null && game.team2Id !== null).length;
 

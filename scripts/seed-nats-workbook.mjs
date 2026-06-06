@@ -5,6 +5,7 @@ import pg from "pg";
 
 const workbookPath = "C:/Users/austm/Downloads/2026 Novi Nats Teams 2.xlsx";
 const databaseUrl = process.env.SEED_DATABASE_URL || process.env.DATABASE_URL;
+const tournamentSlug = process.env.SEED_TOURNAMENT_SLUG || "novi-2026";
 const previewOnly = process.argv.includes("--preview");
 
 const CENTER_MAP = new Map([
@@ -147,7 +148,7 @@ async function main() {
   const client = await pool.connect();
 
   const report = {
-    centers: new Set(parsed.teams.map((team) => team.center)).size,
+    centers: new Set(parsed.teams.flatMap((team) => [team.center, ...team.players.map((player) => player.center)])).size,
     teams: parsed.teams.length,
     players: parsed.teams.reduce((sum, team) => sum + team.players.length, 0),
     extrasFound: parsed.extras.length,
@@ -157,14 +158,21 @@ async function main() {
 
   try {
     await client.query("BEGIN");
-    await client.query("DELETE FROM games");
-    await client.query("DELETE FROM shirt_orders");
-    await client.query("DELETE FROM players");
-    await client.query("DELETE FROM team_availability_blocks");
-    await client.query("DELETE FROM teams");
+    const tournamentResult = await client.query("SELECT id FROM tournaments WHERE slug = $1", [tournamentSlug]);
+    const tournamentId = tournamentResult.rows[0]?.id;
+    if (!tournamentId) throw new Error(`Tournament not found: ${tournamentSlug}`);
+    await client.query("DELETE FROM bracket_games WHERE bracket_id IN (SELECT id FROM brackets WHERE tournament_id = $1)", [tournamentId]);
+    await client.query("DELETE FROM brackets WHERE tournament_id = $1", [tournamentId]);
+    await client.query("DELETE FROM games WHERE tournament_id = $1", [tournamentId]);
+    await client.query("DELETE FROM blocker_requests WHERE tournament_id = $1", [tournamentId]);
+    await client.query("DELETE FROM shirt_orders WHERE player_id IN (SELECT id FROM players WHERE tournament_id = $1)", [tournamentId]);
+    await client.query("DELETE FROM players WHERE tournament_id = $1", [tournamentId]);
+    await client.query("DELETE FROM team_availability_blocks WHERE team_id IN (SELECT id FROM teams WHERE tournament_id = $1)", [tournamentId]);
+    await client.query("DELETE FROM teams WHERE tournament_id = $1", [tournamentId]);
 
     const centerIds = new Map();
-    for (const center of [...new Set(parsed.teams.map((team) => team.center))]) {
+    const importedCenters = [...new Set(parsed.teams.flatMap((team) => [team.center, ...team.players.map((player) => player.center)]))];
+    for (const center of importedCenters) {
       const result = await client.query(
         `INSERT INTO centers (name, passcode_hash)
          VALUES ($1, $2)
@@ -179,21 +187,30 @@ async function main() {
     for (const team of parsed.teams) {
       const centerId = centerIds.get(team.center);
       const teamResult = await client.query(
-        `INSERT INTO teams (center_id, division, name, early_available, deleted_at)
-         VALUES ($1, $2, $3, FALSE, NULL)
-         ON CONFLICT (center_id, division, name)
+        `INSERT INTO teams (tournament_id, center_id, division, name, early_available, deleted_at)
+         VALUES ($1, $2, $3, $4, FALSE, NULL)
+         ON CONFLICT (tournament_id, center_id, division, name)
          DO UPDATE SET deleted_at = NULL, updated_at = NOW()
          RETURNING id`,
-        [centerId, team.division, team.name]
+        [tournamentId, centerId, team.division, team.name]
       );
       const teamId = teamResult.rows[0].id;
 
       for (const player of team.players) {
-        const playerResult = await client.query(
-          `INSERT INTO players (team_id, name, shirt_size, notes)
-           VALUES ($1, $2, $3, $4)
+        const playerCenterId = centerIds.get(player.center) || centerId;
+        const personResult = await client.query(
+          `INSERT INTO people (center_id, name, normalized_name)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (center_id, normalized_name)
+           DO UPDATE SET name = EXCLUDED.name, updated_at = NOW()
            RETURNING id`,
-          [teamId, player.name, player.shirtSize, player.center !== team.center ? `Player center: ${player.center}` : null]
+          [playerCenterId, player.name, clean(player.name).toLowerCase()]
+        );
+        const playerResult = await client.query(
+          `INSERT INTO players (tournament_id, person_id, team_id, name, shirt_size, notes)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id`,
+          [tournamentId, personResult.rows[0].id, teamId, player.name, player.shirtSize, player.center !== team.center ? `Player center: ${player.center}` : null]
         );
         const key = basePlayerName(player.name).toLowerCase();
         if (!playersByBaseName.has(key)) playersByBaseName.set(key, []);

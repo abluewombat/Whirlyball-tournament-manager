@@ -1,12 +1,12 @@
 import { cookies } from "next/headers";
 import { rebuildBracketAction } from "@/app/actions";
-import { DIVISIONS, query } from "@/lib/db";
+import { listTournamentDivisions, query } from "@/lib/db";
 import { LiveRefresh } from "@/app/live-refresh";
 import { unsign } from "@/lib/security";
 import { ManagedBracketViewer, type ManagedBracketData } from "./managed-bracket-viewer";
+import { currentTournament } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
-const bracketDivisions = DIVISIONS.filter((division) => division !== "Unlimited");
 
 type BracketGame = {
   bracket_id: number;
@@ -16,6 +16,10 @@ type BracketGame = {
 };
 
 export default async function BracketsPage() {
+  const tournament = await currentTournament();
+  const divisionRows = (await listTournamentDivisions(tournament.id)).filter((division) => !division.is_exhibition);
+  const bracketDivisions = divisionRows.map((division) => division.name);
+  const hideDivisionLabels = divisionRows.length === 1 && divisionRows[0].public_label_hidden;
   const isAdmin = unsign((await cookies()).get("admin_session")?.value) === "admin";
   const games = await query<BracketGame>(
     `SELECT brackets.id as bracket_id, brackets.division, brackets.bracket_data_json,
@@ -29,8 +33,9 @@ export default async function BracketsPage() {
                 )
             ) as scored_games
      FROM brackets
-     WHERE brackets.status = 'active'
-     ORDER BY brackets.division, brackets.id`
+     WHERE brackets.tournament_id = $1 AND brackets.status = 'active'
+     ORDER BY brackets.division, brackets.id`,
+    [tournament.id]
   );
 
   return (
@@ -49,9 +54,10 @@ export default async function BracketsPage() {
         return (
           <section className="section card" key={division}>
             <div className="section-heading">
-              <h2>{division} Division</h2>
+              <h2>{hideDivisionLabels ? "Tournament Bracket" : `${division} Division`}</h2>
               {isAdmin ? (
                 <form action={rebuildBracketAction}>
+                  <input name="tournament_id" type="hidden" value={tournament.id} />
                   <input name="division" type="hidden" value={division} />
                   <button className="button secondary" disabled={scoredGameCount > 0}>
                     Rebuild Bracket
@@ -63,7 +69,7 @@ export default async function BracketsPage() {
             {divisionBracket?.bracket_data_json ? (
               <details className="bracket-division-card" open={division === "A"}>
                 <summary>
-                  <span>{division} Division</span>
+                  <span>{hideDivisionLabels ? "Tournament Bracket" : `${division} Division`}</span>
                   <span className="pill">Double elimination</span>
                 </summary>
                 <ManagedBracketViewer data={divisionBracket.bracket_data_json} />

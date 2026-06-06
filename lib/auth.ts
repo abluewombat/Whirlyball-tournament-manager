@@ -36,24 +36,27 @@ export async function logoutAdmin() {
   (await cookies()).delete("admin_session");
 }
 
-export async function loginScorekeeper(passcode: string) {
-  const [settings] = await query<{ scorekeeper_passcode_hash: string }>("SELECT scorekeeper_passcode_hash FROM event_settings WHERE id = 1");
+export async function loginScorekeeper(tournamentId: number, passcode: string) {
+  const [settings] = await query<{ scorekeeper_passcode_hash: string }>(
+    "SELECT scorekeeper_passcode_hash FROM tournament_settings WHERE tournament_id = $1",
+    [tournamentId]
+  );
   if (!settings || !verifySecret(passcode, settings.scorekeeper_passcode_hash)) return false;
-  (await cookies()).set("scorekeeper_session", sign("scorekeeper"), { httpOnly: true, sameSite: "lax", path: "/" });
+  (await cookies()).set("scorekeeper_session", sign(`scorekeeper:${tournamentId}`), { httpOnly: true, sameSite: "lax", path: "/" });
   return true;
 }
 
 export type ScoreEntryAccess = "admin" | "scorekeeper" | null;
 
-export async function scoreEntryAccess(): Promise<ScoreEntryAccess> {
+export async function scoreEntryAccess(tournamentId: number): Promise<ScoreEntryAccess> {
   const jar = await cookies();
   if (unsign(jar.get("admin_session")?.value) === "admin") return "admin";
-  if (unsign(jar.get("scorekeeper_session")?.value) === "scorekeeper") return "scorekeeper";
+  if (unsign(jar.get("scorekeeper_session")?.value) === `scorekeeper:${tournamentId}`) return "scorekeeper";
   return null;
 }
 
-export async function requireScorekeeperOrAdmin() {
-  if (await scoreEntryAccess()) return;
+export async function requireScorekeeperOrAdmin(tournamentId: number) {
+  if (await scoreEntryAccess(tournamentId)) return;
   redirect("/score");
 }
 

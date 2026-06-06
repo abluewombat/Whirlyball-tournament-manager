@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import ExcelJS from "exceljs";
 import { query } from "@/lib/db";
 import { unsign } from "@/lib/security";
+import { currentTournament } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
 
@@ -59,25 +60,37 @@ export async function GET() {
   if (unsign((await cookies()).get("admin_session")?.value) !== "admin") {
     return new Response("Unauthorized", { status: 401 });
   }
+  const tournament = await currentTournament();
 
   const teams = await query<TeamExportRow>(
-    `SELECT teams.id, centers.name as center, teams.division, teams.name, teams.early_available, teams.deleted_at
-     FROM teams JOIN centers ON centers.id = teams.center_id ORDER BY teams.division, center, teams.name`
+    `SELECT teams.id, COALESCE(centers.name, 'Draft') as center, teams.division, teams.name, teams.early_available, teams.deleted_at
+     FROM teams LEFT JOIN centers ON centers.id = teams.center_id
+     WHERE teams.tournament_id = $1
+     ORDER BY teams.division, center, teams.name`,
+    [tournament.id]
   );
   const players = await query(
-    `SELECT centers.name as center, teams.division, teams.name as team, players.name, players.shirt_size,
+    `SELECT COALESCE(centers.name, home_centers.name) as center, teams.division, teams.name as team, players.name, players.shirt_size,
             players.entry_paid, players.entry_amount, players.entry_paid_date, players.entry_payment_method, players.notes
-     FROM players JOIN teams ON teams.id = players.team_id JOIN centers ON centers.id = teams.center_id
-     WHERE players.deleted_at IS NULL ORDER BY teams.division, center, team, players.id`
+     FROM players
+     JOIN teams ON teams.id = players.team_id
+     LEFT JOIN centers ON centers.id = teams.center_id
+     LEFT JOIN people ON people.id = players.person_id
+     LEFT JOIN centers home_centers ON home_centers.id = people.center_id
+     WHERE players.tournament_id = $1 AND players.deleted_at IS NULL ORDER BY teams.division, center, team, players.id`,
+    [tournament.id]
   );
   const shirts = await query(
-    `SELECT centers.name as center, teams.division, teams.name as team, players.name as player,
+    `SELECT COALESCE(centers.name, home_centers.name) as center, teams.division, teams.name as team, players.name as player,
             shirt_orders.size, shirt_orders.quantity, shirt_orders.paid, shirt_orders.amount, shirt_orders.paid_date, shirt_orders.payment_method
      FROM shirt_orders
      JOIN players ON players.id = shirt_orders.player_id
      JOIN teams ON teams.id = players.team_id
-     JOIN centers ON centers.id = teams.center_id
-     WHERE shirt_orders.deleted_at IS NULL ORDER BY center, team, player`
+     LEFT JOIN centers ON centers.id = teams.center_id
+     LEFT JOIN people ON people.id = players.person_id
+     LEFT JOIN centers home_centers ON home_centers.id = people.center_id
+     WHERE players.tournament_id = $1 AND shirt_orders.deleted_at IS NULL ORDER BY center, team, player`,
+    [tournament.id]
   );
   const availabilityBlocks = await query(
     `SELECT centers.name as center, teams.division, teams.name as team,
@@ -85,7 +98,9 @@ export async function GET() {
      FROM team_availability_blocks
      JOIN teams ON teams.id = team_availability_blocks.team_id
      JOIN centers ON centers.id = teams.center_id
-     ORDER BY team_availability_blocks.starts_at, center, team`
+     WHERE teams.tournament_id = $1
+     ORDER BY team_availability_blocks.starts_at, center, team`,
+    [tournament.id]
   );
   const games = await query<GameExportRow>(
     `SELECT games.phase, games.division, games.court, games.starts_at,
@@ -99,7 +114,9 @@ export async function GET() {
      LEFT JOIN teams t2 ON t2.id = games.team_2_id
      LEFT JOIN centers c2 ON c2.id = t2.center_id
      LEFT JOIN teams tr ON tr.id = games.ref_team_id
-     ORDER BY games.starts_at, games.court`
+     WHERE games.tournament_id = $1
+     ORDER BY games.starts_at, games.court`,
+    [tournament.id]
   );
 
   const workbook = new ExcelJS.Workbook();
@@ -119,7 +136,7 @@ export async function GET() {
   return new Response(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": 'attachment; filename="whirlyball-export.xlsx"'
+      "Content-Disposition": `attachment; filename="${tournament.slug}-export.xlsx"`
     }
   });
 }

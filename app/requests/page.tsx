@@ -1,5 +1,6 @@
 import { submitBlockerRequestAction } from "@/app/actions";
-import { DIVISIONS, query } from "@/lib/db";
+import { query } from "@/lib/db";
+import { currentTournament, tournamentDivisionNames } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
 
@@ -12,11 +13,14 @@ type TeamOption = {
 
 export default async function RequestsPage({ searchParams }: { searchParams: Promise<{ submitted?: string; error?: string }> }) {
   const params = await searchParams;
+  const tournament = await currentTournament();
+  const divisions = await tournamentDivisionNames(tournament.id);
   const teams = await query<TeamOption>(
-    `SELECT teams.id, teams.division, centers.name as center, teams.name
-     FROM teams JOIN centers ON centers.id = teams.center_id
-     WHERE teams.deleted_at IS NULL
-     ORDER BY teams.division, centers.name, teams.name`
+    `SELECT teams.id, teams.division, COALESCE(centers.name, 'Draft') as center, teams.name
+     FROM teams LEFT JOIN centers ON centers.id = teams.center_id
+     WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL
+     ORDER BY teams.division, centers.name, teams.name`,
+    [tournament.id]
   );
 
   return (
@@ -30,7 +34,7 @@ export default async function RequestsPage({ searchParams }: { searchParams: Pro
           <label>
             Team
             <select name="team_id" required>
-              {DIVISIONS.map((division) => (
+              {divisions.map((division) => (
                 <optgroup label={`${division} Division`} key={division}>
                   {teams
                     .filter((team) => team.division === division)

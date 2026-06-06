@@ -1,26 +1,30 @@
-import { DIVISIONS } from "@/lib/db";
-import { query } from "@/lib/db";
+import { listTournamentDivisions, query } from "@/lib/db";
 import { listPlayersByTeams, listTeams } from "@/lib/queries";
 import { PublicTeamsList } from "@/app/public-teams-list";
+import { currentTournament, tournamentPath } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
 
 export default async function PublicTeamsPage() {
-  const teams = await listTeams(false);
+  const tournament = await currentTournament();
+  const divisionRows = await listTournamentDivisions(tournament.id);
+  const divisions = divisionRows.map((division) => division.name);
+  const hideDivisionLabels = divisionRows.length === 1 && divisionRows[0].public_label_hidden;
+  const teams = await listTeams(tournament.id, false);
   const playersByTeam = await listPlayersByTeams(teams.map((team) => team.id));
   const players = [...playersByTeam.values()].flat();
-  const [scheduleCount] = await query<{ count: string }>("SELECT COUNT(*) as count FROM games");
+  const [scheduleCount] = await query<{ count: string }>("SELECT COUNT(*) as count FROM games WHERE tournament_id = $1", [tournament.id]);
   const hasSchedule = Number(scheduleCount?.count || 0) > 0;
 
   return (
     <>
       <section className="hero">
         <div>
-          <h1>Whirlyball Teams</h1>
-          <p>Public registration view for centers, divisions, team names, and player rosters.</p>
+          <h1>{tournament.name}</h1>
+          <p>{tournament.location ? `${tournament.location} | ` : ""}{tournament.starts_on.slice(0, 10)} to {tournament.ends_on.slice(0, 10)}</p>
           {hasSchedule ? (
             <p className="hero-actions">
-              <a className="button" href="/schedule">
+              <a className="button" href={tournamentPath(tournament, "/schedule")}>
                 View Public Schedule
               </a>
             </p>
@@ -28,7 +32,13 @@ export default async function PublicTeamsPage() {
         </div>
       </section>
       <main className="content">
-        <PublicTeamsList divisions={DIVISIONS} teams={teams} players={players} />
+        <PublicTeamsList
+          divisions={divisions}
+          teams={teams}
+          players={players}
+          basePath={tournamentPath(tournament)}
+          hideDivisionLabels={hideDivisionLabels}
+        />
       </main>
     </>
   );

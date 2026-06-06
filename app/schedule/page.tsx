@@ -1,6 +1,7 @@
-import { query } from "@/lib/db";
+import { listTournamentDivisions, query } from "@/lib/db";
 import { LiveRefresh } from "@/app/live-refresh";
 import { syncActiveBracketsToSchedule } from "@/lib/brackets";
+import { currentTournament } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +47,13 @@ const divisionClassNames: Record<string, string> = {
 };
 
 export default async function PublicSchedulePage() {
-  await syncActiveBracketsToSchedule();
+  const tournament = await currentTournament();
+  const divisionRows = await listTournamentDivisions(tournament.id);
+  const divisions = divisionRows.map((division) => division.name);
+  const hiddenDivisionLabels = new Set(
+    divisionRows.length === 1 && divisionRows[0].public_label_hidden ? [divisionRows[0].name] : []
+  );
+  await syncActiveBracketsToSchedule(tournament.id);
   const games = await query<PublicScheduleGame>(
     `SELECT games.phase, games.division, games.court, games.starts_at,
             games.team_1_id, games.team_2_id, games.team_1_score, games.team_2_score,
@@ -57,9 +64,11 @@ export default async function PublicSchedulePage() {
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
      LEFT JOIN teams t2 ON t2.id = games.team_2_id
      LEFT JOIN teams tr ON tr.id = games.ref_team_id
-     ORDER BY games.starts_at, games.court`
+     WHERE games.tournament_id = $1
+     ORDER BY games.starts_at, games.court`,
+    [tournament.id]
   );
-  const gridRows = buildScheduleGrid(games);
+  const gridRows = buildScheduleGrid(games, hiddenDivisionLabels);
   const lastUpdated = games.length ? new Date().toLocaleString() : null;
 
   return (
@@ -76,13 +85,13 @@ export default async function PublicSchedulePage() {
 
       {gridRows.length ? (
         <section className="section schedule-grid-section">
-          <div className="schedule-legend" aria-label="Division color legend">
-            {Object.keys(divisionClassNames).map((division) => (
+          {hiddenDivisionLabels.size === 0 ? <div className="schedule-legend" aria-label="Division color legend">
+            {divisions.map((division) => (
               <span className={`legend-chip ${divisionClassNames[division]}`} key={division}>
                 {division}
               </span>
             ))}
-          </div>
+          </div> : null}
           <div className="schedule-grid-wrap">
             <table className="schedule-grid-table">
               <thead>
@@ -120,7 +129,7 @@ export default async function PublicSchedulePage() {
   );
 }
 
-function buildScheduleGrid(games: PublicScheduleGame[]) {
+function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = new Set<string>()) {
   const rows = new Map<string, ScheduleGridRow>();
 
   for (const game of games) {
@@ -141,7 +150,8 @@ function buildScheduleGrid(games: PublicScheduleGame[]) {
         court2RefDivision: ""
       };
     const resultText = publicResultText(game);
-    const gameText = game.team_1 && game.team_2 ? `${game.division}: ${game.team_1} vs. ${game.team_2}${resultText}` : `${game.division}: ${game.label || "Game"}${resultText}`;
+    const divisionPrefix = hiddenDivisionLabels.has(game.division) ? "" : `${game.division}: `;
+    const gameText = game.team_1 && game.team_2 ? `${divisionPrefix}${game.team_1} vs. ${game.team_2}${resultText}` : `${divisionPrefix}${game.label || "Game"}${resultText}`;
     const scored = isCompleteResult(game);
 
     if (game.court === 1) {

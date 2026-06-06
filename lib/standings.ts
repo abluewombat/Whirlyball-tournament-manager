@@ -36,27 +36,28 @@ type TeamRow = {
   division: string;
 };
 
-export async function getStandings(division?: string) {
+export async function getStandings(tournamentId: number, division?: string) {
   const teams = await query<TeamRow>(
-    `SELECT teams.id, teams.name, centers.name as center, teams.division
-     FROM teams JOIN centers ON centers.id = teams.center_id
-     WHERE teams.deleted_at IS NULL ${division ? "AND teams.division = $1" : ""}
-     ORDER BY teams.division, centers.name, teams.name`,
-    division ? [division] : []
+    `SELECT teams.id, teams.name, COALESCE(centers.name, 'Draft') as center, teams.division
+     FROM teams LEFT JOIN centers ON centers.id = teams.center_id
+     WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL ${division ? "AND teams.division = $2" : ""}
+     ORDER BY teams.division, COALESCE(centers.name, 'Draft'), teams.name`,
+    division ? [tournamentId, division] : [tournamentId]
   );
   const games = await query<ScoredGameRow>(
     `SELECT division, team_1_id, team_2_id, team_1_score, team_2_score,
             winner_team_id, loser_team_id, result_type, forfeit_team_id
      FROM games
-     WHERE phase = 'seeding'
+     WHERE tournament_id = $1
+       AND phase = 'seeding'
        AND team_1_id IS NOT NULL
        AND team_2_id IS NOT NULL
        AND (
          (team_1_score IS NOT NULL AND team_2_score IS NOT NULL)
          OR result_type = 'forfeit'
        )
-       ${division ? "AND division = $1" : ""}`,
-    division ? [division] : []
+       ${division ? "AND division = $2" : ""}`,
+    division ? [tournamentId, division] : [tournamentId]
   );
   const rows = new Map<number, StandingRow>();
 
@@ -122,17 +123,18 @@ export async function getStandings(division?: string) {
   return [...rows.values()].sort(compareStandings);
 }
 
-export async function seedingCompleteForDivision(division: string) {
+export async function seedingCompleteForDivision(tournamentId: number, division: string) {
   const [row] = await query<{ remaining: string }>(
     `SELECT COUNT(*) as remaining
      FROM games
-     WHERE phase = 'seeding'
-       AND division = $1
+     WHERE tournament_id = $1
+       AND phase = 'seeding'
+       AND division = $2
        AND team_1_id IS NOT NULL
        AND team_2_id IS NOT NULL
        AND result_type IS DISTINCT FROM 'forfeit'
        AND (team_1_score IS NULL OR team_2_score IS NULL)`,
-    [division]
+    [tournamentId, division]
   );
   return Number(row?.remaining || 0) === 0;
 }

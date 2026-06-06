@@ -2,7 +2,8 @@ import { query } from "./db";
 
 export type TeamRow = {
   id: number;
-  center_id: number;
+  tournament_id: number;
+  center_id: number | null;
   center_name: string;
   division: string;
   name: string;
@@ -20,7 +21,9 @@ export type TeamAvailabilityBlockRow = {
 
 export type PlayerRow = {
   id: number;
-  team_id: number;
+  tournament_id: number;
+  person_id: number | null;
+  team_id: number | null;
   name: string;
   shirt_size: string;
   entry_paid: boolean;
@@ -31,33 +34,37 @@ export type PlayerRow = {
   deleted_at: string | null;
 };
 
-export async function listTeams(includeDeleted = false) {
+export async function listTeams(tournamentId: number, includeDeleted = false) {
   return query<TeamRow>(
-    `SELECT teams.*, centers.name as center_name
-     FROM teams JOIN centers ON centers.id = teams.center_id
-     ${includeDeleted ? "" : "WHERE teams.deleted_at IS NULL"}
-     ORDER BY teams.division, centers.name, teams.name`
+    `SELECT teams.*, COALESCE(centers.name, 'Draft') as center_name
+     FROM teams LEFT JOIN centers ON centers.id = teams.center_id
+     WHERE teams.tournament_id = $1 ${includeDeleted ? "" : "AND teams.deleted_at IS NULL"}
+     ORDER BY teams.division, COALESCE(centers.name, 'Draft'), teams.name`,
+    [tournamentId]
   );
 }
 
-export async function listTeamsForCenter(centerId: number, includeDeleted = false) {
+export async function listTeamsForCenter(tournamentId: number, centerId: number, includeDeleted = false) {
   return query<TeamRow>(
     `SELECT teams.*, centers.name as center_name
      FROM teams JOIN centers ON centers.id = teams.center_id
-     WHERE teams.center_id = $1 ${includeDeleted ? "" : "AND teams.deleted_at IS NULL"}
+     WHERE teams.tournament_id = $1 AND teams.center_id = $2 ${includeDeleted ? "" : "AND teams.deleted_at IS NULL"}
      ORDER BY teams.division, teams.name`,
-    [centerId]
+    [tournamentId, centerId]
   );
 }
 
-export async function listPlayers(includeDeleted = false) {
+export async function listPlayers(tournamentId: number, includeDeleted = false) {
   return query<PlayerRow & { team_name: string; division: string; center_name: string }>(
-    `SELECT players.*, teams.name as team_name, teams.division, centers.name as center_name
+    `SELECT players.*, teams.name as team_name, teams.division, COALESCE(centers.name, home_centers.name) as center_name
      FROM players
-     JOIN teams ON teams.id = players.team_id
-     JOIN centers ON centers.id = teams.center_id
-     ${includeDeleted ? "" : "WHERE players.deleted_at IS NULL AND teams.deleted_at IS NULL"}
-     ORDER BY teams.division, centers.name, teams.name, players.id`
+     LEFT JOIN teams ON teams.id = players.team_id
+     LEFT JOIN centers ON centers.id = teams.center_id
+     LEFT JOIN people ON people.id = players.person_id
+     LEFT JOIN centers home_centers ON home_centers.id = people.center_id
+     WHERE players.tournament_id = $1 ${includeDeleted ? "" : "AND players.deleted_at IS NULL AND (teams.deleted_at IS NULL OR teams.id IS NULL)"}
+     ORDER BY teams.division, COALESCE(centers.name, home_centers.name), teams.name, players.id`,
+    [tournamentId]
   );
 }
 
@@ -68,7 +75,10 @@ export async function listPlayersByTeams(teamIds: number[], includeDeleted = fal
     [teamIds]
   );
   const map = new Map<number, PlayerRow[]>();
-  for (const row of rows) map.set(row.team_id, [...(map.get(row.team_id) || []), row]);
+  for (const row of rows) {
+    if (row.team_id === null) continue;
+    map.set(row.team_id, [...(map.get(row.team_id) || []), row]);
+  }
   return map;
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import type { TournamentRow } from "@/lib/db";
 
 type NavTab = {
   label: string;
@@ -15,17 +16,24 @@ type NavGroup = {
   tabs: NavTab[];
 };
 
-const navGroups: NavGroup[] = [
+function publicTabs(base: string): NavTab[] {
+  const tabs: NavTab[] = [
+    { label: "Teams", href: base || "/", match: (pathname) => pathname === (base || "/") || pathname.startsWith(`${base}/teams`) },
+    { label: "Schedule", href: `${base}/schedule`, match: (pathname) => pathname === `${base}/schedule` },
+    { label: "Standings", href: `${base}/standings`, match: (pathname) => pathname === `${base}/standings` },
+    { label: "Brackets", href: `${base}/brackets`, match: (pathname) => pathname === `${base}/brackets` }
+  ];
+  tabs.push({ label: "Register", href: `${base}/register`, match: (pathname) => pathname === `${base}/register` });
+  return tabs;
+}
+
+function buildNavGroups(base: string): NavGroup[] {
+  return [
   {
     label: "Public",
-    href: "/",
-    match: (pathname) => pathname === "/" || pathname.startsWith("/teams") || ["/schedule", "/standings", "/brackets"].includes(pathname),
-    tabs: [
-      { label: "Teams", href: "/", match: (pathname) => pathname === "/" || pathname.startsWith("/teams") },
-      { label: "Schedule", href: "/schedule", match: (pathname) => pathname === "/schedule" },
-      { label: "Standings", href: "/standings", match: (pathname) => pathname === "/standings" },
-      { label: "Brackets", href: "/brackets", match: (pathname) => pathname === "/brackets" }
-    ]
+    href: base || "/",
+    match: (pathname) => pathname === (base || "/") || pathname.startsWith(`${base}/teams`) || [`${base}/schedule`, `${base}/standings`, `${base}/brackets`, `${base}/register`].includes(pathname),
+    tabs: publicTabs(base)
   },
   {
     label: "Operations",
@@ -52,14 +60,25 @@ const navGroups: NavGroup[] = [
     tabs: [
       { label: "Login", href: "/admin", match: (pathname) => pathname === "/admin" },
       { label: "Dashboard", href: "/admin/dashboard", match: (pathname) => pathname === "/admin/dashboard" },
+      { label: "Tournaments", href: "/admin/tournaments", match: (pathname) => pathname === "/admin/tournaments" },
       { label: "Schedule", href: "/admin/schedule", match: (pathname) => pathname === "/admin/schedule" },
       { label: "Export", href: "/api/export", match: (pathname) => pathname === "/api/export" }
     ]
   }
-];
+  ];
+}
 
-export function Navigation() {
+export function Navigation({
+  currentTournament,
+  tournaments
+}: {
+  currentTournament: TournamentRow | null;
+  tournaments: TournamentRow[];
+}) {
   const pathname = usePathname() || "/";
+  const archiveMatch = pathname.match(/^\/tournaments\/[^/]+/);
+  const base = archiveMatch?.[0] || "";
+  const navGroups = buildNavGroups(base);
   const activeGroup = navGroups.find((group) => group.match(pathname)) || navGroups[0];
 
   return (
@@ -80,6 +99,23 @@ export function Navigation() {
             </a>
           );
         })}
+        {activeGroup.label === "Public" && tournaments.length > 1 ? (
+          <select
+            aria-label="Tournament"
+            value={currentTournament?.slug || ""}
+            onChange={(event) => {
+              const tournament = tournaments.find((item) => item.slug === event.currentTarget.value);
+              if (!tournament) return;
+              window.location.href = tournament.status === "active" ? "/" : `/tournaments/${tournament.slug}`;
+            }}
+          >
+            {tournaments.map((tournament) => (
+              <option key={tournament.id} value={tournament.slug}>
+                {tournament.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
       </nav>
     </>
   );

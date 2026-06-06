@@ -5,6 +5,7 @@ import { query } from "@/lib/db";
 import { displayDateTime } from "@/lib/format";
 import { scheduleDefaults } from "@/lib/schedule-defaults";
 import { ScheduleEditor, type AdminScheduleGame } from "./schedule-editor";
+import { currentTournament } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
 
@@ -19,10 +20,22 @@ export default async function SchedulePage({
     unscheduled?: string;
     unscheduled_tournament?: string;
     locked?: string;
+    tournament?: string;
   }>;
 }) {
   await requireAdmin();
   const params = await searchParams;
+  const tournament = await currentTournament(params.tournament);
+  const [savedSettings] = await query<{ schedule_settings_json: Partial<typeof scheduleDefaults> | null }>(
+    "SELECT schedule_settings_json FROM tournament_settings WHERE tournament_id = $1",
+    [tournament.id]
+  );
+  const settings = {
+    ...scheduleDefaults,
+    startDate: tournament.starts_on.slice(0, 10),
+    endDate: tournament.ends_on.slice(0, 10),
+    ...(savedSettings?.schedule_settings_json || {})
+  };
   const games = await query<AdminScheduleGame>(
       `SELECT games.id, games.phase, games.division, games.court, games.starts_at,
               games.label, games.team_1_score, games.team_2_score,
@@ -33,10 +46,13 @@ export default async function SchedulePage({
        LEFT JOIN teams t1 ON t1.id = games.team_1_id
        LEFT JOIN teams t2 ON t2.id = games.team_2_id
        LEFT JOIN teams tr ON tr.id = games.ref_team_id
-       ORDER BY games.starts_at, games.court`
+       WHERE games.tournament_id = $1
+       ORDER BY games.starts_at, games.court`,
+      [tournament.id]
     );
   const teamCounts = await query<{ division: string; count: string }>(
-    "SELECT division, COUNT(*) as count FROM teams WHERE deleted_at IS NULL GROUP BY division ORDER BY division"
+    "SELECT division, COUNT(*) as count FROM teams WHERE tournament_id = $1 AND deleted_at IS NULL GROUP BY division ORDER BY division",
+    [tournament.id]
   );
   const availabilityBlocks = await query<{
     id: number;
@@ -51,12 +67,13 @@ export default async function SchedulePage({
             team_availability_blocks.starts_at, team_availability_blocks.ends_at, team_availability_blocks.reason
      FROM team_availability_blocks
      JOIN teams ON teams.id = team_availability_blocks.team_id
-     JOIN centers ON centers.id = teams.center_id
-     WHERE teams.deleted_at IS NULL
-     ORDER BY team_availability_blocks.starts_at, centers.name, teams.name`
+     LEFT JOIN centers ON centers.id = teams.center_id
+     WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL
+     ORDER BY team_availability_blocks.starts_at, centers.name, teams.name`,
+    [tournament.id]
   );
   const activeTeamCount = teamCounts.reduce((sum, row) => sum + Number(row.count), 0);
-  const scoredResultCount = await recordedScoreCount();
+  const scoredResultCount = await recordedScoreCount(tournament.id);
   const fullTwoRoundDemand = teamCounts.reduce((sum, row) => {
     const count = Number(row.count);
     return sum + (count * Math.max(0, count - 1)) / 2 * 2;
@@ -68,7 +85,7 @@ export default async function SchedulePage({
   const generatedCount = params.generated === undefined ? null : Number(params.generated);
   const scheduledSeedingCount = params.seeding_scheduled === undefined ? null : Number(params.seeding_scheduled);
   const targetSeedingCount = params.seeding_target === undefined ? null : Number(params.seeding_target);
-  const targetGamesPerTeam = Math.max(scheduleDefaults.targetGamesPerTeam, Number(params.target_games) || scheduleDefaults.targetGamesPerTeam);
+  const targetGamesPerTeam = Math.max(settings.targetGamesPerTeam, Number(params.target_games) || settings.targetGamesPerTeam);
   const balancedTargetDemand = teamCounts.reduce((sum, row) => sum + Math.ceil((Number(row.count) * targetGamesPerTeam) / 2), 0);
   const unscheduledCount = params.unscheduled === undefined ? 0 : Number(params.unscheduled);
   const unscheduledTournamentCount = params.unscheduled_tournament === undefined ? 0 : Number(params.unscheduled_tournament);
@@ -113,60 +130,61 @@ export default async function SchedulePage({
           Double-elimination placeholders need about {tournamentDemand} tournament games before division/day cutoffs.
         </p>
         <form action={generateScheduleAction} className="form-grid">
+          <input name="tournament_id" type="hidden" value={tournament.id} />
           <label>
             Start date
-            <input name="start_date" type="date" required defaultValue={scheduleDefaults.startDate} />
+            <input name="start_date" type="date" required defaultValue={settings.startDate} />
           </label>
           <label>
             End date
-            <input name="end_date" type="date" required defaultValue={scheduleDefaults.endDate} />
+            <input name="end_date" type="date" required defaultValue={settings.endDate} />
           </label>
           <label>
             Daily start
-            <input name="day_start" type="time" defaultValue={scheduleDefaults.dayStart} />
+            <input name="day_start" type="time" defaultValue={settings.dayStart} />
           </label>
           <label>
             Early opt-in day start
-            <input name="early_day_start" type="time" defaultValue={scheduleDefaults.earlyDayStart} />
+            <input name="early_day_start" type="time" defaultValue={settings.earlyDayStart} />
           </label>
           <label>
             Daily end
-            <input name="day_end" type="time" defaultValue={scheduleDefaults.dayEnd} />
+            <input name="day_end" type="time" defaultValue={settings.dayEnd} />
           </label>
           <label>
             Courts
-            <input name="courts" type="number" min="1" defaultValue={scheduleDefaults.courts} />
+            <input name="courts" type="number" min="1" defaultValue={settings.courts} />
           </label>
           <label>
             Seeding block minutes
-            <input name="seeding_minutes" type="number" min="10" defaultValue={scheduleDefaults.seedingMinutes} />
+            <input name="seeding_minutes" type="number" min="10" defaultValue={settings.seedingMinutes} />
           </label>
           <label>
             Tournament block minutes
-            <input name="tournament_minutes" type="number" min="10" defaultValue={scheduleDefaults.tournamentMinutes} />
+            <input name="tournament_minutes" type="number" min="10" defaultValue={settings.tournamentMinutes} />
           </label>
           <label>
             Tournament start
-            <input name="tournament_day_start" type="time" defaultValue={scheduleDefaults.tournamentDayStart} />
+            <input name="tournament_day_start" type="time" defaultValue={settings.tournamentDayStart} />
           </label>
           <label>
             Tournament day end
-            <input name="tournament_day_end" type="time" defaultValue={scheduleDefaults.tournamentDayEnd} />
+            <input name="tournament_day_end" type="time" defaultValue={settings.tournamentDayEnd} />
           </label>
           <label>
             Final day end
-            <input name="final_day_end" type="time" defaultValue={scheduleDefaults.finalDayEnd} />
+            <input name="final_day_end" type="time" defaultValue={settings.finalDayEnd} />
           </label>
           <label>
             Seeding mode
-            <select name="seeding_mode" defaultValue={scheduleDefaults.seedingMode}>
+            <select name="seeding_mode" defaultValue={settings.seedingMode}>
               <option value="balanced">Balanced target games/team</option>
               <option value="round_robin">Full round robin</option>
             </select>
           </label>
           <label>
             Target games/team
-            <input name="target_games_per_team" type="number" min={scheduleDefaults.targetGamesPerTeam} defaultValue={targetGamesPerTeam} />
+            <input name="target_games_per_team" type="number" min={settings.targetGamesPerTeam} defaultValue={targetGamesPerTeam} />
           </label>
           <label>
             Division target minimums
@@ -174,35 +192,35 @@ export default async function SchedulePage({
           </label>
           <label>
             Pair repeat limit
-            <input name="rounds_per_pair" type="number" min="1" defaultValue={scheduleDefaults.roundsPerPair} />
+            <input name="rounds_per_pair" type="number" min="1" defaultValue={settings.roundsPerPair} />
           </label>
           <label>
             Seeding block order
-            <input name="block_order" defaultValue={scheduleDefaults.blockOrder} />
+            <input name="block_order" defaultValue={settings.blockOrder} />
           </label>
           <label>
             Rows per division block
-            <input name="block_rows" type="number" min="1" defaultValue={scheduleDefaults.blockRows} />
+            <input name="block_rows" type="number" min="1" defaultValue={settings.blockRows} />
           </label>
           <label>
             Next-day tournament cutoff
-            <input name="pre_tournament_cutoff" type="time" defaultValue={scheduleDefaults.preTournamentCutoff} />
+            <input name="pre_tournament_cutoff" type="time" defaultValue={settings.preTournamentCutoff} />
           </label>
           <label>
             Unlimited tournament start
-            <input name="unlimited_game_start" type="datetime-local" defaultValue={scheduleDefaults.unlimitedGameStart} />
+            <input name="unlimited_game_start" type="datetime-local" defaultValue={settings.unlimitedGameStart} />
           </label>
           <label>
             Unlimited court
-            <input name="unlimited_court" type="number" min="1" defaultValue={scheduleDefaults.unlimitedCourt} />
+            <input name="unlimited_court" type="number" min="1" defaultValue={settings.unlimitedCourt} />
           </label>
           <label>
             Late-night rows
-            <input name="late_night_rows" type="number" min="0" defaultValue={scheduleDefaults.lateNightRows} />
+            <input name="late_night_rows" type="number" min="0" defaultValue={settings.lateNightRows} />
           </label>
           <label>
             Morning rest rows
-            <input name="morning_rest_rows" type="number" min="0" defaultValue={scheduleDefaults.morningRestRows} />
+            <input name="morning_rest_rows" type="number" min="0" defaultValue={settings.morningRestRows} />
           </label>
           <label>
             Tuesdays are early opt-in only

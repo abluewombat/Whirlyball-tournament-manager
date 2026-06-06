@@ -1,4 +1,4 @@
-import { query } from "../lib/db";
+import { getFeaturedTournament, listTournamentDivisions, query } from "../lib/db";
 import { generateSchedule } from "../lib/schedule";
 import { scheduleDefaults } from "../lib/schedule-defaults";
 
@@ -41,14 +41,24 @@ main().catch((error) => {
 });
 
 async function main() {
+  const featuredTournament = await getFeaturedTournament();
+  const tournamentId = Number(process.env.TOURNAMENT_ID || featuredTournament?.id || 0);
+  if (!tournamentId) throw new Error("No tournament is configured.");
+  const divisionRows = await listTournamentDivisions(tournamentId);
+  const divisions = divisionRows.map((division) => division.name);
+  const exhibitionDivision = divisionRows.find((division) => division.is_exhibition)?.name;
   const teams = await query<Team>(
     `SELECT teams.id, teams.name, teams.division, teams.early_available, centers.name as center_name
      FROM teams JOIN centers ON centers.id = teams.center_id
-     WHERE teams.deleted_at IS NULL
-     ORDER BY teams.division, centers.name, teams.name`
+     WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL
+     ORDER BY teams.division, centers.name, teams.name`,
+    [tournamentId]
   );
   const teamById = new Map(teams.map((team) => [team.id, team]));
   const result = await generateSchedule({
+    tournamentId,
+    divisions,
+    exhibitionDivision,
     startDate: scheduleDefaults.startDate,
     endDate: scheduleDefaults.endDate,
     dayStart: scheduleDefaults.dayStart,

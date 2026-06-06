@@ -9,18 +9,21 @@ import {
   updateAnnouncementAction
 } from "@/app/actions";
 import { requireAdmin } from "@/lib/auth";
-import { DIVISIONS, listCenters, query, SHIRT_SIZES } from "@/lib/db";
+import { listCenters, query, SHIRT_SIZES } from "@/lib/db";
 import { displayDateTime } from "@/lib/format";
 import { listAvailabilityBlocksByTeams, listPlayersByTeams, listShirtOrdersByPlayers, listTeams } from "@/lib/queries";
 import { AdminTeamManager } from "./team-picker";
+import { currentTournament, tournamentDivisionNames } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminDashboardPage({ searchParams }: { searchParams: Promise<{ center_id?: string; team_id?: string }> }) {
+export default async function AdminDashboardPage({ searchParams }: { searchParams: Promise<{ center_id?: string; team_id?: string; tournament?: string }> }) {
   await requireAdmin();
   const params = await searchParams;
+  const tournament = await currentTournament(params.tournament);
+  const divisions = await tournamentDivisionNames(tournament.id);
   const centers = await listCenters();
-  const teams = await listTeams(true);
+  const teams = await listTeams(tournament.id, true);
   const requestedCenterId = Number(params.center_id);
   const defaultCenter = centers.find((center) => teams.some((team) => team.center_id === center.id)) || centers[0] || null;
   const selectedCenter = centers.find((center) => center.id === requestedCenterId) || defaultCenter;
@@ -43,8 +46,11 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
     id: number;
     label: string;
     created_at: string;
-  }>("SELECT id, label, created_at FROM state_snapshots ORDER BY id DESC LIMIT 20");
-  const [settings] = await query<{ announcement: string | null }>("SELECT announcement FROM event_settings WHERE id = 1");
+  }>("SELECT id, label, created_at FROM state_snapshots WHERE tournament_id = $1 ORDER BY id DESC LIMIT 20", [tournament.id]);
+  const [settings] = await query<{ announcement: string | null }>(
+    "SELECT announcement FROM tournament_settings WHERE tournament_id = $1",
+    [tournament.id]
+  );
   const blockerRequests = await query<{
     id: number;
     center: string;
@@ -60,24 +66,27 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
      FROM blocker_requests
      JOIN teams ON teams.id = blocker_requests.team_id
      JOIN centers ON centers.id = teams.center_id
-     WHERE blocker_requests.status = 'pending'
-     ORDER BY blocker_requests.created_at`
+     WHERE blocker_requests.tournament_id = $1 AND blocker_requests.status = 'pending'
+     ORDER BY blocker_requests.created_at`,
+    [tournament.id]
   );
 
   return (
     <main className="content">
       <div className="actions">
-        <h1 style={{ marginRight: "auto" }}>Admin Dashboard</h1>
+        <h1 style={{ marginRight: "auto" }}>{tournament.name} Admin</h1>
+        <a className="button secondary" href="/admin/tournaments">Tournaments</a>
         <form action={adminLogoutAction}>
           <button className="button secondary">Log Out</button>
         </form>
       </div>
 
       <section className="section grid">
-        <article className="card">
+        {tournament.tournament_type === "nationals" ? <article className="card">
           <h2>Add Team</h2>
           <form action={addTeamAction} className="stack">
             <input name="admin" type="hidden" value="1" />
+            <input name="tournament_id" type="hidden" value={tournament.id} />
             <label>
               Center
               <select name="center_id">
@@ -95,7 +104,7 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
             <label>
               Division
               <select name="division">
-                {DIVISIONS.map((division) => (
+                {divisions.map((division) => (
                   <option key={division}>{division}</option>
                 ))}
               </select>
@@ -106,7 +115,13 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
             </label>
             <button className="button">Add Team</button>
           </form>
-        </article>
+        </article> : (
+          <article className="card">
+            <h2>Draft Management</h2>
+            <p className="muted">Assign final levels, create mixed teams, fill rosters, and lock the draft.</p>
+            <a className="button" href={`/admin/draft?tournament=${tournament.slug}`}>Open Draft Workspace</a>
+          </article>
+        )}
 
         <article className="card">
           <h2>Center Passcodes</h2>
@@ -125,12 +140,14 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
         <article className="card">
           <h2>Snapshots</h2>
           <form action={snapshotAction} className="inline-form">
+            <input name="tournament_id" type="hidden" value={tournament.id} />
             <input name="label" placeholder="Label" defaultValue="Manual snapshot" />
             <button className="button">Save State</button>
           </form>
           <div className="stack section">
             {snapshots.map((snapshot) => (
               <form action={restoreSnapshotAction} className="inline-form" key={snapshot.id}>
+                <input name="tournament_id" type="hidden" value={tournament.id} />
                 <input name="snapshot_id" type="hidden" value={snapshot.id} />
                 <span>
                   {snapshot.label} <span className="muted">{displayDateTime(snapshot.created_at)}</span>
@@ -144,6 +161,7 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
         <article className="card">
           <h2>Event Settings</h2>
           <form action={setScorekeeperPasscodeAction} className="stack">
+            <input name="tournament_id" type="hidden" value={tournament.id} />
             <label>
               Scorekeeper passcode
               <input name="passcode" placeholder="New scorekeeper passcode" />
@@ -151,6 +169,7 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
             <button className="button secondary">Set Passcode</button>
           </form>
           <form action={updateAnnouncementAction} className="stack section">
+            <input name="tournament_id" type="hidden" value={tournament.id} />
             <label>
               Public announcement
               <textarea name="announcement" defaultValue={settings?.announcement || ""} placeholder="Court 2 is running 20 minutes behind." />
@@ -160,7 +179,7 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
         </article>
       </section>
 
-      <section className="section card">
+      {tournament.tournament_type === "nationals" ? <section className="section card">
         <h2>Blocker Requests</h2>
         {blockerRequests.length ? (
           <div className="table-wrap">
@@ -194,9 +213,9 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
         ) : (
           <p className="muted">No pending blocker requests.</p>
         )}
-      </section>
+      </section> : null}
 
-      <section className="section card">
+      {tournament.tournament_type === "nationals" ? <section className="section card">
         <div className="section-heading">
           <div>
             <h2>Manage Team</h2>
@@ -212,10 +231,10 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
           players={players}
           availabilityBlocks={availabilityBlocks}
           shirts={shirts}
-          divisions={[...DIVISIONS]}
+          divisions={divisions}
           shirtSizes={[...SHIRT_SIZES]}
         />
-      </section>
+      </section> : null}
     </main>
   );
 }

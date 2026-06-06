@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { appVersion } from "@/lib/app-version";
-import { query } from "@/lib/db";
+import { listTournaments, query } from "@/lib/db";
+import { currentTournament } from "@/lib/tournaments";
 import { Navigation } from "./navigation";
 
 export const metadata: Metadata = {
@@ -11,15 +12,19 @@ export const metadata: Metadata = {
 
 async function getAnnouncement() {
   try {
-    const [settings] = await query<{ announcement: string | null }>("SELECT announcement FROM event_settings WHERE id = 1");
-    return settings?.announcement || null;
+    const tournament = await currentTournament();
+    const [settings] = await query<{ announcement: string | null }>(
+      "SELECT announcement FROM tournament_settings WHERE tournament_id = $1",
+      [tournament.id]
+    );
+    return { announcement: settings?.announcement || null, tournament };
   } catch {
-    return null;
+    return { announcement: null, tournament: null };
   }
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const announcement = await getAnnouncement();
+  const [{ announcement, tournament }, tournaments] = await Promise.all([getAnnouncement(), listTournaments().catch(() => [])]);
   return (
     <html lang="en">
       <body>
@@ -29,7 +34,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <div className="brand">
                 Whirlyball Manager <span className="app-version">{appVersion}</span>
               </div>
-              <Navigation />
+              <Navigation currentTournament={tournament} tournaments={tournaments} />
             </div>
           </header>
           {announcement ? <div className="announcement-banner">{announcement}</div> : null}

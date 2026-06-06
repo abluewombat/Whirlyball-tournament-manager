@@ -21,7 +21,7 @@ type CenterOption = {
 
 type TeamOption = {
   id: number;
-  center_id: number;
+  center_id: number | null;
   center_name: string;
   division: string;
   name: string;
@@ -31,7 +31,7 @@ type TeamOption = {
 
 type PlayerOption = {
   id: number;
-  team_id: number;
+  team_id: number | null;
   name: string;
   shirt_size: string;
   entry_paid: boolean;
@@ -104,7 +104,7 @@ export function AdminTeamManager({
 
   useEffect(() => {
     if (!selectedTeam) return;
-    const params = new URLSearchParams();
+    const params = new URLSearchParams(window.location.search);
     params.set("center_id", String(selectedTeam.center_id));
     params.set("team_id", String(selectedTeam.id));
     window.history.replaceState(null, "", `/admin/dashboard?${params}`);

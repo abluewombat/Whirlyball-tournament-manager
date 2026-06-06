@@ -59,24 +59,30 @@ type BracketGamePlan = {
   nextLoserSlot: number | null;
 };
 
-export async function maybeCreateBracketForDivision(division: string) {
-  if (!(await seedingCompleteForDivision(division))) return;
-  const [existing] = await query<{ id: number }>("SELECT id FROM brackets WHERE division = $1 AND status = 'active' ORDER BY id DESC LIMIT 1", [division]);
-  if (!existing) await rebuildBracketForDivision(division);
+export async function maybeCreateBracketForDivision(tournamentId: number, division: string) {
+  if (!(await seedingCompleteForDivision(tournamentId, division))) return;
+  const [existing] = await query<{ id: number }>(
+    "SELECT id FROM brackets WHERE tournament_id = $1 AND division = $2 AND status = 'active' ORDER BY id DESC LIMIT 1",
+    [tournamentId, division]
+  );
+  if (!existing) await rebuildBracketForDivision(tournamentId, division);
 }
 
-export async function rebuildBracketForDivision(division: string) {
-  if ((await scoredTournamentResultCountForDivision(division)) > 0) return null;
-  const standings = (await getStandings(division)).filter((row) => row.division === division);
+export async function rebuildBracketForDivision(tournamentId: number, division: string) {
+  if ((await scoredTournamentResultCountForDivision(tournamentId, division)) > 0) return null;
+  const standings = (await getStandings(tournamentId, division)).filter((row) => row.division === division);
   if (standings.length < 2) return null;
   const seeds = standings.map((row, index) => ({ seed: index + 1, teamId: row.team_id, team: row.team, center: row.center }));
   const bracketData = await createManagedDoubleEliminationBracket(division, seeds);
 
   const bracketId = await withTransaction(async (client) => {
-    await client.query("UPDATE brackets SET status = 'archived', updated_at = NOW() WHERE division = $1 AND status = 'active'", [division]);
+    await client.query(
+      "UPDATE brackets SET status = 'archived', updated_at = NOW() WHERE tournament_id = $1 AND division = $2 AND status = 'active'",
+      [tournamentId, division]
+    );
     const bracketResult = await client.query<{ id: number }>(
-      "INSERT INTO brackets (division, seed_snapshot_json, bracket_data_json) VALUES ($1, $2::jsonb, $3::jsonb) RETURNING id",
-      [division, JSON.stringify(seeds), JSON.stringify(bracketData)]
+      "INSERT INTO brackets (tournament_id, division, seed_snapshot_json, bracket_data_json) VALUES ($1, $2, $3::jsonb, $4::jsonb) RETURNING id",
+      [tournamentId, division, JSON.stringify(seeds), JSON.stringify(bracketData)]
     );
     await client.query("DELETE FROM bracket_games WHERE bracket_id = $1", [bracketResult.rows[0].id]);
     const size = nextPowerOfTwo(seeds.length);
@@ -198,15 +204,16 @@ export async function resetBracketGameScore(gameId: number) {
   await syncBracketToSchedule(game.bracket_id);
 }
 
-export async function getActiveBracketScoreLocks() {
+export async function getActiveBracketScoreLocks(tournamentId: number) {
   const games = await query<BracketGameRow & { division: string }>(
     `SELECT bracket_games.*, brackets.division
      FROM bracket_games
      JOIN brackets ON brackets.id = bracket_games.bracket_id
-     WHERE brackets.status = 'active'
+     WHERE brackets.tournament_id = $1 AND brackets.status = 'active'
      ORDER BY brackets.division,
               CASE bracket_games.bracket_side WHEN 'winners' THEN 1 WHEN 'losers' THEN 2 ELSE 3 END,
-              bracket_games.round, bracket_games.position`
+              bracket_games.round, bracket_games.position`,
+    [tournamentId]
   );
   const byBracketId = new Map<number, BracketGameRow[]>();
   for (const game of games) byBracketId.set(game.bracket_id, [...(byBracketId.get(game.bracket_id) || []), game]);
@@ -227,16 +234,19 @@ export async function getActiveBracketScoreLocks() {
   return locks;
 }
 
-export async function getActiveBracketScheduleSlots() {
-  const brackets = await query<{ id: number; division: string }>("SELECT id, division FROM brackets WHERE status = 'active' ORDER BY division, id");
+export async function getActiveBracketScheduleSlots(tournamentId: number) {
+  const brackets = await query<{ id: number; division: string }>(
+    "SELECT id, division FROM brackets WHERE tournament_id = $1 AND status = 'active' ORDER BY division, id",
+    [tournamentId]
+  );
   const slots = new Map<number, BracketScheduleSlot>();
 
   for (const bracket of brackets) {
     const bracketGames = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE bracket_id = $1", [bracket.id]);
     const labels = bracketScheduleLabels(bracketGames);
     const scheduleGames = await query<{ label: string | null; starts_at: string; court: number }>(
-      "SELECT label, starts_at, court FROM games WHERE phase = 'tournament' AND division = $1",
-      [bracket.division]
+      "SELECT label, starts_at, court FROM games WHERE tournament_id = $1 AND phase = 'tournament' AND division = $2",
+      [tournamentId, bracket.division]
     );
     const scheduleByLabel = new Map(scheduleGames.filter((game) => game.label).map((game) => [game.label as string, game]));
 
@@ -255,19 +265,23 @@ export async function getActiveBracketScheduleSlots() {
   return slots;
 }
 
-export async function activeBracketExistsForDivision(division: string) {
-  const [row] = await query<{ count: string }>("SELECT COUNT(*) as count FROM brackets WHERE division = $1 AND status = 'active'", [division]);
+export async function activeBracketExistsForDivision(tournamentId: number, division: string) {
+  const [row] = await query<{ count: string }>(
+    "SELECT COUNT(*) as count FROM brackets WHERE tournament_id = $1 AND division = $2 AND status = 'active'",
+    [tournamentId, division]
+  );
   return Number(row?.count || 0) > 0;
 }
 
-export async function scoredTournamentResultCountForDivision(division: string) {
+export async function scoredTournamentResultCountForDivision(tournamentId: number, division: string) {
   const [row] = await query<{ count: string }>(
     `SELECT (
        SELECT COUNT(*)
        FROM bracket_games
        JOIN brackets ON brackets.id = bracket_games.bracket_id
-       WHERE brackets.status = 'active'
-         AND brackets.division = $1
+       WHERE brackets.tournament_id = $1
+         AND brackets.status = 'active'
+         AND brackets.division = $2
          AND (
            (bracket_games.team_1_score IS NOT NULL AND bracket_games.team_2_score IS NOT NULL)
            OR bracket_games.result_type = 'forfeit'
@@ -275,32 +289,40 @@ export async function scoredTournamentResultCountForDivision(division: string) {
      ) + (
        SELECT COUNT(*)
        FROM games
-       WHERE phase IN ('tournament', 'unlimited')
-         AND division = $1
+       WHERE tournament_id = $1
+         AND phase IN ('tournament', 'unlimited')
+         AND division = $2
          AND (
            (team_1_score IS NOT NULL AND team_2_score IS NOT NULL)
            OR result_type = 'forfeit'
          )
      ) as count`,
-    [division]
+    [tournamentId, division]
   );
   return Number(row?.count || 0);
 }
 
-export async function recordedScoreCount() {
+export async function recordedScoreCount(tournamentId: number) {
   const [row] = await query<{ count: string }>(
     `SELECT (
        SELECT COUNT(*)
        FROM games
-       WHERE phase <> 'tournament'
+       WHERE tournament_id = $1
+         AND phase <> 'tournament'
          AND (team_1_score IS NOT NULL OR team_2_score IS NOT NULL OR result_type = 'forfeit')
      ) + (
        SELECT COUNT(*)
        FROM bracket_games
-       WHERE team_1_score IS NOT NULL
-          OR team_2_score IS NOT NULL
-          OR result_type = 'forfeit'
+       JOIN brackets ON brackets.id = bracket_games.bracket_id
+       WHERE brackets.tournament_id = $1
+         AND (
+           bracket_games.team_1_score IS NOT NULL
+          OR bracket_games.team_2_score IS NOT NULL
+          OR bracket_games.result_type = 'forfeit'
+         )
      ) as count`
+    ,
+    [tournamentId]
   );
   return Number(row?.count || 0);
 }
@@ -443,13 +465,19 @@ async function fillSlot(bracketId: number, gameKey: string, slot: number, teamId
   return true;
 }
 
-export async function syncActiveBracketsToSchedule() {
-  const brackets = await query<{ id: number }>("SELECT id FROM brackets WHERE status = 'active' ORDER BY division, id");
+export async function syncActiveBracketsToSchedule(tournamentId: number) {
+  const brackets = await query<{ id: number }>(
+    "SELECT id FROM brackets WHERE tournament_id = $1 AND status = 'active' ORDER BY division, id",
+    [tournamentId]
+  );
   for (const bracket of brackets) await syncBracketToSchedule(bracket.id);
 }
 
 export async function syncBracketToSchedule(bracketId: number) {
-  const [bracket] = await query<{ id: number; division: string }>("SELECT id, division FROM brackets WHERE id = $1", [bracketId]);
+  const [bracket] = await query<{ id: number; tournament_id: number; division: string }>(
+    "SELECT id, tournament_id, division FROM brackets WHERE id = $1",
+    [bracketId]
+  );
   if (!bracket) return;
   const games = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE bracket_id = $1", [bracketId]);
   const labels = bracketScheduleLabels(games);
@@ -460,7 +488,7 @@ export async function syncBracketToSchedule(bracketId: number) {
       `UPDATE games
        SET team_1_id = $1, team_2_id = $2, team_1_score = $3, team_2_score = $4,
            winner_team_id = $5, loser_team_id = $6, result_type = $7, forfeit_team_id = $8
-       WHERE phase = 'tournament' AND division = $9 AND label = $10`,
+       WHERE tournament_id = $9 AND phase = 'tournament' AND division = $10 AND label = $11`,
       [
         game.team_1_id,
         game.team_2_id,
@@ -470,6 +498,7 @@ export async function syncBracketToSchedule(bracketId: number) {
         game.loser_team_id,
         game.result_type,
         game.forfeit_team_id,
+        bracket.tournament_id,
         bracket.division,
         label
       ]
