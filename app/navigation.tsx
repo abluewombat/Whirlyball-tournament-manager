@@ -75,7 +75,7 @@ function buildNavGroups(base: string, staffRole: "admin" | "center" | null): Nav
       ? pathname === "/admin" || pathname.startsWith("/admin/")
       : pathname === "/center" || pathname.startsWith("/center/"));
   }
-  return groups;
+  return staffRole === "center" ? groups.filter((group) => group.label !== "Admin") : groups;
 }
 
 export function Navigation({

@@ -1,7 +1,6 @@
-import { cookies } from "next/headers";
 import ExcelJS from "exceljs";
+import { hasAdminAccess } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { unsign } from "@/lib/security";
 import { currentTournament } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
@@ -57,7 +56,7 @@ const refDivisionColors: Record<string, string> = {
 };
 
 export async function GET() {
-  if (unsign((await cookies()).get("admin_session")?.value) !== "admin") {
+  if (!(await hasAdminAccess())) {
     return new Response("Unauthorized", { status: 401 });
   }
   const tournament = await currentTournament();

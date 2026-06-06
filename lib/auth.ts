@@ -8,7 +8,9 @@ const adminPassword = process.env.ADMIN_PASSWORD || "admin";
 export async function loginCenter(centerId: number, passcode: string) {
   const [center] = await query<{ id: number; passcode_hash: string }>("SELECT id, passcode_hash FROM centers WHERE id = $1", [centerId]);
   if (!center || !verifySecret(passcode, center.passcode_hash)) return false;
-  (await cookies()).set("center_session", sign(String(center.id)), { httpOnly: true, sameSite: "lax", path: "/" });
+  const jar = await cookies();
+  jar.delete("admin_session");
+  jar.set("center_session", sign(String(center.id)), { httpOnly: true, sameSite: "lax", path: "/" });
   return true;
 }
 
@@ -25,14 +27,15 @@ export type StaffAccess =
 
 export async function staffAccess(): Promise<StaffAccess> {
   const jar = await cookies();
-  if (unsign(jar.get("admin_session")?.value) === "admin") {
-    return { role: "admin", centerId: null, centerName: null };
+  const centerId = Number(unsign(jar.get("center_session")?.value));
+  if (Number.isInteger(centerId) && centerId > 0) {
+    const [center] = await query<{ name: string }>("SELECT name FROM centers WHERE id = $1", [centerId]);
+    if (center) return { role: "center", centerId, centerName: center.name };
   }
 
-  const centerId = Number(unsign(jar.get("center_session")?.value));
-  if (!Number.isInteger(centerId) || centerId <= 0) return null;
-  const [center] = await query<{ name: string }>("SELECT name FROM centers WHERE id = $1", [centerId]);
-  return center ? { role: "center", centerId, centerName: center.name } : null;
+  return unsign(jar.get("admin_session")?.value) === "admin"
+    ? { role: "admin", centerId: null, centerName: null }
+    : null;
 }
 
 export async function requireStaff() {
@@ -42,21 +45,34 @@ export async function requireStaff() {
 }
 
 export async function logoutCenter() {
-  (await cookies()).delete("center_session");
+  const jar = await cookies();
+  jar.delete("center_session");
+  jar.delete("admin_session");
 }
 
 export async function loginAdmin(password: string) {
   if (password !== adminPassword) return false;
-  (await cookies()).set("admin_session", sign("admin"), { httpOnly: true, sameSite: "lax", path: "/" });
+  const jar = await cookies();
+  jar.delete("center_session");
+  jar.set("admin_session", sign("admin"), { httpOnly: true, sameSite: "lax", path: "/" });
   return true;
 }
 
+export async function hasAdminAccess() {
+  const jar = await cookies();
+  const centerId = Number(unsign(jar.get("center_session")?.value));
+  if (Number.isInteger(centerId) && centerId > 0) return false;
+  return unsign(jar.get("admin_session")?.value) === "admin";
+}
+
 export async function requireAdmin() {
-  if (unsign((await cookies()).get("admin_session")?.value) !== "admin") redirect("/admin");
+  if (!(await hasAdminAccess())) redirect("/admin");
 }
 
 export async function logoutAdmin() {
-  (await cookies()).delete("admin_session");
+  const jar = await cookies();
+  jar.delete("admin_session");
+  jar.delete("center_session");
 }
 
 export async function loginScorekeeper(tournamentId: number, passcode: string) {
@@ -73,7 +89,8 @@ export type ScoreEntryAccess = "admin" | "scorekeeper" | null;
 
 export async function scoreEntryAccess(tournamentId: number): Promise<ScoreEntryAccess> {
   const jar = await cookies();
-  if (unsign(jar.get("admin_session")?.value) === "admin") return "admin";
+  const centerId = Number(unsign(jar.get("center_session")?.value));
+  if ((!Number.isInteger(centerId) || centerId <= 0) && unsign(jar.get("admin_session")?.value) === "admin") return "admin";
   if (unsign(jar.get("scorekeeper_session")?.value) === `scorekeeper:${tournamentId}`) return "scorekeeper";
   return null;
 }
