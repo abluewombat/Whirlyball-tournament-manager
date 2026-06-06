@@ -75,6 +75,7 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
     <main className="content">
       <div className="actions">
         <h1 style={{ marginRight: "auto" }}>{tournament.name} Admin</h1>
+        <a className="button secondary" href="/help">Admin Manual</a>
         <a className="button secondary" href="/admin/tournaments">Tournaments</a>
         <form action={adminLogoutAction}>
           <button className="button secondary">Log Out</button>

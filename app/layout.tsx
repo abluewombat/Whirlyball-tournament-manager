@@ -3,6 +3,7 @@ import "./globals.css";
 import { appVersion } from "@/lib/app-version";
 import { listTournaments, query } from "@/lib/db";
 import { currentTournament } from "@/lib/tournaments";
+import { staffAccess } from "@/lib/auth";
 import { Navigation } from "./navigation";
 
 export const metadata: Metadata = {
@@ -24,7 +25,11 @@ async function getAnnouncement() {
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const [{ announcement, tournament }, tournaments] = await Promise.all([getAnnouncement(), listTournaments().catch(() => [])]);
+  const [{ announcement, tournament }, tournaments, staff] = await Promise.all([
+    getAnnouncement(),
+    listTournaments().catch(() => []),
+    staffAccess().catch(() => null)
+  ]);
   return (
     <html lang="en">
       <body>
@@ -34,7 +39,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <div className="brand">
                 Whirlyball Manager <span className="app-version">{appVersion}</span>
               </div>
-              <Navigation currentTournament={tournament} tournaments={tournaments} />
+              <Navigation currentTournament={tournament} tournaments={tournaments} staffRole={staff?.role || null} />
             </div>
           </header>
           {announcement ? <div className="announcement-banner">{announcement}</div> : null}

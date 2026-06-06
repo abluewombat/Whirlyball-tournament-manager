@@ -219,6 +219,65 @@ a {
   grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
 }
 
+.help-page h1 {
+  margin-bottom: 8px;
+}
+
+.help-page h2 {
+  margin-top: 0;
+}
+
+.eyebrow {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
+.help-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.help-grid ol {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.help-grid li {
+  line-height: 1.55;
+  margin: 8px 0;
+}
+
+.faq-list {
+  display: grid;
+  gap: 10px;
+}
+
+.faq-item {
+  padding: 0;
+}
+
+.faq-item summary {
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 18px 20px;
+}
+
+.faq-item[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.faq-item p {
+  line-height: 1.55;
+  margin: 0;
+  padding: 16px 20px 20px;
+}
+
 .live-now {
   border-color: rgba(103, 211, 145, 0.55);
 }

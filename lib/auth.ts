@@ -18,6 +18,29 @@ export async function requireCenterId() {
   return Number(value);
 }
 
+export type StaffAccess =
+  | { role: "admin"; centerId: null; centerName: null }
+  | { role: "center"; centerId: number; centerName: string }
+  | null;
+
+export async function staffAccess(): Promise<StaffAccess> {
+  const jar = await cookies();
+  if (unsign(jar.get("admin_session")?.value) === "admin") {
+    return { role: "admin", centerId: null, centerName: null };
+  }
+
+  const centerId = Number(unsign(jar.get("center_session")?.value));
+  if (!Number.isInteger(centerId) || centerId <= 0) return null;
+  const [center] = await query<{ name: string }>("SELECT name FROM centers WHERE id = $1", [centerId]);
+  return center ? { role: "center", centerId, centerName: center.name } : null;
+}
+
+export async function requireStaff() {
+  const access = await staffAccess();
+  if (!access) redirect("/center");
+  return access;
+}
+
 export async function logoutCenter() {
   (await cookies()).delete("center_session");
 }

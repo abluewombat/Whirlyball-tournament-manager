@@ -24,15 +24,16 @@ function publicTabs(base: string): NavTab[] {
     { label: "Brackets", href: `${base}/brackets`, match: (pathname) => pathname === `${base}/brackets` }
   ];
   tabs.push({ label: "Register", href: `${base}/register`, match: (pathname) => pathname === `${base}/register` });
+  tabs.push({ label: "FAQ", href: "/faq", match: (pathname) => pathname === "/faq" });
   return tabs;
 }
 
-function buildNavGroups(base: string): NavGroup[] {
-  return [
+function buildNavGroups(base: string, staffRole: "admin" | "center" | null): NavGroup[] {
+  const groups: NavGroup[] = [
   {
     label: "Public",
     href: base || "/",
-    match: (pathname) => pathname === (base || "/") || pathname.startsWith(`${base}/teams`) || [`${base}/schedule`, `${base}/standings`, `${base}/brackets`, `${base}/register`].includes(pathname),
+    match: (pathname) => pathname === (base || "/") || pathname.startsWith(`${base}/teams`) || pathname === "/faq" || [`${base}/schedule`, `${base}/standings`, `${base}/brackets`, `${base}/register`].includes(pathname),
     tabs: publicTabs(base)
   },
   {
@@ -50,7 +51,8 @@ function buildNavGroups(base: string): NavGroup[] {
     match: (pathname) => pathname === "/center" || pathname.startsWith("/center/"),
     tabs: [
       { label: "Login", href: "/center", match: (pathname) => pathname === "/center" },
-      { label: "Dashboard", href: "/center/dashboard", match: (pathname) => pathname === "/center/dashboard" }
+      { label: "Dashboard", href: "/center/dashboard", match: (pathname) => pathname === "/center/dashboard" },
+      ...(staffRole === "center" ? [{ label: "Manual", href: "/help", match: (pathname: string) => pathname === "/help" }] : [])
     ]
   },
   {
@@ -62,23 +64,33 @@ function buildNavGroups(base: string): NavGroup[] {
       { label: "Dashboard", href: "/admin/dashboard", match: (pathname) => pathname === "/admin/dashboard" },
       { label: "Tournaments", href: "/admin/tournaments", match: (pathname) => pathname === "/admin/tournaments" },
       { label: "Schedule", href: "/admin/schedule", match: (pathname) => pathname === "/admin/schedule" },
+      ...(staffRole === "admin" ? [{ label: "Manual", href: "/help", match: (pathname: string) => pathname === "/help" }] : []),
       { label: "Export", href: "/api/export", match: (pathname) => pathname === "/api/export" }
     ]
   }
   ];
+  if (staffRole) {
+    const helpGroup = staffRole === "admin" ? groups[3] : groups[2];
+    helpGroup.match = (pathname) => pathname === "/help" || (staffRole === "admin"
+      ? pathname === "/admin" || pathname.startsWith("/admin/")
+      : pathname === "/center" || pathname.startsWith("/center/"));
+  }
+  return groups;
 }
 
 export function Navigation({
   currentTournament,
-  tournaments
+  tournaments,
+  staffRole
 }: {
   currentTournament: TournamentRow | null;
   tournaments: TournamentRow[];
+  staffRole: "admin" | "center" | null;
 }) {
   const pathname = usePathname() || "/";
   const archiveMatch = pathname.match(/^\/tournaments\/[^/]+/);
   const base = archiveMatch?.[0] || "";
-  const navGroups = buildNavGroups(base);
+  const navGroups = buildNavGroups(base, staffRole);
   const activeGroup = navGroups.find((group) => group.match(pathname)) || navGroups[0];
 
   return (

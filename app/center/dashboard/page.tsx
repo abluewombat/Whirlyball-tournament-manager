@@ -84,6 +84,7 @@ export default async function CenterDashboardPage({
     <main className="content">
       <div className="actions">
         <h1 style={{ marginRight: "auto" }}>{center.name} Dashboard</h1>
+        <a className="button secondary" href="/help">Center Manual</a>
         <form action={centerLogoutAction}>
           <button className="button secondary">Log Out</button>
         </form>
