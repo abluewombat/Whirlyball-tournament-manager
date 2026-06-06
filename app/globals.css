@@ -219,6 +219,36 @@ a {
   grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
 }
 
+.live-now {
+  border-color: rgba(103, 211, 145, 0.55);
+}
+
+.live-now-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.live-game-card {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.live-game-card h3 {
+  margin: 14px 0;
+}
+
+.schedule-stream-link {
+  color: white;
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  margin-top: 6px;
+  text-decoration: underline;
+}
+
 .card {
   background: var(--panel);
   border: 1px solid var(--line);

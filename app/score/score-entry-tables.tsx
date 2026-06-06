@@ -27,6 +27,8 @@ export type ScoreGame = {
   result_type: string | null;
   forfeit_team_id: number | null;
   label: string | null;
+  actual_started_at?: string | null;
+  actual_ended_at?: string | null;
   score_locked?: boolean;
   score_lock_reason?: string | null;
 };
@@ -50,6 +52,8 @@ export type EditableBracketGame = {
   schedule_label: string | null;
   starts_at: string | null;
   court: number | null;
+  actual_started_at: string | null;
+  actual_ended_at: string | null;
   result_locked?: boolean;
   result_lock_reason?: string | null;
   reset_locked?: boolean;

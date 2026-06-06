@@ -258,6 +258,27 @@ export async function initDb() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS court_streams (
+        id SERIAL PRIMARY KEY,
+        tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+        court INTEGER NOT NULL CHECK (court > 0),
+        stream_date DATE NOT NULL,
+        youtube_url TEXT NOT NULL,
+        youtube_video_id TEXT NOT NULL,
+        stream_started_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tournament_id, court, stream_date)
+      );
+
+      ALTER TABLE games ADD COLUMN IF NOT EXISTS stream_id INTEGER REFERENCES court_streams(id) ON DELETE SET NULL;
+      ALTER TABLE games ADD COLUMN IF NOT EXISTS actual_started_at TIMESTAMPTZ;
+      ALTER TABLE games ADD COLUMN IF NOT EXISTS actual_ended_at TIMESTAMPTZ;
+
+      CREATE INDEX IF NOT EXISTS idx_court_streams_tournament_date
+        ON court_streams(tournament_id, stream_date, court);
+      CREATE INDEX IF NOT EXISTS idx_games_stream_id ON games(stream_id);
+
       CREATE TABLE IF NOT EXISTS registration_requests (
         id SERIAL PRIMARY KEY,
         tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
@@ -620,7 +641,8 @@ export async function getFullState(tournamentId: number) {
     bracketGames,
     settings,
     tournamentDivisions,
-    people
+    people,
+    courtStreams
   ] = await Promise.all([
     query("SELECT * FROM teams WHERE tournament_id = $1", [tournamentId]),
     query("SELECT team_availability_blocks.* FROM team_availability_blocks JOIN teams ON teams.id = team_availability_blocks.team_id WHERE teams.tournament_id = $1", [tournamentId]),
@@ -632,12 +654,14 @@ export async function getFullState(tournamentId: number) {
     query("SELECT bracket_games.* FROM bracket_games JOIN brackets ON brackets.id = bracket_games.bracket_id WHERE brackets.tournament_id = $1", [tournamentId]),
     query("SELECT * FROM tournament_settings WHERE tournament_id = $1", [tournamentId]),
     query("SELECT * FROM tournament_divisions WHERE tournament_id = $1", [tournamentId]),
-    query("SELECT DISTINCT people.* FROM people JOIN players ON players.person_id = people.id WHERE players.tournament_id = $1", [tournamentId])
+    query("SELECT DISTINCT people.* FROM people JOIN players ON players.person_id = people.id WHERE players.tournament_id = $1", [tournamentId]),
+    query("SELECT * FROM court_streams WHERE tournament_id = $1", [tournamentId])
   ]);
   return {
     people,
     tournament_divisions: tournamentDivisions,
     tournament_settings: settings,
+    court_streams: courtStreams,
     teams,
     team_availability_blocks: availabilityBlocks,
     players,
@@ -667,6 +691,7 @@ export async function restoreSnapshot(tournamentId: number, id: number) {
     await client.query("DELETE FROM brackets WHERE tournament_id = $1", [tournamentId]);
     await client.query("DELETE FROM blocker_requests WHERE tournament_id = $1", [tournamentId]);
     await client.query("DELETE FROM games WHERE tournament_id = $1", [tournamentId]);
+    await client.query("DELETE FROM court_streams WHERE tournament_id = $1", [tournamentId]);
     await client.query("DELETE FROM shirt_orders WHERE player_id IN (SELECT id FROM players WHERE tournament_id = $1)", [tournamentId]);
     await client.query("DELETE FROM players WHERE tournament_id = $1", [tournamentId]);
     await client.query("DELETE FROM team_availability_blocks WHERE team_id IN (SELECT id FROM teams WHERE tournament_id = $1)", [tournamentId]);
@@ -685,6 +710,7 @@ export async function restoreSnapshot(tournamentId: number, id: number) {
     for (const table of [
       "tournament_divisions",
       "tournament_settings",
+      "court_streams",
       "teams",
       "team_availability_blocks",
       "players",

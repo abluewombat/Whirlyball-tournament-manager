@@ -2,6 +2,8 @@ import { listTournamentDivisions, query } from "@/lib/db";
 import { listPlayersByTeams, listTeams } from "@/lib/queries";
 import { PublicTeamsList } from "@/app/public-teams-list";
 import { currentTournament, tournamentPath } from "@/lib/tournaments";
+import { LiveNow } from "@/app/live-now";
+import { LiveRefresh } from "@/app/live-refresh";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +34,8 @@ export default async function PublicTeamsPage() {
         </div>
       </section>
       <main className="content">
+        <LiveRefresh seconds={30} />
+        <LiveNow tournament={tournament} />
         <PublicTeamsList
           divisions={divisions}
           teams={teams}

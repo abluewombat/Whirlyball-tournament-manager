@@ -20,6 +20,7 @@ import { scheduleDefaults } from "@/lib/schedule-defaults";
 import {
   activeBracketExistsForDivision,
   forfeitBracketGame,
+  getActiveBracketScheduleSlots,
   rebuildBracketForDivision,
   recordedScoreCount,
   resetBracketGameScore,
@@ -28,6 +29,7 @@ import {
   syncActiveBracketsToSchedule
 } from "@/lib/brackets";
 import { currentTournament, currentTournamentId, normalizePersonName, tournamentPath } from "@/lib/tournaments";
+import { completeAndAdvanceCourtGame, saveCourtStream, youtubeVideoId } from "@/lib/streams";
 
 function text(formData: FormData, key: string) {
   return String(formData.get(key) || "").trim();
@@ -487,6 +489,7 @@ export async function generateScheduleAction(formData: FormData) {
   await withTransaction(async (client) => {
     await client.query("DELETE FROM brackets WHERE tournament_id = $1", [tournament.id]);
     await client.query("DELETE FROM games WHERE tournament_id = $1", [tournament.id]);
+    await client.query("DELETE FROM court_streams WHERE tournament_id = $1", [tournament.id]);
     for (const game of result.games) {
       await client.query(
         `INSERT INTO games (tournament_id, phase, division, court, starts_at, team_1_id, team_2_id, ref_team_id, label)
@@ -518,20 +521,38 @@ export async function moveScheduleGameAction(input: { gameId: number; startsAt: 
     team_1_score: number | null;
     team_2_score: number | null;
     result_type: string | null;
+    stream_id: number | null;
+    actual_started_at: string | null;
   }>(
-    "SELECT id, tournament_id, starts_at, court, team_1_score, team_2_score, result_type FROM games WHERE id = $1",
+    `SELECT id, tournament_id, starts_at, court, team_1_score, team_2_score, result_type,
+            stream_id, actual_started_at
+     FROM games
+     WHERE id = $1`,
     [gameId]
   );
   if (!source) return;
   if (!(await ensureTournamentEditable(source.tournament_id))) return;
   if (source.team_1_score !== null || source.team_2_score !== null || source.result_type === "forfeit") return;
+  if (source.stream_id !== null || source.actual_started_at !== null) return;
   if (source.starts_at === targetStartsAt && source.court === targetCourt) return;
 
-  const [target] = await query<{ id: number; team_1_score: number | null; team_2_score: number | null; result_type: string | null }>(
-    "SELECT id, team_1_score, team_2_score, result_type FROM games WHERE tournament_id = $1 AND starts_at = $2 AND court = $3 AND id <> $4 ORDER BY id LIMIT 1",
+  const [target] = await query<{
+    id: number;
+    team_1_score: number | null;
+    team_2_score: number | null;
+    result_type: string | null;
+    stream_id: number | null;
+    actual_started_at: string | null;
+  }>(
+    `SELECT id, team_1_score, team_2_score, result_type, stream_id, actual_started_at
+     FROM games
+     WHERE tournament_id = $1 AND starts_at = $2 AND court = $3 AND id <> $4
+     ORDER BY id
+     LIMIT 1`,
     [source.tournament_id, targetStartsAt, targetCourt, gameId]
   );
   if (target && (target.team_1_score !== null || target.team_2_score !== null || target.result_type === "forfeit")) return;
+  if (target && (target.stream_id !== null || target.actual_started_at !== null)) return;
 
   await withTransaction(async (client) => {
     if (target) {
@@ -544,12 +565,44 @@ export async function moveScheduleGameAction(input: { gameId: number; startsAt: 
   revalidatePath("/schedule");
 }
 
+export async function saveCourtStreamAction(formData: FormData) {
+  const tournamentId = await currentTournamentId(text(formData, "tournament_id") || null);
+  if (!(await ensureTournamentEditable(tournamentId))) return;
+  await requireScorekeeperOrAdmin(tournamentId);
+  const court = num(formData, "court");
+  const streamDate = text(formData, "stream_date");
+  const youtubeUrl = text(formData, "youtube_url");
+  if (
+    !Number.isInteger(court) ||
+    court < 1 ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(streamDate) ||
+    !youtubeVideoId(youtubeUrl)
+  ) {
+    redirect("/score?stream_error=1");
+  }
+  const streamId = await saveCourtStream({ tournamentId, court, streamDate, youtubeUrl });
+  if (!streamId) redirect("/score?stream_error=1");
+  revalidatePath("/");
+  revalidatePath("/score");
+  revalidatePath("/schedule");
+  redirect("/score?stream_saved=1");
+}
+
 export async function submitGameScoreAction(formData: FormData) {
   const gameId = num(formData, "game_id");
   const team1Score = num(formData, "team_1_score");
   const team2Score = num(formData, "team_2_score");
   if (!validScore(team1Score) || !validScore(team2Score)) return;
-  const [game] = await query<{ tournament_id: number; phase: string; division: string; team_1_id: number | null; team_2_id: number | null }>(
+  const [game] = await query<{
+    tournament_id: number;
+    phase: string;
+    division: string;
+    team_1_id: number | null;
+    team_2_id: number | null;
+    team_1_score: number | null;
+    team_2_score: number | null;
+    result_type: string | null;
+  }>(
     "SELECT * FROM games WHERE id = $1",
     [gameId]
   );
@@ -560,6 +613,7 @@ export async function submitGameScoreAction(formData: FormData) {
   if (game.phase === "seeding" && (await activeBracketExistsForDivision(game.tournament_id, game.division))) return;
   const winnerId = team1Score === team2Score ? null : team1Score > team2Score ? game.team_1_id : game.team_2_id;
   const loserId = winnerId === null ? null : winnerId === game.team_1_id ? game.team_2_id : game.team_1_id;
+  const wasComplete = (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
   await exec(
     `UPDATE games
      SET team_1_score = $1, team_2_score = $2, winner_team_id = $3, loser_team_id = $4,
@@ -567,6 +621,8 @@ export async function submitGameScoreAction(formData: FormData) {
      WHERE id = $5`,
     [team1Score, team2Score, winnerId, loserId, gameId]
   );
+  if (!wasComplete) await completeAndAdvanceCourtGame(gameId);
+  revalidatePath("/");
   revalidatePath("/score");
   revalidatePath("/schedule");
   revalidatePath("/standings");
@@ -606,7 +662,16 @@ export async function resetGameScoreAction(formData: FormData) {
 export async function submitGameForfeitAction(formData: FormData) {
   const gameId = num(formData, "game_id");
   const forfeitingTeamId = num(formData, "forfeit_team_id");
-  const [game] = await query<{ tournament_id: number; phase: string; division: string; team_1_id: number | null; team_2_id: number | null }>(
+  const [game] = await query<{
+    tournament_id: number;
+    phase: string;
+    division: string;
+    team_1_id: number | null;
+    team_2_id: number | null;
+    team_1_score: number | null;
+    team_2_score: number | null;
+    result_type: string | null;
+  }>(
     "SELECT * FROM games WHERE id = $1",
     [gameId]
   );
@@ -617,6 +682,7 @@ export async function submitGameForfeitAction(formData: FormData) {
   if (game.phase === "seeding" && (await activeBracketExistsForDivision(game.tournament_id, game.division))) return;
   if (forfeitingTeamId !== game.team_1_id && forfeitingTeamId !== game.team_2_id) return;
   const winnerId = forfeitingTeamId === game.team_1_id ? game.team_2_id : game.team_1_id;
+  const wasComplete = (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
   await exec(
     `UPDATE games
      SET team_1_score = NULL, team_2_score = NULL, winner_team_id = $1, loser_team_id = $2,
@@ -624,6 +690,8 @@ export async function submitGameForfeitAction(formData: FormData) {
      WHERE id = $3`,
     [winnerId, forfeitingTeamId, gameId]
   );
+  if (!wasComplete) await completeAndAdvanceCourtGame(gameId);
+  revalidatePath("/");
   revalidatePath("/score");
   revalidatePath("/schedule");
   revalidatePath("/standings");
@@ -678,14 +746,35 @@ export async function syncScheduleFromBracketsAction(formData: FormData) {
 
 export async function submitBracketScoreAction(formData: FormData) {
   const bracketGameId = num(formData, "bracket_game_id");
-  const [game] = await query<{ tournament_id: number }>(
-    "SELECT brackets.tournament_id FROM bracket_games JOIN brackets ON brackets.id = bracket_games.bracket_id WHERE bracket_games.id = $1",
+  const [game] = await query<{
+    tournament_id: number;
+    team_1_score: number | null;
+    team_2_score: number | null;
+    result_type: string | null;
+  }>(
+    `SELECT brackets.tournament_id, bracket_games.team_1_score, bracket_games.team_2_score, bracket_games.result_type
+     FROM bracket_games
+     JOIN brackets ON brackets.id = bracket_games.bracket_id
+     WHERE bracket_games.id = $1`,
     [bracketGameId]
   );
   if (!game) return;
   if (!(await ensureTournamentEditable(game.tournament_id))) return;
   await requireScorekeeperOrAdmin(game.tournament_id);
+  const scheduleSlot = (await getActiveBracketScheduleSlots(game.tournament_id)).get(bracketGameId);
+  const wasComplete = (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
   await scoreBracketGame(bracketGameId, num(formData, "team_1_score"), num(formData, "team_2_score"));
+  const [updated] = await query<{ team_1_score: number | null; team_2_score: number | null; result_type: string | null }>(
+    "SELECT team_1_score, team_2_score, result_type FROM bracket_games WHERE id = $1",
+    [bracketGameId]
+  );
+  const isComplete = Boolean(
+    updated && ((updated.team_1_score !== null && updated.team_2_score !== null) || updated.result_type === "forfeit")
+  );
+  if (!wasComplete && isComplete && scheduleSlot?.schedule_game_id) {
+    await completeAndAdvanceCourtGame(scheduleSlot.schedule_game_id);
+  }
+  revalidatePath("/");
   revalidatePath("/score");
   revalidatePath("/brackets");
   revalidatePath("/schedule");
@@ -693,14 +782,35 @@ export async function submitBracketScoreAction(formData: FormData) {
 
 export async function submitBracketForfeitAction(formData: FormData) {
   const bracketGameId = num(formData, "bracket_game_id");
-  const [game] = await query<{ tournament_id: number }>(
-    "SELECT brackets.tournament_id FROM bracket_games JOIN brackets ON brackets.id = bracket_games.bracket_id WHERE bracket_games.id = $1",
+  const [game] = await query<{
+    tournament_id: number;
+    team_1_score: number | null;
+    team_2_score: number | null;
+    result_type: string | null;
+  }>(
+    `SELECT brackets.tournament_id, bracket_games.team_1_score, bracket_games.team_2_score, bracket_games.result_type
+     FROM bracket_games
+     JOIN brackets ON brackets.id = bracket_games.bracket_id
+     WHERE bracket_games.id = $1`,
     [bracketGameId]
   );
   if (!game) return;
   if (!(await ensureTournamentEditable(game.tournament_id))) return;
   await requireScorekeeperOrAdmin(game.tournament_id);
+  const scheduleSlot = (await getActiveBracketScheduleSlots(game.tournament_id)).get(bracketGameId);
+  const wasComplete = (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
   await forfeitBracketGame(bracketGameId, num(formData, "forfeit_team_id"));
+  const [updated] = await query<{ team_1_score: number | null; team_2_score: number | null; result_type: string | null }>(
+    "SELECT team_1_score, team_2_score, result_type FROM bracket_games WHERE id = $1",
+    [bracketGameId]
+  );
+  const isComplete = Boolean(
+    updated && ((updated.team_1_score !== null && updated.team_2_score !== null) || updated.result_type === "forfeit")
+  );
+  if (!wasComplete && isComplete && scheduleSlot?.schedule_game_id) {
+    await completeAndAdvanceCourtGame(scheduleSlot.schedule_game_id);
+  }
+  revalidatePath("/");
   revalidatePath("/score");
   revalidatePath("/brackets");
   revalidatePath("/schedule");

@@ -19,6 +19,7 @@ For local Docker Postgres, set this in `.env.local`:
 DATABASE_URL=postgresql://whirlyball:whirlyball@localhost:55432/whirlyball
 ADMIN_PASSWORD=admin
 APP_SECRET=local-dev-secret-change-me
+YOUTUBE_API_KEY=optional-youtube-data-api-v3-key
 ```
 
 Open http://localhost:3000.
@@ -42,6 +43,7 @@ The smoothest free setup is:
 DATABASE_URL=your-neon-pooled-connection-string
 ADMIN_PASSWORD=your-real-admin-password
 APP_SECRET=a-long-random-string
+YOUTUBE_API_KEY=optional-youtube-data-api-v3-key
 ```
 
 Neon is a good fit because it has a free Postgres tier and gives you a pooled connection string that works well with serverless hosting. Supabase Postgres also works. Railway works too, but may not stay free depending on current account credits and usage.

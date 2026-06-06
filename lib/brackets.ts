@@ -34,9 +34,12 @@ export type BracketScoreLock = {
 
 export type BracketScheduleSlot = {
   bracket_game_id: number;
+  schedule_game_id: number | null;
   schedule_label: string | null;
   starts_at: string | null;
   court: number | null;
+  actual_started_at: string | null;
+  actual_ended_at: string | null;
 };
 
 type BracketRow = {
@@ -244,8 +247,17 @@ export async function getActiveBracketScheduleSlots(tournamentId: number) {
   for (const bracket of brackets) {
     const bracketGames = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE bracket_id = $1", [bracket.id]);
     const labels = bracketScheduleLabels(bracketGames);
-    const scheduleGames = await query<{ label: string | null; starts_at: string; court: number }>(
-      "SELECT label, starts_at, court FROM games WHERE tournament_id = $1 AND phase = 'tournament' AND division = $2",
+    const scheduleGames = await query<{
+      id: number;
+      label: string | null;
+      starts_at: string;
+      court: number;
+      actual_started_at: string | null;
+      actual_ended_at: string | null;
+    }>(
+      `SELECT id, label, starts_at, court, actual_started_at, actual_ended_at
+       FROM games
+       WHERE tournament_id = $1 AND phase = 'tournament' AND division = $2`,
       [tournamentId, bracket.division]
     );
     const scheduleByLabel = new Map(scheduleGames.filter((game) => game.label).map((game) => [game.label as string, game]));
@@ -255,9 +267,12 @@ export async function getActiveBracketScheduleSlots(tournamentId: number) {
       const scheduleGame = scheduleLabel ? scheduleByLabel.get(scheduleLabel) : null;
       slots.set(game.id, {
         bracket_game_id: game.id,
+        schedule_game_id: scheduleGame?.id || null,
         schedule_label: scheduleLabel,
         starts_at: scheduleGame?.starts_at || null,
-        court: scheduleGame?.court || null
+        court: scheduleGame?.court || null,
+        actual_started_at: scheduleGame?.actual_started_at || null,
+        actual_ended_at: scheduleGame?.actual_ended_at || null
       });
     }
   }

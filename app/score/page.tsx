@@ -1,5 +1,6 @@
 import {
   generateBracketAction,
+  saveCourtStreamAction,
   scorekeeperLoginAction,
   scorekeeperLogoutAction,
   syncScheduleFromBracketsAction
@@ -10,6 +11,7 @@ import { query } from "@/lib/db";
 import { ManagedBracketViewer, type ManagedBracketData } from "@/app/brackets/managed-bracket-viewer";
 import { ScoreEntryTables, type EditableBracketGame, type ScoreGame } from "@/app/score/score-entry-tables";
 import { currentTournament, tournamentDivisionNames } from "@/lib/tournaments";
+import { courtStreamsForTournament } from "@/lib/streams";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +24,7 @@ type BracketScoreGame = {
 export default async function ScorePage({
   searchParams
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; stream_error?: string; stream_saved?: string }>;
 }) {
   const params = await searchParams;
   const tournament = await currentTournament();
@@ -82,6 +84,37 @@ export default async function ScorePage({
     [tournament.id]
   );
   const activeBracketDivisions = new Set(bracketGames.map((game) => game.division));
+  const [streamSlots, courtStreams, currentStreamGames] = await Promise.all([
+    query<{ court: number; stream_date: string }>(
+      `SELECT DISTINCT court, TO_CHAR(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') as stream_date
+       FROM games
+       WHERE tournament_id = $1
+       ORDER BY stream_date, court`,
+      [tournament.id]
+    ),
+    courtStreamsForTournament(tournament.id),
+    query<{
+      stream_id: number;
+      division: string;
+      team_1: string;
+      team_2: string;
+    }>(
+      `SELECT games.stream_id, games.division, t1.name as team_1, t2.name as team_2
+       FROM games
+       JOIN teams t1 ON t1.id = games.team_1_id
+       JOIN teams t2 ON t2.id = games.team_2_id
+       WHERE games.tournament_id = $1
+         AND games.stream_id IS NOT NULL
+         AND games.actual_started_at IS NOT NULL
+         AND games.actual_ended_at IS NULL
+         AND (games.team_1_score IS NULL OR games.team_2_score IS NULL)
+         AND games.result_type IS DISTINCT FROM 'forfeit'
+       ORDER BY games.actual_started_at`,
+      [tournament.id]
+    )
+  ]);
+  const streamBySlot = new Map(courtStreams.map((stream) => [`${stream.stream_date.slice(0, 10)}-${stream.court}`, stream]));
+  const currentGameByStream = new Map(currentStreamGames.map((game) => [game.stream_id, game]));
   const bracketScoreLocks = await getActiveBracketScoreLocks(tournament.id);
   const bracketScheduleSlots = await getActiveBracketScheduleSlots(tournament.id);
   const seedingGames = games
@@ -101,6 +134,8 @@ export default async function ScorePage({
       schedule_label: scheduleSlot?.schedule_label || null,
       starts_at: scheduleSlot?.starts_at || null,
       court: scheduleSlot?.court || null,
+      actual_started_at: scheduleSlot?.actual_started_at || null,
+      actual_ended_at: scheduleSlot?.actual_ended_at || null,
       result_locked: Boolean(lock?.result_locked),
       result_lock_reason: lock?.result_lock_reason || null,
       reset_locked: Boolean(lock?.reset_locked),
@@ -125,6 +160,59 @@ export default async function ScorePage({
         )}
       </div>
       {access === "admin" ? <p className="muted">You are already logged in as admin, so the scorekeeper passcode is not required.</p> : null}
+
+      <section className="section card">
+        <div className="section-heading">
+          <div>
+            <h2>Court Streams</h2>
+            <p className="muted">
+              Saving a YouTube URL starts the first unscored game on that court. Each first-time final score advances the live game automatically.
+            </p>
+          </div>
+        </div>
+        {params.stream_saved ? <p className="pill ok">Stream saved and court timeline started.</p> : null}
+        {params.stream_error ? <p className="pill warn">Enter a valid YouTube video or live-stream URL.</p> : null}
+        {streamSlots.length ? (
+          <div className="grid">
+            {streamSlots.map((slot) => {
+              const stream = streamBySlot.get(`${slot.stream_date}-${slot.court}`);
+              const currentGame = stream ? currentGameByStream.get(stream.id) : null;
+              return (
+                <form action={saveCourtStreamAction} className="card compact stack" key={`${slot.stream_date}-${slot.court}`}>
+                  <input name="tournament_id" type="hidden" value={tournament.id} />
+                  <input name="court" type="hidden" value={slot.court} />
+                  <input name="stream_date" type="hidden" value={slot.stream_date} />
+                  <div className="section-heading">
+                    <div>
+                      <h3>Court {slot.court}</h3>
+                      <p className="muted">{slot.stream_date}</p>
+                    </div>
+                    <span className={`pill ${currentGame ? "ok" : stream ? "" : "warn"}`}>
+                      {currentGame ? "Live" : stream ? "Connected" : "Needs URL"}
+                    </span>
+                  </div>
+                  {currentGame ? (
+                    <p><strong>{currentGame.division}: {currentGame.team_1} vs. {currentGame.team_2}</strong></p>
+                  ) : null}
+                  <label>
+                    YouTube stream URL
+                    <input
+                      name="youtube_url"
+                      type="url"
+                      defaultValue={stream?.youtube_url || ""}
+                      placeholder="https://www.youtube.com/watch?v=..."
+                      required
+                    />
+                  </label>
+                  <button className="button">{stream ? "Update Stream" : "Save Stream & Start Court"}</button>
+                </form>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="muted">Generate the schedule before connecting court streams.</p>
+        )}
+      </section>
 
       <section className="section card">
         <div className="section-heading">

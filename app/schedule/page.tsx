@@ -2,6 +2,8 @@ import { listTournamentDivisions, query } from "@/lib/db";
 import { LiveRefresh } from "@/app/live-refresh";
 import { syncActiveBracketsToSchedule } from "@/lib/brackets";
 import { currentTournament } from "@/lib/tournaments";
+import { LiveNow } from "@/app/live-now";
+import { formatStreamOffset, youtubeReplayOffsetSeconds, youtubeReplayUrl, youtubeWatchUrl } from "@/lib/streams";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +23,10 @@ type PublicScheduleGame = {
   result_type: string | null;
   forfeit_team_id: number | null;
   label: string | null;
+  actual_started_at: string | null;
+  actual_ended_at: string | null;
+  youtube_video_id: string | null;
+  stream_started_at: string | null;
 };
 
 type ScheduleGridRow = {
@@ -31,9 +37,13 @@ type ScheduleGridRow = {
   court1Game: string;
   court1Division: string;
   court1Scored: boolean;
+  court1StreamUrl: string;
+  court1StreamLabel: string;
   court2Game: string;
   court2Division: string;
   court2Scored: boolean;
+  court2StreamUrl: string;
+  court2StreamLabel: string;
   court2Ref: string;
   court2RefDivision: string;
 };
@@ -57,13 +67,15 @@ export default async function PublicSchedulePage() {
   const games = await query<PublicScheduleGame>(
     `SELECT games.phase, games.division, games.court, games.starts_at,
             games.team_1_id, games.team_2_id, games.team_1_score, games.team_2_score,
-            games.result_type, games.forfeit_team_id,
+            games.result_type, games.forfeit_team_id, games.actual_started_at, games.actual_ended_at,
             t1.name as team_1, t2.name as team_2,
-            tr.name as ref_team, tr.division as ref_team_division, games.label
+            tr.name as ref_team, tr.division as ref_team_division, games.label,
+            court_streams.youtube_video_id, court_streams.stream_started_at
      FROM games
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
      LEFT JOIN teams t2 ON t2.id = games.team_2_id
      LEFT JOIN teams tr ON tr.id = games.ref_team_id
+     LEFT JOIN court_streams ON court_streams.id = games.stream_id
      WHERE games.tournament_id = $1
      ORDER BY games.starts_at, games.court`,
     [tournament.id]
@@ -82,6 +94,8 @@ export default async function PublicSchedulePage() {
           </p>
         </div>
       </div>
+
+      <LiveNow tournament={tournament} />
 
       {gridRows.length ? (
         <section className="section schedule-grid-section">
@@ -110,8 +124,22 @@ export default async function PublicSchedulePage() {
                     <td className="schedule-day">{row.day}</td>
                     <td className="schedule-time">{row.time}</td>
                     <td className={refCellClass(row.court1RefDivision)}>{row.court1Ref}</td>
-                    <td className={gameCellClass(row.court1Division, row.court1Scored)}>{row.court1Game}</td>
-                    <td className={gameCellClass(row.court2Division, row.court2Scored)}>{row.court2Game}</td>
+                    <td className={gameCellClass(row.court1Division, row.court1Scored)}>
+                      {row.court1Game}
+                      {row.court1StreamUrl ? (
+                        <a className="schedule-stream-link" href={row.court1StreamUrl} target="_blank" rel="noreferrer">
+                          {row.court1StreamLabel}
+                        </a>
+                      ) : null}
+                    </td>
+                    <td className={gameCellClass(row.court2Division, row.court2Scored)}>
+                      {row.court2Game}
+                      {row.court2StreamUrl ? (
+                        <a className="schedule-stream-link" href={row.court2StreamUrl} target="_blank" rel="noreferrer">
+                          {row.court2StreamLabel}
+                        </a>
+                      ) : null}
+                    </td>
                     <td className={refCellClass(row.court2RefDivision)}>{row.court2Ref}</td>
                   </tr>
                 ))}
@@ -143,9 +171,13 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
         court1Game: "",
         court1Division: "",
         court1Scored: false,
+        court1StreamUrl: "",
+        court1StreamLabel: "",
         court2Game: "",
         court2Division: "",
         court2Scored: false,
+        court2StreamUrl: "",
+        court2StreamLabel: "",
         court2Ref: "",
         court2RefDivision: ""
       };
@@ -153,6 +185,7 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
     const divisionPrefix = hiddenDivisionLabels.has(game.division) ? "" : `${game.division}: `;
     const gameText = game.team_1 && game.team_2 ? `${divisionPrefix}${game.team_1} vs. ${game.team_2}${resultText}` : `${divisionPrefix}${game.label || "Game"}${resultText}`;
     const scored = isCompleteResult(game);
+    const streamLink = publicStreamLink(game, scored);
 
     if (game.court === 1) {
       row.court1Ref = game.ref_team || "";
@@ -160,10 +193,14 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
       row.court1Game = gameText;
       row.court1Division = game.division;
       row.court1Scored = scored;
+      row.court1StreamUrl = streamLink.url;
+      row.court1StreamLabel = streamLink.label;
     } else if (game.court === 2) {
       row.court2Game = gameText;
       row.court2Division = game.division;
       row.court2Scored = scored;
+      row.court2StreamUrl = streamLink.url;
+      row.court2StreamLabel = streamLink.label;
       row.court2Ref = game.ref_team || "";
       row.court2RefDivision = game.ref_team_division || "";
     }
@@ -172,6 +209,18 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
   }
 
   return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row);
+}
+
+function publicStreamLink(game: PublicScheduleGame, scored: boolean) {
+  if (!game.youtube_video_id || !game.actual_started_at || !game.stream_started_at) return { url: "", label: "" };
+  if (!scored && !game.actual_ended_at) {
+    return { url: youtubeWatchUrl(game.youtube_video_id), label: "Watch live" };
+  }
+  const offset = youtubeReplayOffsetSeconds(game.actual_started_at, game.stream_started_at);
+  return {
+    url: youtubeReplayUrl(game.youtube_video_id, game.actual_started_at, game.stream_started_at),
+    label: `Replay around ${formatStreamOffset(offset)}`
+  };
 }
 
 function isCompleteResult(game: PublicScheduleGame) {

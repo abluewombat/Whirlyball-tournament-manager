@@ -4,6 +4,7 @@ import { listTournamentDivisions, query } from "@/lib/db";
 import { getStandings } from "@/lib/standings";
 import { LiveRefresh } from "@/app/live-refresh";
 import { currentTournament, tournamentPath } from "@/lib/tournaments";
+import { formatStreamOffset, youtubeReplayOffsetSeconds, youtubeReplayUrl } from "@/lib/streams";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,9 @@ type TeamGame = {
   ref_team_id: number | null;
   ref_team: string | null;
   label: string | null;
+  actual_started_at: string | null;
+  youtube_video_id: string | null;
+  stream_started_at: string | null;
 };
 
 type DivisionTeam = {
@@ -100,12 +104,14 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
     `SELECT games.id, games.phase, games.division, games.starts_at, games.court,
             games.team_1_id, games.team_2_id, games.team_1_score, games.team_2_score,
             games.winner_team_id, games.loser_team_id, games.result_type, games.forfeit_team_id,
-            games.ref_team_id, games.label,
-            t1.name as team_1, t2.name as team_2, tr.name as ref_team
+            games.ref_team_id, games.label, games.actual_started_at,
+            t1.name as team_1, t2.name as team_2, tr.name as ref_team,
+            court_streams.youtube_video_id, court_streams.stream_started_at
      FROM games
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
      LEFT JOIN teams t2 ON t2.id = games.team_2_id
      LEFT JOIN teams tr ON tr.id = games.ref_team_id
+     LEFT JOIN court_streams ON court_streams.id = games.stream_id
      WHERE games.tournament_id = $2 AND (games.team_1_id = $1 OR games.team_2_id = $1 OR games.ref_team_id = $1)
      ORDER BY games.starts_at, games.court`,
     [teamId, tournament.id]
@@ -287,6 +293,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
                       <th>Court</th>
                       <th>Assignment</th>
                       <th>Score</th>
+                      <th>Video</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -305,6 +312,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
                             {playing ? <div className="muted">Opponent: {opponentLabel(game, team.id)}</div> : null}
                           </td>
                           <td>{scoreLabel(game, team.id)}</td>
+                          <td>{replayLink(game)}</td>
                         </tr>
                       );
                     })}
@@ -387,6 +395,21 @@ function groupGamesByDay(games: TeamGame[]) {
       ...group,
       games: group.games.sort((left, right) => left.starts_at.localeCompare(right.starts_at) || left.court - right.court)
     }));
+}
+
+function replayLink(game: TeamGame) {
+  if (!isScored(game) || !game.actual_started_at || !game.youtube_video_id || !game.stream_started_at) return null;
+  const offset = youtubeReplayOffsetSeconds(game.actual_started_at, game.stream_started_at);
+  return (
+    <a
+      className="schedule-stream-link"
+      href={youtubeReplayUrl(game.youtube_video_id, game.actual_started_at, game.stream_started_at)}
+      target="_blank"
+      rel="noreferrer"
+    >
+      Replay {formatStreamOffset(offset)}
+    </a>
+  );
 }
 
 function isPlaying(game: TeamGame, teamId: number) {
