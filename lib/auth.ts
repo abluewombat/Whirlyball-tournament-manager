@@ -10,13 +10,14 @@ export async function loginCenter(centerId: number, passcode: string) {
   if (!center || !verifySecret(passcode, center.passcode_hash)) return false;
   const jar = await cookies();
   jar.delete("admin_session");
+  jar.delete("scorekeeper_session");
   jar.set("center_session", sign(String(center.id)), { httpOnly: true, sameSite: "lax", path: "/" });
   return true;
 }
 
 export async function requireCenterId() {
   const value = unsign((await cookies()).get("center_session")?.value);
-  if (!value) redirect("/center");
+  if (!value) redirect("/login?mode=center");
   return Number(value);
 }
 
@@ -40,7 +41,7 @@ export async function staffAccess(): Promise<StaffAccess> {
 
 export async function requireStaff() {
   const access = await staffAccess();
-  if (!access) redirect("/center");
+  if (!access) redirect("/login");
   return access;
 }
 
@@ -48,12 +49,14 @@ export async function logoutCenter() {
   const jar = await cookies();
   jar.delete("center_session");
   jar.delete("admin_session");
+  jar.delete("scorekeeper_session");
 }
 
 export async function loginAdmin(password: string) {
   if (password !== adminPassword) return false;
   const jar = await cookies();
   jar.delete("center_session");
+  jar.delete("scorekeeper_session");
   jar.set("admin_session", sign("admin"), { httpOnly: true, sameSite: "lax", path: "/" });
   return true;
 }
@@ -66,13 +69,14 @@ export async function hasAdminAccess() {
 }
 
 export async function requireAdmin() {
-  if (!(await hasAdminAccess())) redirect("/admin");
+  if (!(await hasAdminAccess())) redirect("/login?mode=admin");
 }
 
 export async function logoutAdmin() {
   const jar = await cookies();
   jar.delete("admin_session");
   jar.delete("center_session");
+  jar.delete("scorekeeper_session");
 }
 
 export async function loginScorekeeper(tournamentId: number, passcode: string) {
@@ -81,7 +85,10 @@ export async function loginScorekeeper(tournamentId: number, passcode: string) {
     [tournamentId]
   );
   if (!settings || !verifySecret(passcode, settings.scorekeeper_passcode_hash)) return false;
-  (await cookies()).set("scorekeeper_session", sign(`scorekeeper:${tournamentId}`), { httpOnly: true, sameSite: "lax", path: "/" });
+  const jar = await cookies();
+  jar.delete("admin_session");
+  jar.delete("center_session");
+  jar.set("scorekeeper_session", sign(`scorekeeper:${tournamentId}`), { httpOnly: true, sameSite: "lax", path: "/" });
   return true;
 }
 
@@ -90,7 +97,8 @@ export type ScoreEntryAccess = "admin" | "scorekeeper" | null;
 export async function scoreEntryAccess(tournamentId: number): Promise<ScoreEntryAccess> {
   const jar = await cookies();
   const centerId = Number(unsign(jar.get("center_session")?.value));
-  if ((!Number.isInteger(centerId) || centerId <= 0) && unsign(jar.get("admin_session")?.value) === "admin") return "admin";
+  if (Number.isInteger(centerId) && centerId > 0) return null;
+  if (unsign(jar.get("admin_session")?.value) === "admin") return "admin";
   if (unsign(jar.get("scorekeeper_session")?.value) === `scorekeeper:${tournamentId}`) return "scorekeeper";
   return null;
 }
@@ -101,5 +109,8 @@ export async function requireScorekeeperOrAdmin(tournamentId: number) {
 }
 
 export async function logoutScorekeeper() {
-  (await cookies()).delete("scorekeeper_session");
+  const jar = await cookies();
+  jar.delete("scorekeeper_session");
+  jar.delete("admin_session");
+  jar.delete("center_session");
 }

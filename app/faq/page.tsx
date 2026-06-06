@@ -59,8 +59,8 @@ export default function FaqPage() {
         <h2>Are you an administrator?</h2>
         <p className="muted">Tournament and center administrators can open the role-specific manual after logging in.</p>
         <div className="actions">
-          <a className="button secondary" href="/center">Center Login</a>
-          <a className="button secondary" href="/admin">Tournament Admin Login</a>
+          <a className="button secondary" href="/login?mode=center">Center Login</a>
+          <a className="button secondary" href="/login?mode=admin">Tournament Admin Login</a>
         </div>
       </section>
     </main>

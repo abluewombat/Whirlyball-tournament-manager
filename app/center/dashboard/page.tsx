@@ -11,6 +11,7 @@ import {
   updatePlayerAction,
   updateTeamAction
 } from "@/app/actions";
+import { DashboardPanel, DashboardTabs } from "@/app/view-tabs";
 import { listTournaments, query, SHIRT_SIZES } from "@/lib/db";
 import { dateInputValue, displayDateTime } from "@/lib/format";
 import { requireCenterId } from "@/lib/auth";
@@ -22,7 +23,7 @@ export const dynamic = "force-dynamic";
 export default async function CenterDashboardPage({
   searchParams
 }: {
-  searchParams: Promise<{ tournament?: string }>;
+  searchParams: Promise<{ tournament?: string; view?: string }>;
 }) {
   const centerId = await requireCenterId();
   const params = await searchParams;
@@ -81,15 +82,21 @@ export default async function CenterDashboardPage({
   );
 
   return (
-    <main className="content">
-      <div className="actions">
-        <h1 style={{ marginRight: "auto" }}>{center.name} Dashboard</h1>
-        <a className="button secondary" href="/help">Center Manual</a>
+    <main className="content dashboard-page">
+      <div className="dashboard-heading">
+        <div>
+          <p className="eyebrow">Center Admin</p>
+          <h1>{center.name}</h1>
+        </div>
+        <div className="dashboard-heading-actions">
+          <a className="button secondary" href="/help">Manual</a>
         <form action={centerLogoutAction}>
           <button className="button secondary">Log Out</button>
         </form>
+        </div>
       </div>
-      <form className="inline-form" method="get">
+      <form className="inline-form tournament-switcher" method="get">
+        <input name="view" type="hidden" value={params.view || "approvals"} />
         <label>
           Tournament
           <select name="tournament" defaultValue={tournament.slug}>
@@ -101,6 +108,16 @@ export default async function CenterDashboardPage({
         <button className="button secondary">Open</button>
       </form>
 
+      <DashboardTabs
+        ariaLabel="Center administration"
+        initialView={params.view}
+        tabs={[
+          { id: "approvals", label: "Approvals", badge: registrationRequests.length },
+          ...(tournament.tournament_type === "draft" ? [{ id: "players", label: "Players", badge: centerRegistrations.length }] : []),
+          { id: "teams", label: "Teams", badge: teams.length }
+        ]}
+      >
+      <DashboardPanel id="approvals">
       {registrationRequests.length ? (
         <section className="section card">
           <h2>Registration Requests</h2>
@@ -151,8 +168,15 @@ export default async function CenterDashboardPage({
             ))}
           </div>
         </section>
-      ) : null}
+      ) : (
+        <section className="section card">
+          <h2>Registration Requests</h2>
+          <p className="muted">No pending registration requests.</p>
+        </section>
+      )}
+      </DashboardPanel>
 
+      <DashboardPanel id="players">
       {tournament.tournament_type === "draft" ? (
         <section className="section card">
           <h2>Approved Players</h2>
@@ -177,7 +201,9 @@ export default async function CenterDashboardPage({
           )}
         </section>
       ) : null}
+      </DashboardPanel>
 
+      <DashboardPanel id="teams">
       {tournament.tournament_type === "nationals" ? <section className="section card">
         <h2>Add Team</h2>
         <form action={addTeamAction} className="form-grid">
@@ -391,6 +417,8 @@ export default async function CenterDashboardPage({
           );
         })}
       </section>
+      </DashboardPanel>
+      </DashboardTabs>
     </main>
   );
 }

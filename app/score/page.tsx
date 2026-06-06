@@ -1,10 +1,10 @@
 import {
   generateBracketAction,
   saveCourtStreamAction,
-  scorekeeperLoginAction,
   scorekeeperLogoutAction,
   syncScheduleFromBracketsAction
 } from "@/app/actions";
+import { redirect } from "next/navigation";
 import { scoreEntryAccess } from "@/lib/auth";
 import { getActiveBracketScheduleSlots, getActiveBracketScoreLocks } from "@/lib/brackets";
 import { query } from "@/lib/db";
@@ -31,20 +31,7 @@ export default async function ScorePage({
   const bracketDivisions = await tournamentDivisionNames(tournament.id, false);
   const access = await scoreEntryAccess(tournament.id);
   if (!access) {
-    return (
-      <main className="content">
-        <section className="section card compact">
-          <h1>Score Entry</h1>
-          <p className="muted">Enter the event scorekeeper passcode.</p>
-          {params.error ? <p className="pill warn">Wrong passcode.</p> : null}
-          <form action={scorekeeperLoginAction} className="stack">
-            <input name="tournament_id" type="hidden" value={tournament.id} />
-            <input name="passcode" type="password" required />
-            <button className="button">Enter Scorekeeper Mode</button>
-          </form>
-        </section>
-      </main>
-    );
+    redirect("/login?mode=score");
   }
 
   const games = await query<ScoreGame>(

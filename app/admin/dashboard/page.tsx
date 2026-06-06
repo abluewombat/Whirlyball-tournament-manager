@@ -8,16 +8,38 @@ import {
   snapshotAction,
   updateAnnouncementAction
 } from "@/app/actions";
+import { ViewTabs } from "@/app/view-tabs";
 import { requireAdmin } from "@/lib/auth";
 import { listCenters, query, SHIRT_SIZES } from "@/lib/db";
 import { displayDateTime } from "@/lib/format";
 import { listAvailabilityBlocksByTeams, listPlayersByTeams, listShirtOrdersByPlayers, listTeams } from "@/lib/queries";
-import { AdminTeamManager } from "./team-picker";
 import { currentTournament, tournamentDivisionNames } from "@/lib/tournaments";
+import { AdminScheduleContent } from "../schedule/content";
+import { TournamentManagementContent } from "../tournaments/content";
+import { AdminTeamManager } from "./team-picker";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminDashboardPage({ searchParams }: { searchParams: Promise<{ center_id?: string; team_id?: string; tournament?: string }> }) {
+type AdminDashboardParams = {
+  center_id?: string;
+  team_id?: string;
+  tournament?: string;
+  view?: string;
+  error?: string;
+  generated?: string;
+  seeding_scheduled?: string;
+  seeding_target?: string;
+  target_games?: string;
+  unscheduled?: string;
+  unscheduled_tournament?: string;
+  locked?: string;
+};
+
+export default async function AdminDashboardPage({
+  searchParams
+}: {
+  searchParams: Promise<AdminDashboardParams>;
+}) {
   await requireAdmin();
   const params = await searchParams;
   const tournament = await currentTournament(params.tournament);
@@ -71,19 +93,10 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
     [tournament.id]
   );
 
-  return (
-    <main className="content">
-      <div className="actions">
-        <h1 style={{ marginRight: "auto" }}>{tournament.name} Admin</h1>
-        <a className="button secondary" href="/help">Admin Manual</a>
-        <a className="button secondary" href="/admin/tournaments">Tournaments</a>
-        <form action={adminLogoutAction}>
-          <button className="button secondary">Log Out</button>
-        </form>
-      </div>
-
-      <section className="section grid">
-        {tournament.tournament_type === "nationals" ? <article className="card">
+  const overview = (
+    <section className="section grid dashboard-card-grid">
+      {tournament.tournament_type === "nationals" ? (
+        <article className="card">
           <h2>Add Team</h2>
           <form action={addTeamAction} className="stack">
             <input name="admin" type="hidden" value="1" />
@@ -91,151 +104,173 @@ export default async function AdminDashboardPage({ searchParams }: { searchParam
             <label>
               Center
               <select name="center_id">
-                {centers.map((center) => (
-                  <option key={center.id} value={center.id}>
-                    {center.name}
-                  </option>
-                ))}
+                {centers.map((center) => <option key={center.id} value={center.id}>{center.name}</option>)}
               </select>
             </label>
-            <label>
-              Team name
-              <input name="name" required />
-            </label>
+            <label>Team name<input name="name" required /></label>
             <label>
               Division
               <select name="division">
-                {divisions.map((division) => (
-                  <option key={division}>{division}</option>
-                ))}
+                {divisions.map((division) => <option key={division}>{division}</option>)}
               </select>
             </label>
-            <label>
-              Tuesday opt-in
-              <input name="early_available" type="checkbox" />
-            </label>
+            <label>Tuesday opt-in<input name="early_available" type="checkbox" /></label>
             <button className="button">Add Team</button>
           </form>
-        </article> : (
-          <article className="card">
-            <h2>Draft Management</h2>
-            <p className="muted">Assign final levels, create mixed teams, fill rosters, and lock the draft.</p>
-            <a className="button" href={`/admin/draft?tournament=${tournament.slug}`}>Open Draft Workspace</a>
-          </article>
-        )}
-
-        <article className="card">
-          <h2>Center Passcodes</h2>
-          <div className="stack">
-            {centers.map((center) => (
-              <form action={setCenterPasscodeAction} className="inline-form" key={center.id}>
-                <input name="center_id" type="hidden" value={center.id} />
-                <input value={center.name} readOnly />
-                <input name="passcode" placeholder="New passcode" />
-                <button className="button secondary">Set</button>
-              </form>
-            ))}
-          </div>
         </article>
-
+      ) : (
         <article className="card">
-          <h2>Snapshots</h2>
-          <form action={snapshotAction} className="inline-form">
-            <input name="tournament_id" type="hidden" value={tournament.id} />
-            <input name="label" placeholder="Label" defaultValue="Manual snapshot" />
-            <button className="button">Save State</button>
-          </form>
-          <div className="stack section">
-            {snapshots.map((snapshot) => (
-              <form action={restoreSnapshotAction} className="inline-form" key={snapshot.id}>
-                <input name="tournament_id" type="hidden" value={tournament.id} />
-                <input name="snapshot_id" type="hidden" value={snapshot.id} />
-                <span>
-                  {snapshot.label} <span className="muted">{displayDateTime(snapshot.created_at)}</span>
-                </span>
-                <button className="button danger">Restore</button>
-              </form>
-            ))}
-          </div>
+          <h2>Draft Management</h2>
+          <p className="muted">Assign levels, create teams, fill rosters, and lock the draft.</p>
+          <a className="button" href={`/admin/draft?tournament=${tournament.slug}`}>Open Draft Workspace</a>
         </article>
+      )}
 
-        <article className="card">
-          <h2>Event Settings</h2>
-          <form action={setScorekeeperPasscodeAction} className="stack">
-            <input name="tournament_id" type="hidden" value={tournament.id} />
-            <label>
-              Scorekeeper passcode
-              <input name="passcode" placeholder="New scorekeeper passcode" />
-            </label>
-            <button className="button secondary">Set Passcode</button>
-          </form>
-          <form action={updateAnnouncementAction} className="stack section">
-            <input name="tournament_id" type="hidden" value={tournament.id} />
-            <label>
-              Public announcement
-              <textarea name="announcement" defaultValue={settings?.announcement || ""} placeholder="Court 2 is running 20 minutes behind." />
-            </label>
-            <button className="button">Save Announcement</button>
-          </form>
-        </article>
-      </section>
+      <article className="card">
+        <h2>Event Settings</h2>
+        <form action={setScorekeeperPasscodeAction} className="stack">
+          <input name="tournament_id" type="hidden" value={tournament.id} />
+          <label>Scorekeeper passcode<input name="passcode" placeholder="New scorekeeper passcode" /></label>
+          <button className="button secondary">Set Passcode</button>
+        </form>
+        <form action={updateAnnouncementAction} className="stack section">
+          <input name="tournament_id" type="hidden" value={tournament.id} />
+          <label>
+            Public announcement
+            <textarea name="announcement" defaultValue={settings?.announcement || ""} placeholder="Court 2 is running 20 minutes behind." />
+          </label>
+          <button className="button">Save Announcement</button>
+        </form>
+      </article>
 
-      {tournament.tournament_type === "nationals" ? <section className="section card">
-        <h2>Blocker Requests</h2>
-        {blockerRequests.length ? (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Team</th>
-                  <th>Unavailable</th>
-                  <th>Reason</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {blockerRequests.map((request) => (
-                  <tr key={request.id}>
-                    <td>{request.division} {request.center} - {request.team}</td>
-                    <td>{displayDateTime(request.starts_at)} to {displayDateTime(request.ends_at)}</td>
-                    <td>{request.reason || ""}</td>
-                    <td>
-                      <form action={reviewBlockerRequestAction} className="inline-form">
-                        <input name="request_id" type="hidden" value={request.id} />
-                        <button className="button" name="decision" value="approved">Approve</button>
-                        <button className="button danger" name="decision" value="rejected">Reject</button>
-                      </form>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="muted">No pending blocker requests.</p>
-        )}
-      </section> : null}
-
-      {tournament.tournament_type === "nationals" ? <section className="section card">
-        <div className="section-heading">
-          <div>
-            <h2>Manage Team</h2>
-            <p className="muted">Choose a center, then choose one team to edit rosters, payments, shirts, and schedule blockers.</p>
-          </div>
-          <span className="pill">{teams.length} total teams</span>
+      <article className="card">
+        <h2>Center Passcodes</h2>
+        <div className="stack">
+          {centers.map((center) => (
+            <form action={setCenterPasscodeAction} className="inline-form mobile-form-row" key={center.id}>
+              <input name="center_id" type="hidden" value={center.id} />
+              <input value={center.name} readOnly />
+              <input name="passcode" placeholder="New passcode" />
+              <button className="button secondary">Set</button>
+            </form>
+          ))}
         </div>
-        <AdminTeamManager
-          centers={centers}
-          teams={teams}
-          selectedCenterId={selectedCenter?.id || 0}
-          selectedTeamId={selectedTeam?.id || null}
-          players={players}
-          availabilityBlocks={availabilityBlocks}
-          shirts={shirts}
-          divisions={divisions}
-          shirtSizes={[...SHIRT_SIZES]}
-        />
-      </section> : null}
+      </article>
+
+      <article className="card">
+        <h2>Snapshots</h2>
+        <form action={snapshotAction} className="inline-form mobile-form-row">
+          <input name="tournament_id" type="hidden" value={tournament.id} />
+          <input name="label" placeholder="Label" defaultValue="Manual snapshot" />
+          <button className="button">Save State</button>
+        </form>
+        <div className="stack section">
+          {snapshots.map((snapshot) => (
+            <form action={restoreSnapshotAction} className="inline-form mobile-form-row" key={snapshot.id}>
+              <input name="tournament_id" type="hidden" value={tournament.id} />
+              <input name="snapshot_id" type="hidden" value={snapshot.id} />
+              <span>{snapshot.label} <span className="muted">{displayDateTime(snapshot.created_at)}</span></span>
+              <button className="button danger">Restore</button>
+            </form>
+          ))}
+        </div>
+      </article>
+    </section>
+  );
+
+  const approvals = (
+    <section className="section card">
+      <div className="section-heading">
+        <div>
+          <h2>Pending Approvals</h2>
+          <p className="muted">Review schedule blocker requests submitted by teams.</p>
+        </div>
+        <span className={`pill ${blockerRequests.length ? "warn" : "ok"}`}>{blockerRequests.length} pending</span>
+      </div>
+      {tournament.tournament_type !== "nationals" ? (
+        <p className="muted">This tournament has no center-based blocker approvals.</p>
+      ) : blockerRequests.length ? (
+        <div className="mobile-card-list">
+          {blockerRequests.map((request) => (
+            <article className="card compact" key={request.id}>
+              <h3>{request.division} {request.center} - {request.team}</h3>
+              <p>{displayDateTime(request.starts_at)} to {displayDateTime(request.ends_at)}</p>
+              {request.reason ? <p className="muted">{request.reason}</p> : null}
+              <form action={reviewBlockerRequestAction} className="actions">
+                <input name="request_id" type="hidden" value={request.id} />
+                <button className="button" name="decision" value="approved">Approve</button>
+                <button className="button danger" name="decision" value="rejected">Reject</button>
+              </form>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="muted">No pending blocker requests.</p>
+      )}
+    </section>
+  );
+
+  const teamManagement = tournament.tournament_type === "nationals" ? (
+    <section className="section card">
+      <div className="section-heading">
+        <div>
+          <h2>Teams and Rosters</h2>
+          <p className="muted">Choose one team to edit its roster, payments, shirts, and blockers.</p>
+        </div>
+        <span className="pill">{teams.length} teams</span>
+      </div>
+      <AdminTeamManager
+        centers={centers}
+        teams={teams}
+        selectedCenterId={selectedCenter?.id || 0}
+        selectedTeamId={selectedTeam?.id || null}
+        players={players}
+        availabilityBlocks={availabilityBlocks}
+        shirts={shirts}
+        divisions={divisions}
+        shirtSizes={[...SHIRT_SIZES]}
+      />
+    </section>
+  ) : (
+    <section className="section card">
+      <h2>Draft Teams</h2>
+      <p className="muted">Draft teams and player assignments are managed in the dedicated workspace.</p>
+      <a className="button" href={`/admin/draft?tournament=${tournament.slug}`}>Open Draft Workspace</a>
+    </section>
+  );
+
+  return (
+    <main className="content dashboard-page">
+      <div className="dashboard-heading">
+        <div>
+          <p className="eyebrow">Tournament Admin</p>
+          <h1>{tournament.name}</h1>
+        </div>
+        <div className="dashboard-heading-actions">
+          <a className="button secondary" href="/help">Manual</a>
+          <form action={adminLogoutAction}><button className="button secondary">Log Out</button></form>
+        </div>
+      </div>
+
+      <ViewTabs
+        ariaLabel="Tournament administration"
+        initialView={params.view}
+        tabs={[
+          { id: "overview", label: "Overview", content: overview },
+          { id: "approvals", label: "Approvals", badge: blockerRequests.length, content: approvals },
+          { id: "teams", label: "Teams", badge: teams.filter((team) => !team.deleted_at).length, content: teamManagement },
+          {
+            id: "schedule",
+            label: "Schedule",
+            content: <AdminScheduleContent searchParams={Promise.resolve(params)} embedded />
+          },
+          {
+            id: "tournaments",
+            label: "Tournaments",
+            content: <TournamentManagementContent searchParams={Promise.resolve({ error: params.error })} embedded />
+          }
+        ]}
+      />
     </main>
   );
 }

@@ -63,36 +63,36 @@ function safeSize(value: string) {
 
 export async function centerLoginAction(formData: FormData) {
   const ok = await loginCenter(num(formData, "center_id"), text(formData, "passcode"));
-  if (!ok) redirect("/center?error=1");
+  if (!ok) redirect("/login?mode=center&error=1");
   redirect("/center/dashboard");
 }
 
 export async function centerLogoutAction() {
   await logoutCenter();
-  redirect("/center");
+  redirect("/login?mode=center");
 }
 
 export async function scorekeeperLoginAction(formData: FormData) {
   const tournamentId = await currentTournamentId(text(formData, "tournament_id") || null);
   const ok = await loginScorekeeper(tournamentId, text(formData, "passcode"));
-  if (!ok) redirect("/score?error=1");
+  if (!ok) redirect("/login?mode=score&error=1");
   redirect("/score");
 }
 
 export async function scorekeeperLogoutAction() {
   await logoutScorekeeper();
-  redirect("/score");
+  redirect("/login?mode=score");
 }
 
 export async function adminLoginAction(formData: FormData) {
   const ok = await loginAdmin(text(formData, "password"));
-  if (!ok) redirect("/admin?error=1");
+  if (!ok) redirect("/login?mode=admin&error=1");
   redirect("/admin/dashboard");
 }
 
 export async function adminLogoutAction() {
   await logoutAdmin();
-  redirect("/admin");
+  redirect("/login?mode=admin");
 }
 
 export async function addTeamAction(formData: FormData) {
@@ -451,7 +451,7 @@ export async function generateScheduleAction(formData: FormData) {
   const tournament = await currentTournament(text(formData, "tournament_id") || null);
   if (!(await ensureTournamentEditable(tournament.id))) return;
   const divisions = await listTournamentDivisions(tournament.id);
-  if ((await recordedScoreCount(tournament.id)) > 0) redirect(`/admin/schedule?tournament=${tournament.slug}&locked=scores`);
+  if ((await recordedScoreCount(tournament.id)) > 0) redirect(`/admin/dashboard?view=schedule&tournament=${tournament.slug}&locked=scores`);
   const targetGamesPerTeam = Math.max(scheduleDefaults.targetGamesPerTeam, num(formData, "target_games_per_team", scheduleDefaults.targetGamesPerTeam));
   const scheduleInput = {
     tournamentId: tournament.id,
@@ -500,9 +500,10 @@ export async function generateScheduleAction(formData: FormData) {
   });
   await syncActiveBracketsToSchedule(tournament.id);
   revalidatePath("/admin/schedule");
+  revalidatePath("/admin/dashboard");
   revalidatePath("/schedule");
   redirect(
-    `/admin/schedule?tournament=${tournament.slug}&generated=${result.games.length}&seeding_scheduled=${result.scheduledSeedingGames}&seeding_target=${result.targetSeedingGames}&unscheduled=${result.unscheduledSeedingGames}&unscheduled_tournament=${result.unscheduledTournamentGames}&target_games=${targetGamesPerTeam}`
+    `/admin/dashboard?view=schedule&tournament=${tournament.slug}&generated=${result.games.length}&seeding_scheduled=${result.scheduledSeedingGames}&seeding_target=${result.targetSeedingGames}&unscheduled=${result.unscheduledSeedingGames}&unscheduled_tournament=${result.unscheduledTournamentGames}&target_games=${targetGamesPerTeam}`
   );
 }
 
@@ -562,6 +563,7 @@ export async function moveScheduleGameAction(input: { gameId: number; startsAt: 
   });
 
   revalidatePath("/admin/schedule");
+  revalidatePath("/admin/dashboard");
   revalidatePath("/schedule");
 }
 
@@ -866,7 +868,7 @@ export async function createTournamentAction(formData: FormData) {
   const tournamentType = text(formData, "tournament_type") === "draft" ? "draft" : "nationals";
   const startsOn = text(formData, "starts_on");
   const endsOn = text(formData, "ends_on");
-  if (!name || !slug || !startsOn || !endsOn || endsOn < startsOn) redirect("/admin/tournaments?error=invalid");
+  if (!name || !slug || !startsOn || !endsOn || endsOn < startsOn) redirect("/admin/dashboard?view=tournaments&error=invalid");
   const cloneId = num(formData, "clone_tournament_id");
   const draftDivisions = text(formData, "divisions")
     .split(",")
@@ -929,10 +931,11 @@ export async function createTournamentAction(formData: FormData) {
       return id;
     });
   } catch {
-    redirect("/admin/tournaments?error=slug");
+    redirect("/admin/dashboard?view=tournaments&error=slug");
   }
   revalidatePath("/admin/tournaments");
-  redirect(`/admin/dashboard?tournament=${tournamentId}`);
+  revalidatePath("/admin/dashboard");
+  redirect(`/admin/dashboard?view=tournaments&tournament=${slug}`);
 }
 
 export async function updateTournamentAction(formData: FormData) {
@@ -961,6 +964,7 @@ export async function updateTournamentAction(formData: FormData) {
   );
   revalidatePath("/");
   revalidatePath("/admin/tournaments");
+  revalidatePath("/admin/dashboard");
 }
 
 export async function activateTournamentAction(formData: FormData) {
@@ -978,13 +982,15 @@ export async function activateTournamentAction(formData: FormData) {
   });
   revalidatePath("/");
   revalidatePath("/admin/tournaments");
-  redirect("/admin/dashboard");
+  revalidatePath("/admin/dashboard");
+  redirect("/admin/dashboard?view=overview");
 }
 
 export async function toggleTournamentEditingAction(formData: FormData) {
   await requireAdmin();
   await exec("UPDATE tournaments SET editing_locked = NOT editing_locked, updated_at = NOW() WHERE id = $1", [num(formData, "tournament_id")]);
   revalidatePath("/admin/tournaments");
+  revalidatePath("/admin/dashboard");
 }
 
 export async function toggleDraftLockAction(formData: FormData) {

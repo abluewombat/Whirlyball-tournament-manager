@@ -96,7 +96,7 @@ export default async function HelpPage() {
         <article className="card">
           <h2>1. Open Score Entry</h2>
           <ol>
-            <li>Open Operations, then Score Entry.</li>
+            <li>Open Manage, then Score Entry.</li>
             <li>Enter the shared scorekeeper passcode if prompted.</li>
             <li>Use the court, team, or division filters to find the game.</li>
           </ol>

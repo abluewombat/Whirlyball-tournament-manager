@@ -3,7 +3,7 @@ import "./globals.css";
 import { appVersion } from "@/lib/app-version";
 import { listTournaments, query } from "@/lib/db";
 import { currentTournament } from "@/lib/tournaments";
-import { staffAccess } from "@/lib/auth";
+import { scoreEntryAccess, staffAccess } from "@/lib/auth";
 import { Navigation } from "./navigation";
 
 export const metadata: Metadata = {
@@ -30,6 +30,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     listTournaments().catch(() => []),
     staffAccess().catch(() => null)
   ]);
+  const scoreAccess = !staff && tournament ? await scoreEntryAccess(tournament.id).catch(() => null) : null;
+  const accessRole = staff?.role || (scoreAccess === "scorekeeper" ? "scorekeeper" : null);
   return (
     <html lang="en">
       <body>
@@ -39,7 +41,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <div className="brand">
                 Whirlyball Manager <span className="app-version">{appVersion}</span>
               </div>
-              <Navigation currentTournament={tournament} tournaments={tournaments} staffRole={staff?.role || null} />
+              <Navigation currentTournament={tournament} tournaments={tournaments} accessRole={accessRole} />
             </div>
           </header>
           {announcement ? <div className="announcement-banner">{announcement}</div> : null}

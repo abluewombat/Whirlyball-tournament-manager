@@ -63,6 +63,18 @@ export function ScheduleEditor({ games }: { games: AdminScheduleGame[] }) {
     });
   }
 
+  function selectOrMove(game: AdminScheduleGame | null, startsAt: string, court: number, lockedReason: string | null) {
+    if (lockedReason) return;
+    if (draggedGameId && game?.id !== draggedGameId) {
+      moveGame(startsAt, court);
+      return;
+    }
+    if (!game) return;
+    const nextId = draggedGameId === game.id ? null : game.id;
+    setDraggedGameId(nextId);
+    setMessage(nextId ? "Game selected. Tap another court/time to move or swap it." : "");
+  }
+
   if (!rows.length) return <p className="muted">No generated schedule yet.</p>;
 
   return (
@@ -75,7 +87,7 @@ export function ScheduleEditor({ games }: { games: AdminScheduleGame[] }) {
             </span>
           ))}
         </div>
-        <span className="muted">{isPending ? "Saving..." : message || "Drag a game onto another court/time to move or swap it."}</span>
+        <span className="muted">{isPending ? "Saving..." : message || "Drag a game, or tap it and then tap its destination."}</span>
       </div>
 
       <div className="schedule-grid-wrap">
@@ -96,8 +108,8 @@ export function ScheduleEditor({ games }: { games: AdminScheduleGame[] }) {
                 <td className="schedule-day">{row.day}</td>
                 <td className="schedule-time">{row.time}</td>
                 <td className={refCellClass(row.court1.refDivision)}>{row.court1.refText}</td>
-                {renderGameCell(row, row.court1, 1, draggedGameId, setDraggedGameId, moveGame)}
-                {renderGameCell(row, row.court2, 2, draggedGameId, setDraggedGameId, moveGame)}
+                {renderGameCell(row, row.court1, 1, draggedGameId, setDraggedGameId, moveGame, selectOrMove)}
+                {renderGameCell(row, row.court2, 2, draggedGameId, setDraggedGameId, moveGame, selectOrMove)}
                 <td className={refCellClass(row.court2.refDivision)}>{row.court2.refText}</td>
               </tr>
             ))}
@@ -114,7 +126,8 @@ function renderGameCell(
   court: number,
   draggedGameId: number | null,
   setDraggedGameId: (id: number | null) => void,
-  moveGame: (startsAt: string, court: number) => void
+  moveGame: (startsAt: string, court: number) => void,
+  selectOrMove: (game: AdminScheduleGame | null, startsAt: string, court: number, lockedReason: string | null) => void
 ) {
   const isDragging = draggedGameId !== null && cell.game?.id === draggedGameId;
   const lockedReason = cell.game ? scheduleLockReason(cell.game) : null;
@@ -130,6 +143,9 @@ function renderGameCell(
         if (!canDrop) return;
         moveGame(row.startsAt, court);
       }}
+      onClick={() => {
+        if (draggedGameId && canDrop) selectOrMove(cell.game, row.startsAt, court, lockedReason);
+      }}
     >
       {cell.game ? (
         <button
@@ -138,6 +154,10 @@ function renderGameCell(
           disabled={Boolean(lockedReason)}
           type="button"
           title={lockedReason || "Move or swap this game"}
+          onClick={(event) => {
+            event.stopPropagation();
+            selectOrMove(cell.game, row.startsAt, court, lockedReason);
+          }}
           onDragStart={(event) => {
             if (lockedReason) return;
             event.dataTransfer.effectAllowed = "move";
