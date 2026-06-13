@@ -33,6 +33,7 @@ type AdminDashboardParams = {
   unscheduled?: string;
   unscheduled_tournament?: string;
   locked?: string;
+  scores_cleared?: string;
 };
 
 export default async function AdminDashboardPage({

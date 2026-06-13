@@ -507,6 +507,57 @@ export async function generateScheduleAction(formData: FormData) {
   );
 }
 
+export async function clearAllScoresAction(formData: FormData) {
+  await requireAdmin();
+  const tournament = await currentTournament(text(formData, "tournament_id") || null);
+  if (!(await ensureTournamentEditable(tournament.id))) return;
+
+  const cleared = await withTransaction(async (client) => {
+    const gameResults = await client.query(
+      `UPDATE games
+       SET team_1_score = NULL, team_2_score = NULL, winner_team_id = NULL, loser_team_id = NULL,
+           result_type = NULL, forfeit_team_id = NULL, scored_by = NULL, scored_at = NULL
+       WHERE tournament_id = $1
+         AND (
+           team_1_score IS NOT NULL
+           OR team_2_score IS NOT NULL
+           OR result_type IS NOT NULL
+           OR winner_team_id IS NOT NULL
+           OR loser_team_id IS NOT NULL
+           OR forfeit_team_id IS NOT NULL
+           OR scored_by IS NOT NULL
+           OR scored_at IS NOT NULL
+         )`,
+      [tournament.id]
+    );
+    const bracketResults = await client.query(
+      `UPDATE bracket_games
+       SET team_1_score = NULL, team_2_score = NULL, winner_team_id = NULL, loser_team_id = NULL,
+           result_type = NULL, forfeit_team_id = NULL
+       WHERE bracket_id IN (SELECT id FROM brackets WHERE tournament_id = $1)
+         AND (
+           team_1_score IS NOT NULL
+           OR team_2_score IS NOT NULL
+           OR result_type IS NOT NULL
+           OR winner_team_id IS NOT NULL
+           OR loser_team_id IS NOT NULL
+           OR forfeit_team_id IS NOT NULL
+         )`,
+      [tournament.id]
+    );
+    return (gameResults.rowCount || 0) + (bracketResults.rowCount || 0);
+  });
+
+  revalidatePath("/");
+  revalidatePath("/admin/dashboard");
+  revalidatePath("/admin/schedule");
+  revalidatePath("/score");
+  revalidatePath("/schedule");
+  revalidatePath("/standings");
+  revalidatePath("/brackets");
+  redirect(`/admin/dashboard?view=schedule&tournament=${tournament.slug}&scores_cleared=${cleared}`);
+}
+
 export async function moveScheduleGameAction(input: { gameId: number; startsAt: string; court: number }) {
   await requireAdmin();
   const gameId = Number(input.gameId);

@@ -1,4 +1,4 @@
-import { generateScheduleAction } from "@/app/actions";
+import { clearAllScoresAction, generateScheduleAction } from "@/app/actions";
 import { requireAdmin } from "@/lib/auth";
 import { recordedScoreCount } from "@/lib/brackets";
 import { query } from "@/lib/db";
@@ -17,6 +17,7 @@ type ScheduleSearchParams = {
   unscheduled?: string;
   unscheduled_tournament?: string;
   locked?: string;
+  scores_cleared?: string;
   tournament?: string;
 };
 
@@ -120,9 +121,18 @@ export async function AdminScheduleContent({
           )
         ) : null}
         {params.locked === "scores" || scoredResultCount > 0 ? (
-          <p className="pill warn">
-            Schedule generation is locked because {scoredResultCount} score {scoredResultCount === 1 ? "entry has" : "entries have"} been recorded.
-          </p>
+          <>
+            <p className="pill warn">
+              Schedule generation is locked because {scoredResultCount} score {scoredResultCount === 1 ? "entry has" : "entries have"} been recorded.
+            </p>
+            <form action={clearAllScoresAction} className="actions">
+              <input name="tournament_id" type="hidden" value={tournament.id} />
+              <button className="button danger">Clear All Scores</button>
+            </form>
+          </>
+        ) : null}
+        {params.scores_cleared !== undefined ? (
+          <p className="pill ok">Cleared {Number(params.scores_cleared) || 0} scored result records. Schedule generation is unlocked.</p>
         ) : null}
         <p className="muted">
           Active teams: {activeTeamCount || 0}
