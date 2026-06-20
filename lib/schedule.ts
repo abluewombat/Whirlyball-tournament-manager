@@ -136,6 +136,32 @@ const manualFridayDMatchups = [
   { a: { center: "Texas", division: "D", name: "I Don't Remember" }, b: { center: "Chicago", division: "D", name: "Swatty Ballz" } },
   { a: { center: "Cleveland", division: "D", name: "The Goon Squad" }, b: { center: "Texas", division: "D", name: "The 30%ers" } }
 ];
+const manualPreplayedSeedingMatchups = [
+  {
+    count: 1,
+    removeAllGenerated: false,
+    a: { center: "Michigan", division: "D", name: "Motown Motion" },
+    b: { center: "Michigan", division: "D", name: "Designated Drunk Drivers" }
+  },
+  {
+    count: 1,
+    removeAllGenerated: true,
+    a: { center: "Michigan", division: "A", name: "Hey You Guys" },
+    b: { center: "Michigan", division: "A", name: "Goal Diggers" }
+  },
+  {
+    count: 1,
+    removeAllGenerated: true,
+    a: { center: "Michigan", division: "A", name: "Hey You Guys" },
+    b: { center: "Michigan", division: "A", name: "Shots Fired" }
+  },
+  {
+    count: 1,
+    removeAllGenerated: true,
+    a: { center: "Michigan", division: "A", name: "Goal Diggers" },
+    b: { center: "Michigan", division: "A", name: "Shots Fired" }
+  }
+];
 
 function dateRange(start: string, end: string) {
   const days: Date[] = [];
@@ -483,6 +509,37 @@ function buildManualSaturdayDMatchups(teams: TeamRow[]) {
     const team2 = findManualTeam(teams, matchup.b);
     return team1 && team2 ? [{ a: team1, b: team2 }] : [];
   });
+}
+
+function buildPreplayedSeedingMatchups(teams: TeamRow[]) {
+  return manualPreplayedSeedingMatchups.flatMap((matchup) => {
+    const team1 = findManualTeam(teams, matchup.a);
+    const team2 = findManualTeam(teams, matchup.b);
+    return team1 && team2 ? [{ a: team1, b: team2, count: matchup.count, removeAllGenerated: matchup.removeAllGenerated }] : [];
+  });
+}
+
+function applyPreplayedSeedingAdjustments(queues: Map<string, Matchup[]>, targetGamesByTeam: Map<number, number>, preplayedMatchups: ReturnType<typeof buildPreplayedSeedingMatchups>) {
+  for (const preplayed of preplayedMatchups) {
+    if (targetGamesByTeam.size) {
+      targetGamesByTeam.set(preplayed.a.id, Math.max(0, (targetGamesByTeam.get(preplayed.a.id) || 0) - preplayed.count));
+      targetGamesByTeam.set(preplayed.b.id, Math.max(0, (targetGamesByTeam.get(preplayed.b.id) || 0) - preplayed.count));
+    }
+
+    const queue = queues.get(preplayed.a.division);
+    if (!queue) continue;
+    let removed = 0;
+    for (let index = 0; index < queue.length; ) {
+      const matchup = queue[index];
+      if (matchupKey(matchup.a, matchup.b) !== matchupKey(preplayed.a, preplayed.b)) {
+        index++;
+        continue;
+      }
+      if (!preplayed.removeAllGenerated && removed >= preplayed.count) break;
+      queue.splice(index, 1);
+      removed++;
+    }
+  }
 }
 
 function buildManualFridayDGames(byDivision: Map<string, TeamRow[]>, teams: TeamRow[], input: ScheduleInput): GeneratedGame[] {
@@ -2792,6 +2849,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
   for (const [division, divTeams] of seedingByDivision.entries()) {
     queues.set(division, buildDivisionMatchups(divTeams, maxPairRepeats));
   }
+  applyPreplayedSeedingAdjustments(queues, targetGamesByTeam, buildPreplayedSeedingMatchups(teams));
   const targetGamesByDivision = buildTargetGamesByDivision(queues, seedingByDivision, targetGamesByTeam);
   const targetSeedingGames = [...targetGamesByDivision.values()].reduce((sum, count) => sum + count, 0);
 
