@@ -376,7 +376,11 @@ function buildManualScheduleReservations(input: ScheduleInput, sharedExhibitionP
     ...buildDailyBufferReservations(input),
     ...allCourtReservations(manualCeremonyStart, manualCeremonyMinutes, input.courts),
     ...unlimitedScheduleReservations,
-    ...manualFridayDStartTimes.flatMap((time) => allCourtReservations(manualDateTime(manualFridayDate, time), input.seedingMinutes, input.courts))
+    ...manualFridayDStartTimes.map((time) => ({
+      startsAt: manualDateTime(manualFridayDate, time),
+      durationMinutes: input.seedingMinutes,
+      court: Math.max(1, Math.min(input.courts, input.unlimitedCourt || scheduleDefaults.unlimitedCourt))
+    }))
   ];
 }
 
