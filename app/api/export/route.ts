@@ -150,7 +150,7 @@ export async function GET() {
 
 function addScheduleGridSheet(workbook: ExcelJS.Workbook, games: GameExportRow[]) {
   const sheet = workbook.addWorksheet("Schedule Grid", {
-    views: [{ state: "frozen", ySplit: 2 }]
+    views: [{ state: "frozen", ySplit: 3 }]
   });
   sheet.columns = [
     { header: "Day", key: "day", width: 14 },
@@ -177,7 +177,12 @@ function addScheduleGridSheet(workbook: ExcelJS.Workbook, games: GameExportRow[]
   });
 
   const gridRows = buildScheduleGrid(games);
+  let previousDay = "";
   for (const row of gridRows) {
+    if (row.day !== previousDay) {
+      addScheduleGridDaySeparator(sheet, row.day);
+      previousDay = row.day;
+    }
     const excelRow = sheet.addRow([row.day, row.time, row.court1Ref, row.court1Game, row.court2Game, row.court2Ref]);
     excelRow.height = 30;
     excelRow.eachCell((cell) => {
@@ -191,6 +196,24 @@ function addScheduleGridSheet(workbook: ExcelJS.Workbook, games: GameExportRow[]
     excelRow.getCell(1).font = { bold: true };
     excelRow.getCell(2).font = { bold: true };
   }
+}
+
+function addScheduleGridDaySeparator(sheet: ExcelJS.Worksheet, day: string) {
+  const row = sheet.addRow([day]);
+  row.height = 26;
+  const rowNumber = row.number;
+  sheet.mergeCells(`A${rowNumber}:F${rowNumber}`);
+  const cell = sheet.getCell(`A${rowNumber}`);
+  cell.value = day.toUpperCase();
+  cell.font = { bold: true, size: 14, color: { argb: "FFFFFFFF" } };
+  cell.fill = solidFill("000000");
+  cell.alignment = { horizontal: "center", vertical: "middle" };
+  cell.border = {
+    top: { style: "medium", color: { argb: "FF000000" } },
+    left: { style: "medium", color: { argb: "FF000000" } },
+    bottom: { style: "medium", color: { argb: "FF000000" } },
+    right: { style: "medium", color: { argb: "FF000000" } }
+  };
 }
 
 function addScheduleDetailSheet(workbook: ExcelJS.Workbook, games: GameExportRow[]) {
