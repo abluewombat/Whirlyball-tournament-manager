@@ -2671,7 +2671,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
           }
           return true;
         };
-        const usedTeamIds = new Set<number>();
+        const usedTeamIds = scheduledTeamIdsAt(games, rowStartsAt);
         const rowMatchups: Matchup[] = [];
         const availableSeedingCourts = Math.min(input.courts - reservedCourts.size, divisionDeficit);
         for (let court = 0; court < availableSeedingCourts; court++) {
