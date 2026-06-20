@@ -2816,6 +2816,135 @@ function compactSeedingGamesIntoOpenSlots({
   return moved;
 }
 
+function seedingDayKey(game: GeneratedGame) {
+  return game.startsAt.slice(0, 10);
+}
+
+function movableSeedingGame(game: GeneratedGame) {
+  return game.phase === "seeding" && game.team1Id !== null && game.team2Id !== null && !isManualFixedSeedingGame(game);
+}
+
+function canPlaceExistingSeedingGameAt({
+  game,
+  startsAt,
+  court,
+  games,
+  teams,
+  input,
+  availability,
+  reservedSeedingCourts,
+  ignoreGames
+}: {
+  game: GeneratedGame;
+  startsAt: string;
+  court: number;
+  games: GeneratedGame[];
+  teams: TeamRow[];
+  input: ScheduleInput;
+  availability: AvailabilityMap;
+  reservedSeedingCourts: Map<string, Set<number>>;
+  ignoreGames: Set<GeneratedGame>;
+}) {
+  if (game.team1Id === null || game.team2Id === null) return false;
+  if (game.startsAt.slice(0, 10) !== startsAt.slice(0, 10)) return false;
+  if (reservedSeedingCourts.get(startsAt)?.has(court)) return false;
+  const teamById = new Map(teams.map((team) => [team.id, team]));
+  const team1 = teamById.get(game.team1Id);
+  const team2 = teamById.get(game.team2Id);
+  if (!team1 || !team2) return false;
+  if (divisionBlockedDuringManualUnlimitedWindow(game.division, startsAt, input.seedingMinutes, input)) return false;
+  if (teamBlockedAt(team1.id, startsAt, input.seedingMinutes, availability)) return false;
+  if (teamBlockedAt(team2.id, startsAt, input.seedingMinutes, availability)) return false;
+
+  const otherGames = games.filter((candidate) => !ignoreGames.has(candidate));
+  if (otherGames.some((candidate) => candidate.startsAt === startsAt && candidate.court === court)) return false;
+  const usedTeamIds = scheduledTeamIdsAt(otherGames, startsAt);
+  if (usedTeamIds.has(team1.id) || usedTeamIds.has(team2.id)) return false;
+  return teamsCanUseCourtWithoutBackToBackSwitch([team1.id, team2.id], startsAt, input.seedingMinutes, court, otherGames, input, game);
+}
+
+function avoidSameDivisionFirstAndLastSeedingRows({
+  games,
+  teams,
+  input,
+  availability,
+  reservedSeedingCourts
+}: {
+  games: GeneratedGame[];
+  teams: TeamRow[];
+  input: ScheduleInput;
+  availability: AvailabilityMap;
+  reservedSeedingCourts: Map<string, Set<number>>;
+}) {
+  let moved = 0;
+  const dayKeys = [...new Set(games.filter((game) => game.phase === "seeding" && game.team1Id !== null && game.team2Id !== null).map(seedingDayKey))].sort();
+
+  for (const dayKey of dayKeys) {
+    const dayGames = games
+      .filter((game) => game.phase === "seeding" && game.team1Id !== null && game.team2Id !== null && seedingDayKey(game) === dayKey)
+      .sort((left, right) => left.startsAt.localeCompare(right.startsAt) || left.court - right.court);
+    if (dayGames.length < 3) continue;
+    const firstStart = dayGames[0].startsAt;
+    const lastStart = dayGames[dayGames.length - 1].startsAt;
+    if (firstStart === lastStart) continue;
+
+    const firstDivisions = new Set(dayGames.filter((game) => game.startsAt === firstStart).map((game) => game.division));
+    const offenders = dayGames.filter((game) => game.startsAt === lastStart && firstDivisions.has(game.division) && movableSeedingGame(game));
+
+    for (const offender of offenders) {
+      const replacement = dayGames
+        .filter(
+          (candidate) =>
+            movableSeedingGame(candidate) &&
+            candidate !== offender &&
+            candidate.startsAt !== firstStart &&
+            candidate.startsAt !== lastStart &&
+            !firstDivisions.has(candidate.division)
+        )
+        .find((candidate) => {
+          const ignoreGames = new Set([offender, candidate]);
+          return (
+            canPlaceExistingSeedingGameAt({
+              game: offender,
+              startsAt: candidate.startsAt,
+              court: candidate.court,
+              games,
+              teams,
+              input,
+              availability,
+              reservedSeedingCourts,
+              ignoreGames
+            }) &&
+            canPlaceExistingSeedingGameAt({
+              game: candidate,
+              startsAt: offender.startsAt,
+              court: offender.court,
+              games,
+              teams,
+              input,
+              availability,
+              reservedSeedingCourts,
+              ignoreGames
+            })
+          );
+        });
+
+      if (!replacement) continue;
+      const offenderStartsAt = offender.startsAt;
+      const offenderCourt = offender.court;
+      offender.startsAt = replacement.startsAt;
+      offender.court = replacement.court;
+      offender.refTeamId = null;
+      replacement.startsAt = offenderStartsAt;
+      replacement.court = offenderCourt;
+      replacement.refTeamId = null;
+      moved++;
+    }
+  }
+
+  return moved;
+}
+
 function findWarmupPairing(
   divisionTeams: TeamRow[],
   queue: Matchup[],
@@ -3414,6 +3543,14 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
     });
     rebuildSeedingTracking(games, teamGameCounts, pairPlayCounts, courtCountsByTeam, matchupCourtCounts);
   }
+
+  avoidSameDivisionFirstAndLastSeedingRows({
+    games,
+    teams,
+    input,
+    availability,
+    reservedSeedingCourts
+  });
 
   const unscheduledTournamentGames = 0;
   assignRefsForSchedule(games, teams, availability, input, tournamentDays);

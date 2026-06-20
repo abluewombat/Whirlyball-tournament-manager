@@ -377,7 +377,51 @@ function buildScheduleGrid(games: GameExportRow[]) {
     rows.set(key, row);
   }
 
+  addTwentyMinuteSkeletonRows(rows);
   return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row);
+}
+
+function addTwentyMinuteSkeletonRows(rows: Map<string, ReturnType<typeof emptyScheduleGridRow>>) {
+  const dayMinutes = new Map<string, number[]>();
+  for (const startsAt of rows.keys()) {
+    const parsed = parseLiteralStart(startsAt);
+    if (!parsed) continue;
+    dayMinutes.set(parsed.day, [...(dayMinutes.get(parsed.day) || []), parsed.minute]);
+  }
+
+  for (const [day, minutes] of dayMinutes.entries()) {
+    const first = Math.min(...minutes);
+    const last = Math.max(...minutes);
+    for (let minute = first; minute <= last; minute += 20) {
+      const startsAt = literalStart(day, minute);
+      if (!rows.has(startsAt)) rows.set(startsAt, emptyScheduleGridRow(startsAt));
+    }
+  }
+}
+
+function emptyScheduleGridRow(startsAt: string) {
+  return {
+    day: formatDay(startsAt),
+    time: formatTime(startsAt),
+    court1Ref: "",
+    court1RefDivision: "",
+    court1Game: "",
+    court1Division: "",
+    court2Game: "",
+    court2Division: "",
+    court2Ref: "",
+    court2RefDivision: ""
+  };
+}
+
+function parseLiteralStart(value: string) {
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
+  if (!match) return null;
+  return { day: match[1], minute: Number(match[2]) * 60 + Number(match[3]) };
+}
+
+function literalStart(day: string, minute: number) {
+  return `${day}T${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}:00`;
 }
 
 function buildScheduleQuality(teams: TeamExportRow[], games: GameExportRow[]) {
