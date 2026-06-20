@@ -136,6 +136,7 @@ const manualSaturdayDLabel = "D Saturday Feature Seeding";
 const manualBufferDivision = "Buffer";
 const openSlotDivision = "Open";
 const openSlotLabel = "Open schedule slot";
+const minimumSplitBlockGames = 4;
 const manualDailyBufferMinutes = 20;
 const refStintRows = 3;
 const fillAvailableSeedingSlots = true;
@@ -332,13 +333,21 @@ function splitLargeDivisionBlocks(plan: DivisionDayPlan[], courts: number) {
   const secondBlocks: DivisionDayPlan[] = [];
 
   for (const item of plan) {
-    if (item.rowCount >= 4 && item.targetGames > courts * 2) {
-      const secondRows = Math.max(1, Math.min(item.rowCount - 1, Math.floor(item.rowCount / 2)));
-      const secondTargetGames = Math.max(1, Math.min(item.targetGames - 1, secondRows * courts));
+    const secondTargetGames = Math.floor(item.targetGames / 2);
+    const primaryTargetGames = item.targetGames - secondTargetGames;
+    const secondRows = Math.max(1, Math.ceil(secondTargetGames / courts));
+    const primaryRows = item.rowCount - secondRows;
+    const canSplit =
+      item.targetGames >= minimumSplitBlockGames * 2 &&
+      secondTargetGames >= minimumSplitBlockGames &&
+      primaryTargetGames >= minimumSplitBlockGames &&
+      primaryRows >= Math.ceil(primaryTargetGames / courts);
+
+    if (canSplit) {
       primaryBlocks.push({
         ...item,
-        targetGames: item.targetGames - secondTargetGames,
-        rowCount: item.rowCount - secondRows
+        targetGames: primaryTargetGames,
+        rowCount: primaryRows
       });
       secondBlocks.push({
         ...item,

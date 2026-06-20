@@ -86,6 +86,7 @@ type ScheduleRuleDefinition = {
 };
 
 const tuesdayDefaultArrivalTime = "19:00";
+const minimumSplitBlockGames = 4;
 
 export const scheduleRules: ScheduleRuleDefinition[] = [
   {
@@ -322,24 +323,31 @@ function auditDivisionDailyBlocks(context: ScheduleRuleContext, rule: Pick<Sched
     const divisionBlocks = divisionBlocksForStarts(dayGames, starts);
     const divisions = [...new Set(dayGames.map((game) => game.division))].sort();
     for (const division of divisions) {
-      const divisionRows = starts.filter((startsAt) => dayGames.some((game) => startsAtForGame(game) === startsAt && game.division === division));
-      if (divisionRows.length < 4) continue;
-      const blockIndexes = divisionBlockIndexes(divisionBlocks, division);
-      const blocks = blockIndexes.length;
-      if (allowedSoftSplitBlockIndexes(divisionBlocks, division)) continue;
+      const divisionRuns = divisionBlockRuns(dayGames, starts, division);
+      const divisionGameCount = divisionRuns.reduce((sum, run) => sum + run.gameCount, 0);
+      const blockIndexes = divisionRuns.map((run) => run.blockIndex);
+      const blocks = divisionRuns.length;
+      const hasTinySplitBlock = blocks > 1 && divisionRuns.some((run) => run.gameCount < minimumSplitBlockGames);
+      const requiresSplit = divisionGameCount >= minimumSplitBlockGames * 2;
+      const validSplit =
+        blocks === 2 &&
+        blockIndexes[1] - blockIndexes[0] === 2 &&
+        divisionRuns.every((run) => run.gameCount >= minimumSplitBlockGames);
+      if (!hasTinySplitBlock && (!requiresSplit || validSplit)) continue;
       issues.push({
         ruleId: rule.id,
         ruleName: rule.name,
         severity: rule.severity,
         startsAt: `${day}T00:00:00`,
-        message: `${division} needs two seeding blocks with one other block between them on ${day}`,
+        message: `${division} needs two seeding blocks of at least ${minimumSplitBlockGames} games with one other block between them on ${day}`,
         details: {
           day,
           division,
           blocks,
-          rowCount: divisionRows.length,
+          gameCount: divisionGameCount,
           blockIndexes: blockIndexes.map(String),
-          rows: divisionRows
+          blockGameCounts: divisionRuns.map((run) => String(run.gameCount)),
+          rows: divisionRuns.flatMap((run) => run.rows)
         }
       });
     }
@@ -366,6 +374,36 @@ function divisionBlockIndexes(blocks: Array<Set<string>>, division: string) {
     if (block.has(division) && !previous?.has(division)) indexes.push(index);
   }
   return indexes;
+}
+
+function divisionBlockRuns(dayGames: ScheduleRuleGame[], starts: string[], division: string) {
+  const blocks = divisionBlocksForStarts(dayGames, starts);
+  const runs: Array<{ blockIndex: number; gameCount: number; rows: string[] }> = [];
+  let startIndex = 0;
+  for (const [blockIndex, block] of blocks.entries()) {
+    const blockStarts = starts.slice(startIndex, startIndex + countRowsInBlock(dayGames, starts.slice(startIndex), block));
+    startIndex += blockStarts.length;
+    if (!block.has(division)) continue;
+    runs.push({
+      blockIndex,
+      gameCount: blockStarts.reduce(
+        (sum, startsAt) => sum + dayGames.filter((game) => startsAtForGame(game) === startsAt && game.division === division).length,
+        0
+      ),
+      rows: blockStarts.filter((startsAt) => dayGames.some((game) => startsAtForGame(game) === startsAt && game.division === division))
+    });
+  }
+  return runs;
+}
+
+function countRowsInBlock(dayGames: ScheduleRuleGame[], starts: string[], block: Set<string>) {
+  let count = 0;
+  for (const startsAt of starts) {
+    const rowDivisions = new Set(dayGames.filter((game) => startsAtForGame(game) === startsAt).map((game) => game.division));
+    if (!setsEqual(rowDivisions, block)) break;
+    count++;
+  }
+  return count;
 }
 
 function allowedSoftSplitBlockIndexes(blocks: Array<Set<string>>, division: string) {
