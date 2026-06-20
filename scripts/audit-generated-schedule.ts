@@ -117,6 +117,7 @@ async function main() {
 
   const issues = auditAssignments(assignments, teamById);
   const availabilityBlockIssues = auditAvailabilityBlocks(assignments, teamById, availabilityByTeam);
+  const backToBackCourtSwitchIssues = auditBackToBackCourtSwitches(assignments, teamById);
   const tournamentSegmentIssues = auditTournamentSegments(result.games);
   const severe = issues.filter((issue) => issue.severity >= 90).length;
   const high = issues.filter((issue) => issue.severity >= 70).length;
@@ -130,6 +131,8 @@ async function main() {
         highIssues: high,
         availabilityBlockIssues: availabilityBlockIssues.length,
         availabilityBlockExamples: availabilityBlockIssues.slice(0, 20),
+        backToBackCourtSwitchIssues: backToBackCourtSwitchIssues.length,
+        backToBackCourtSwitchExamples: backToBackCourtSwitchIssues.slice(0, 20),
         tournamentSegmentIssues: tournamentSegmentIssues.length,
         tournamentSegmentExamples: tournamentSegmentIssues.slice(0, 20),
         issues: issues.slice(0, 80)
@@ -154,6 +157,29 @@ function auditAvailabilityBlocks(assignmentsByTeam: Map<number, Assignment[]>, t
         `${team.division} ${team.center_name} ${team.name}: ${item.startsAt.slice(0, 16)} ${item.role.toUpperCase()} C${item.court} overlaps ${
           overlappingBlock.starts_at.slice(0, 16)
         }-${overlappingBlock.ends_at.slice(11, 16)}${overlappingBlock.reason ? ` (${overlappingBlock.reason})` : ""}`
+      );
+    }
+  }
+  return issues.sort();
+}
+
+function auditBackToBackCourtSwitches(assignmentsByTeam: Map<number, Assignment[]>, teamsById: Map<number, Team>) {
+  const issues: string[] = [];
+  for (const [teamId, items] of assignmentsByTeam.entries()) {
+    const team = teamsById.get(teamId);
+    if (!team) continue;
+    const plays = items.filter((item) => item.role === "play").sort((left, right) => left.startsAt.localeCompare(right.startsAt) || left.court - right.court);
+    for (let index = 1; index < plays.length; index += 1) {
+      const previous = plays[index - 1];
+      const current = plays[index];
+      if (previous.court === current.court) continue;
+      const previousEnd = addMinutes(previous.startsAt, previous.durationMinutes);
+      if (previousEnd !== current.startsAt) continue;
+      issues.push(
+        `${team.division} ${team.center_name} ${team.name}: C${previous.court} ${previous.startsAt.slice(0, 16)} -> C${current.court} ${current.startsAt.slice(
+          0,
+          16
+        )}`
       );
     }
   }
@@ -262,6 +288,16 @@ function intervalsOverlap(leftStartsAt: string, leftDurationMinutes: number, rig
 function parseScheduleDateTime(value: string) {
   if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)) return Date.parse(value);
   return Date.parse(`${value}Z`);
+}
+
+function addMinutes(value: string, addedMinutes: number) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return value;
+  const [, year, month, day, hour, minute, second = "00"] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute) + addedMinutes, Number(second)));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}T${String(
+    date.getUTCHours()
+  ).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}:${String(date.getUTCSeconds()).padStart(2, "0")}`;
 }
 
 function longestRun(values: string[]) {

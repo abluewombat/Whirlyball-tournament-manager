@@ -40,18 +40,26 @@ type ScheduleTeamStats = {
 };
 
 const divisionColors: Record<string, string> = {
-  A: "C65911",
-  B: "2F75B5",
-  C: "548235",
-  D: "BF9000",
-  Unlimited: "8064A2"
+  A: "FFD966",
+  B: "F4B183",
+  C: "5B9BD5",
+  D: "70AD47",
+  Unlimited: "D9C2E9"
+};
+
+const divisionTextColors: Record<string, string> = {
+  A: "FF202124",
+  B: "FF202124",
+  C: "FF202124",
+  D: "FF202124",
+  Unlimited: "FF202124"
 };
 
 const refDivisionColors: Record<string, string> = {
-  A: "FCE4D6",
-  B: "DDEBF7",
-  C: "E2F0D9",
-  D: "FFF2CC",
+  A: "FFF2CC",
+  B: "FCE4D6",
+  C: "DDEBF7",
+  D: "E2F0D9",
   Unlimited: "EADCF8"
 };
 
@@ -565,7 +573,7 @@ function titleCase(value: string) {
 
 function colorGameCell(cell: ExcelJS.Cell, division: string) {
   cell.fill = solidFill(divisionColors[division] || "FFFFFF");
-  cell.font = { bold: true, color: { argb: divisionColors[division] ? "FFFFFFFF" : "FF202124" } };
+  cell.font = { bold: true, color: { argb: divisionColors[division] ? divisionTextColors[division] || "FF202124" : "FF202124" } };
   cell.alignment = { vertical: "middle", wrapText: true };
 }
 
