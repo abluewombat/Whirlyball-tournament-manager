@@ -1306,6 +1306,10 @@ function matchupHasTargetRoom(matchup: Matchup, targetGamesByTeam: Map<number, n
   return aTarget !== undefined && bTarget !== undefined && teamGameCount(matchup.a, teamGameCounts) < aTarget && teamGameCount(matchup.b, teamGameCounts) < bTarget;
 }
 
+function matchupTouchesTeamAtTarget(matchup: Matchup, targetGamesByTeam: Map<number, number>, teamGameCounts: Map<number, number>) {
+  return targetGamesByTeam.size > 0 && (teamAtTarget(matchup.a, targetGamesByTeam, teamGameCounts) || teamAtTarget(matchup.b, targetGamesByTeam, teamGameCounts));
+}
+
 function matchupKeepsSeedingCountsBalanced(matchup: Matchup, divisionTeams: TeamRow[], teamGameCounts: Map<number, number>) {
   if (!divisionTeams.length) return true;
   const currentCounts = divisionTeams.map((team) => teamGameCount(team, teamGameCounts));
@@ -2102,6 +2106,7 @@ function repairSeedingSlots({
     const availableCourts = Array.from({ length: input.courts }, (_, index) => index + 1).filter((court) => !occupiedCourts.has(court));
     const divisionTeams = byDivision.get(slot.division) || [];
     const eligible = (matchup: Matchup) => {
+      if (!matchup.required && matchupTouchesTeamAtTarget(matchup, targetGamesByTeam, teamGameCounts)) return false;
       if (!matchup.required && !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) && !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts)) return false;
       if (divisionBlockedDuringManualUnlimitedWindow(matchup.division, slot.startsAt, input.seedingMinutes, input)) return false;
       if (teamBlockedAt(matchup.a.id, slot.startsAt, input.seedingMinutes, availability)) return false;
@@ -2253,6 +2258,7 @@ function repairOpenSeedingCourts({
         const queue = queues.get(division) || [];
         const divisionTeams = byDivision.get(division) || [];
         const eligible = (matchup: Matchup) => {
+          if (!matchup.required && matchupTouchesTeamAtTarget(matchup, targetGamesByTeam, teamGameCounts)) return false;
           if (!matchup.required && !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) && !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts)) return false;
           if (divisionBlockedDuringManualUnlimitedWindow(matchup.division, slot.startsAt, input.seedingMinutes, input)) return false;
           if (teamBlockedAt(matchup.a.id, slot.startsAt, input.seedingMinutes, availability)) return false;
@@ -3088,6 +3094,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
           nextDayTournamentDivisions
         });
         const eligible = (matchup: Matchup) => {
+          if (!matchup.required && matchupTouchesTeamAtTarget(matchup, targetGamesByTeam, teamGameCounts)) return false;
           if (!matchup.required && !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) && !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts)) return false;
           if (divisionBlockedDuringManualUnlimitedWindow(matchup.division, rowStartsAt, input.seedingMinutes, input)) return false;
           if (teamBlockedAt(matchup.a.id, rowStartsAt, input.seedingMinutes, availability)) return false;
