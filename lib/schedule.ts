@@ -572,7 +572,7 @@ function buildManualSaturdayMorningGames(teams: TeamRow[], byDivision: Map<strin
 }
 
 function buildDailyBufferReservations(input: ScheduleInput) {
-  const days = dateRange(input.startDate, input.endDate).filter((day) => isoDate(day) !== manualSaturdayDate);
+  const days = dateRange(input.startDate, input.endDate).filter((day) => isoDate(day) < manualSaturdayDate);
   return days.flatMap((day) => allCourtReservations(defaultDailyBufferStart(day), manualDailyBufferMinutes, input.courts));
 }
 
@@ -582,7 +582,7 @@ function defaultDailyBufferStart(day: Date) {
 
 function buildDailyBufferGames(input: ScheduleInput): GeneratedGame[] {
   return dateRange(input.startDate, input.endDate)
-    .filter((day) => isoDate(day) !== manualSaturdayDate)
+    .filter((day) => isoDate(day) < manualSaturdayDate)
     .flatMap((day) =>
       allCourtReservations(defaultDailyBufferStart(day), manualDailyBufferMinutes, input.courts).map((reservation) => ({
         phase: "seeding" as const,
