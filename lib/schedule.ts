@@ -1001,7 +1001,7 @@ function planTournamentDay(day: Date, divisions: string[], entriesByDivision: Ma
   } satisfies TournamentDayPlan;
 }
 
-function equalizeSeedingGameCounts(games: GeneratedGame[], byDivision: Map<string, TeamRow[]>) {
+function equalizeSeedingGameCounts(games: GeneratedGame[], byDivision: Map<string, TeamRow[]>, targetGamesByTeam = new Map<number, number>()) {
   const counts = new Map<number, number>();
   for (const teams of byDivision.values()) {
     for (const team of teams) counts.set(team.id, 0);
@@ -1010,6 +1010,21 @@ function equalizeSeedingGameCounts(games: GeneratedGame[], byDivision: Map<strin
     if (game.phase !== "seeding" || game.team1Id === null || game.team2Id === null) continue;
     counts.set(game.team1Id, (counts.get(game.team1Id) || 0) + 1);
     counts.set(game.team2Id, (counts.get(game.team2Id) || 0) + 1);
+  }
+
+  if (targetGamesByTeam.size) {
+    while (true) {
+      const index = games.findLastIndex((game) => {
+        if (game.phase !== "seeding" || game.team1Id === null || game.team2Id === null || isManualFixedSeedingGame(game)) return false;
+        return (counts.get(game.team1Id) || 0) > (targetGamesByTeam.get(game.team1Id) || 0) && (counts.get(game.team2Id) || 0) > (targetGamesByTeam.get(game.team2Id) || 0);
+      });
+      if (index < 0) break;
+      const [game] = games.splice(index, 1);
+      counts.set(game.team1Id as number, (counts.get(game.team1Id as number) || 0) - 1);
+      counts.set(game.team2Id as number, (counts.get(game.team2Id as number) || 0) - 1);
+    }
+
+    return counts;
   }
 
   const teamIds = [...counts.keys()];
@@ -3066,7 +3081,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
   });
   rebuildSeedingTracking(games, teamGameCounts, pairPlayCounts, courtCountsByTeam, matchupCourtCounts);
 
-  equalizeSeedingGameCounts(games, seedingByDivision);
+  equalizeSeedingGameCounts(games, seedingByDivision, targetGamesByTeam);
   compactSeedingGamesIntoOpenSlots({
     seedingDays,
     games,
