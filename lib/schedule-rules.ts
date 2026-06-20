@@ -96,7 +96,7 @@ export const scheduleRules: ScheduleRuleDefinition[] = [
   },
   {
     id: "cross-court-buffer",
-    name: "Cross-Court Assignments Have One-Game Buffer",
+    name: "Play Assignments Have Required Buffers",
     severity: "error",
     check: auditCrossCourtAssignmentBuffer
   }
@@ -255,10 +255,8 @@ function auditCrossCourtAssignmentBuffer(context: ScheduleRuleContext, rule: Pic
       for (let rightIndex = leftIndex + 1; rightIndex < sorted.length; rightIndex += 1) {
         const left = sorted[leftIndex];
         const right = sorted[rightIndex];
-        const overlap = intervalsOverlap(left.startsAt, left.durationMinutes, right.startsAt, right.durationMinutes);
-        const crossCourtTooClose = left.court !== right.court && intervalGapMinutes(left, right) < Math.max(left.durationMinutes, right.durationMinutes);
-        if (!overlap && !crossCourtTooClose) continue;
-        if (left.court === right.court && left.role === right.role && left.startsAt === right.startsAt) continue;
+        const reason = assignmentBufferConflictReason(left, right);
+        if (!reason) continue;
         const team = context.teamsById.get(teamId);
         const teamName = team ? formatTeam(team) : `Team ${teamId}`;
         issues.push({
@@ -267,9 +265,9 @@ function auditCrossCourtAssignmentBuffer(context: ScheduleRuleContext, rule: Pic
           severity: rule.severity,
           team: teamName,
           startsAt: left.startsAt,
-          message: `${teamName} has ${overlap ? "overlapping" : "back-to-back cross-court"} assignments`,
+          message: `${teamName} has assignments without the required buffer`,
           details: {
-            reason: overlap ? "overlapping assignment" : "cross-court assignment without a one-game buffer",
+            reason,
             leftRole: left.role,
             leftStart: left.startsAt,
             leftCourt: left.court,
@@ -284,6 +282,30 @@ function auditCrossCourtAssignmentBuffer(context: ScheduleRuleContext, rule: Pic
     }
   }
   return issues.sort(compareIssues);
+}
+
+function assignmentBufferConflictReason(
+  left: { role: "play" | "ref"; startsAt: string; durationMinutes: number; court: number },
+  right: { role: "play" | "ref"; startsAt: string; durationMinutes: number; court: number }
+) {
+  if (left.role === "ref" && right.role === "ref") return null;
+
+  const overlap = intervalsOverlap(left.startsAt, left.durationMinutes, right.startsAt, right.durationMinutes);
+  const gap = intervalGapMinutes(left, right);
+  const requiredBufferMinutes = Math.max(left.durationMinutes, right.durationMinutes);
+
+  if (left.role !== right.role) {
+    if (overlap) return "play/ref assignment overlap";
+    if (gap < requiredBufferMinutes) return "play/ref assignment without a one-game buffer";
+    return null;
+  }
+
+  if (left.role === "play" && right.role === "play") {
+    if (overlap) return "play assignment overlap";
+    if (left.court !== right.court && gap < requiredBufferMinutes) return "cross-court play assignment without a one-game buffer";
+  }
+
+  return null;
 }
 
 function startsAtForGame(game: ScheduleRuleGame) {

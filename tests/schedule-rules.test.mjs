@@ -112,7 +112,7 @@ test("cross-court rule flags a team playing on another court at the same time", 
   assert.equal(rule.issues[0].team, "A Texas Double Booked");
 });
 
-test("cross-court rule flags a team reffing while expected to play another court", () => {
+test("buffer rule flags a team reffing while expected to play another court", () => {
   const report = reportFor({
     games: [
       { ...seedingGame(1, "A", "2026-06-23T09:00:00", 1), team_1_id: 101, ref_team_id: 201 },
@@ -127,7 +127,7 @@ test("cross-court rule flags a team reffing while expected to play another court
   assert.equal(rule.issues[0].details.rightRole, "ref");
 });
 
-test("cross-court rule flags a team assigned to ref two courts at the same time", () => {
+test("buffer rule allows a team assigned to ref two courts at the same time", () => {
   const report = reportFor({
     games: [
       { ...seedingGame(1, "A", "2026-06-23T09:00:00", 1), ref_team_id: 201 },
@@ -136,10 +136,10 @@ test("cross-court rule flags a team assigned to ref two courts at the same time"
     teams: [{ id: 201, division: "B", center: "Texas", name: "Split Ref" }]
   });
 
-  assert.equal(ruleById(report, "cross-court-buffer").issueCount, 1);
+  assert.equal(ruleById(report, "cross-court-buffer").issueCount, 0);
 });
 
-test("cross-court rule flags back-to-back assignments on different courts", () => {
+test("buffer rule flags back-to-back play assignments on different courts", () => {
   const report = reportFor({
     games: [
       { ...seedingGame(1, "A", "2026-06-23T09:00:00", 1), team_1_id: 101 },
@@ -150,10 +150,10 @@ test("cross-court rule flags back-to-back assignments on different courts", () =
 
   const rule = ruleById(report, "cross-court-buffer");
   assert.equal(rule.issueCount, 1);
-  assert.equal(rule.issues[0].details.reason, "cross-court assignment without a one-game buffer");
+  assert.equal(rule.issues[0].details.reason, "cross-court play assignment without a one-game buffer");
 });
 
-test("cross-court rule allows back-to-back assignments on the same court", () => {
+test("buffer rule allows back-to-back play assignments on the same court", () => {
   const report = reportFor({
     games: [
       { ...seedingGame(1, "A", "2026-06-23T09:00:00", 1), team_1_id: 101 },
@@ -165,13 +165,53 @@ test("cross-court rule allows back-to-back assignments on the same court", () =>
   assert.equal(ruleById(report, "cross-court-buffer").issueCount, 0);
 });
 
-test("cross-court rule allows assignments on different courts after a full one-game buffer", () => {
+test("buffer rule allows play assignments on different courts after a full one-game buffer", () => {
   const report = reportFor({
     games: [
       { ...seedingGame(1, "A", "2026-06-23T09:00:00", 1), team_1_id: 101 },
       { ...seedingGame(2, "A", "2026-06-23T09:40:00", 2), team_2_id: 101 }
     ],
     teams: [{ id: 101, division: "A", center: "Texas", name: "Buffered" }]
+  });
+
+  assert.equal(ruleById(report, "cross-court-buffer").issueCount, 0);
+});
+
+test("buffer rule flags play before ref without a one-game buffer", () => {
+  const report = reportFor({
+    games: [
+      { ...seedingGame(1, "A", "2026-06-23T09:00:00", 1), team_1_id: 101 },
+      { ...seedingGame(2, "B", "2026-06-23T09:20:00", 1), team_1_id: 201, team_2_id: 202, ref_team_id: 101 }
+    ],
+    teams: [{ id: 101, division: "A", center: "Texas", name: "Play Then Ref" }]
+  });
+
+  const rule = ruleById(report, "cross-court-buffer");
+  assert.equal(rule.issueCount, 1);
+  assert.equal(rule.issues[0].details.reason, "play/ref assignment without a one-game buffer");
+});
+
+test("buffer rule flags ref before play without a one-game buffer", () => {
+  const report = reportFor({
+    games: [
+      { ...seedingGame(1, "B", "2026-06-23T09:00:00", 1), team_1_id: 201, team_2_id: 202, ref_team_id: 101 },
+      { ...seedingGame(2, "A", "2026-06-23T09:20:00", 1), team_1_id: 101 }
+    ],
+    teams: [{ id: 101, division: "A", center: "Texas", name: "Ref Then Play" }]
+  });
+
+  const rule = ruleById(report, "cross-court-buffer");
+  assert.equal(rule.issueCount, 1);
+  assert.equal(rule.issues[0].details.reason, "play/ref assignment without a one-game buffer");
+});
+
+test("buffer rule allows play and ref after a full one-game buffer", () => {
+  const report = reportFor({
+    games: [
+      { ...seedingGame(1, "A", "2026-06-23T09:00:00", 1), team_1_id: 101 },
+      { ...seedingGame(2, "B", "2026-06-23T09:40:00", 1), team_1_id: 201, team_2_id: 202, ref_team_id: 101 }
+    ],
+    teams: [{ id: 101, division: "A", center: "Texas", name: "Buffered Ref" }]
   });
 
   assert.equal(ruleById(report, "cross-court-buffer").issueCount, 0);
