@@ -105,6 +105,12 @@ export const scheduleRules: ScheduleRuleDefinition[] = [
     name: "Play Assignments Have Required Buffers",
     severity: "error",
     check: auditCrossCourtAssignmentBuffer
+  },
+  {
+    id: "division-daily-blocks",
+    name: "Divisions Stay In One Daily Block",
+    severity: "warning",
+    check: auditDivisionDailyBlocks
   }
 ];
 
@@ -296,6 +302,51 @@ function auditCrossCourtAssignmentBuffer(context: ScheduleRuleContext, rule: Pic
     }
   }
   return issues.sort(compareIssues);
+}
+
+function auditDivisionDailyBlocks(context: ScheduleRuleContext, rule: Pick<ScheduleRuleDefinition, "id" | "name" | "severity">) {
+  const issues: ScheduleRuleIssue[] = [];
+  const byDay = new Map<string, ScheduleRuleGame[]>();
+  for (const game of context.games) {
+    if (game.phase !== "seeding" || !team1IdForGame(game) || !team2IdForGame(game)) continue;
+    const day = startsAtForGame(game).slice(0, 10);
+    byDay.set(day, [...(byDay.get(day) || []), game]);
+  }
+
+  for (const [day, dayGames] of byDay.entries()) {
+    const starts = [...new Set(dayGames.map(startsAtForGame))].sort();
+    const divisions = [...new Set(dayGames.map((game) => game.division))].sort();
+    for (const division of divisions) {
+      const rows = starts.map((startsAt) => dayGames.some((game) => startsAtForGame(game) === startsAt && game.division === division));
+      const blocks = countTrueRuns(rows);
+      if (blocks <= 1) continue;
+      issues.push({
+        ruleId: rule.id,
+        ruleName: rule.name,
+        severity: rule.severity,
+        startsAt: `${day}T00:00:00`,
+        message: `${division} has ${blocks} separate seeding blocks on ${day}`,
+        details: {
+          day,
+          division,
+          blocks,
+          rows: starts.filter((startsAt) => dayGames.some((game) => startsAtForGame(game) === startsAt && game.division === division))
+        }
+      });
+    }
+  }
+
+  return issues.sort(compareIssues);
+}
+
+function countTrueRuns(values: boolean[]) {
+  let count = 0;
+  let previous = false;
+  for (const value of values) {
+    if (value && !previous) count++;
+    previous = value;
+  }
+  return count;
 }
 
 function assignmentBufferConflictReason(

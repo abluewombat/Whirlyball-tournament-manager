@@ -263,6 +263,33 @@ test("buffer rule allows play and ref after a full one-game buffer", () => {
   assert.equal(ruleById(report, "cross-court-buffer").issueCount, 0);
 });
 
+test("division block rule allows one contiguous daily division block", () => {
+  const report = reportFor({
+    games: [
+      seedingGame(1, "A", "2026-06-24T09:00:00", 1),
+      seedingGame(2, "A", "2026-06-24T09:20:00", 1),
+      seedingGame(3, "B", "2026-06-24T09:40:00", 1)
+    ]
+  });
+
+  assert.equal(ruleById(report, "division-daily-blocks").issueCount, 0);
+});
+
+test("division block rule warns when a division is split across a day", () => {
+  const report = reportFor({
+    games: [
+      seedingGame(1, "A", "2026-06-24T09:00:00", 1),
+      seedingGame(2, "B", "2026-06-24T09:20:00", 1),
+      seedingGame(3, "A", "2026-06-24T09:40:00", 1)
+    ]
+  });
+
+  const rule = ruleById(report, "division-daily-blocks");
+  assert.equal(rule.issueCount, 1);
+  assert.equal(rule.issues[0].severity, "warning");
+  assert.equal(rule.issues[0].details.division, "A");
+});
+
 function reportFor({ games, teams = [], availabilityBlocks = [], settings = { seedingMinutes: 20 } }) {
   return buildScheduleRulesReport({
     games,

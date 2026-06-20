@@ -63,6 +63,12 @@ type SeedingSlot = {
   nextDayTournamentDivisions: Set<string>;
 };
 
+type DivisionDayPlan = {
+  division: string;
+  targetGames: number;
+  rowCount: number;
+};
+
 type TournamentEntry = {
   division: string;
   label: string;
@@ -271,6 +277,102 @@ function parseBlockOrder(value: string | undefined) {
     .map((item) => item.trim())
     .filter(Boolean);
   return parsed.length ? parsed : defaultBlockOrder;
+}
+
+function openSeedingRowsForDay(
+  day: Date,
+  input: ScheduleInput,
+  dayStartMinutes: number,
+  earlyStartMinutes: number,
+  dayEndMinutes: number,
+  reservedSeedingCourts: Map<string, Set<number>>
+) {
+  const startsAtMinute = usesTuesdayScheduleStart(input, day) ? earlyStartMinutes : dayStartMinutes;
+  const rowCapacity = Math.max(0, Math.floor((dayEndMinutes - startsAtMinute) / input.seedingMinutes));
+  let rows = 0;
+  for (let row = 0; row < rowCapacity; row++) {
+    const startsAt = at(day, startsAtMinute + row * input.seedingMinutes);
+    const reservedCourts = reservedSeedingCourts.get(startsAt) || new Set<number>();
+    if (reservedCourts.size < input.courts) rows++;
+  }
+  return rows;
+}
+
+function divideEvenly(total: number, parts: number) {
+  if (parts <= 0 || total <= 0) return [];
+  const base = Math.floor(total / parts);
+  const extra = total % parts;
+  return Array.from({ length: parts }, (_, index) => base + (index < extra ? 1 : 0));
+}
+
+function reorderPlanToAvoidSameFirstLast(plan: DivisionDayPlan[], fallbackOrder: string[]) {
+  if (plan.length <= 1) return plan;
+  const ordered = [...plan];
+  if (ordered[0].division !== ordered[ordered.length - 1].division) return ordered;
+  const replacementIndex = ordered.findIndex((item, index) => index > 0 && item.division !== ordered[0].division);
+  if (replacementIndex > 0) {
+    const [replacement] = ordered.splice(replacementIndex, 1);
+    ordered.push(replacement);
+  } else {
+    ordered.sort((left, right) => fallbackOrder.indexOf(left.division) - fallbackOrder.indexOf(right.division));
+  }
+  return ordered;
+}
+
+function buildDivisionDayPlans({
+  seedingDays,
+  divisions,
+  input,
+  targetGamesByDivision,
+  divisionGameCounts,
+  reservedSeedingCourts,
+  dayStartMinutes,
+  earlyStartMinutes,
+  dayEndMinutes,
+  blockOrder
+}: {
+  seedingDays: Date[];
+  divisions: string[];
+  input: ScheduleInput;
+  targetGamesByDivision: Map<string, number>;
+  divisionGameCounts: Map<string, number>;
+  reservedSeedingCourts: Map<string, Set<number>>;
+  dayStartMinutes: number;
+  earlyStartMinutes: number;
+  dayEndMinutes: number;
+  blockOrder: string[];
+}) {
+  const plans = new Map<string, DivisionDayPlan[]>();
+  const order = (blockOrder.length ? blockOrder : defaultBlockOrder).filter((division) => divisions.includes(division));
+  const dayRows = seedingDays.map((day) => openSeedingRowsForDay(day, input, dayStartMinutes, earlyStartMinutes, dayEndMinutes, reservedSeedingCourts));
+
+  for (const division of order) {
+    const remainingGames = Math.max(0, (targetGamesByDivision.get(division) || 0) - (divisionGameCounts.get(division) || 0));
+    if (remainingGames <= 0) continue;
+    const dayGameTargets = divideEvenly(remainingGames, seedingDays.length);
+    for (const [dayIndex, day] of seedingDays.entries()) {
+      const targetGames = dayGameTargets[dayIndex] || 0;
+      if (targetGames <= 0) continue;
+      const rowCount = Math.max(1, Math.ceil(targetGames / Math.max(1, input.courts)));
+      const dayKey = isoDate(day);
+      plans.set(dayKey, [...(plans.get(dayKey) || []), { division, targetGames, rowCount }]);
+    }
+  }
+
+  for (const [dayIndex, day] of seedingDays.entries()) {
+    const dayKey = isoDate(day);
+    const plan = plans.get(dayKey) || [];
+    let rowsUsed = plan.reduce((sum, item) => sum + item.rowCount, 0);
+    const availableRows = dayRows[dayIndex] || 0;
+    while (rowsUsed > availableRows && plan.some((item) => item.rowCount > 1)) {
+      const largest = [...plan].sort((left, right) => right.rowCount - left.rowCount || right.targetGames - left.targetGames)[0];
+      largest.rowCount--;
+      rowsUsed--;
+    }
+    plans.set(dayKey, reorderPlanToAvoidSameFirstLast(plan.sort((left, right) => order.indexOf(left.division) - order.indexOf(right.division)), order));
+  }
+
+  return plans;
 }
 
 function tournamentDivisionsForDay(dayIndex: number, divisions: string[] = ["A", "B", "C", "D"]) {
@@ -3249,7 +3351,6 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
   const preTournamentCutoff = minutes(input.preTournamentCutoff || scheduleDefaults.preTournamentCutoff);
   const morningRestRows = Math.max(0, input.morningRestRows ?? scheduleDefaults.morningRestRows);
   const lateNightRows = Math.max(0, input.lateNightRows ?? scheduleDefaults.lateNightRows);
-  const blockRows = Math.max(1, input.blockRows || scheduleDefaults.blockRows);
   const blockOrder = parseBlockOrder(input.blockOrder).filter((division) => seedingByDivision.has(division));
   const scheduleReservations = buildManualScheduleReservations(input);
   const games: GeneratedGame[] = [];
@@ -3305,6 +3406,18 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
     if (game.phase !== "seeding") continue;
     divisionGameCounts.set(game.division, (divisionGameCounts.get(game.division) || 0) + 1);
   }
+  const divisionDayPlans = buildDivisionDayPlans({
+    seedingDays,
+    divisions: competitiveDivisions,
+    input,
+    targetGamesByDivision,
+    divisionGameCounts,
+    reservedSeedingCourts,
+    dayStartMinutes: start,
+    earlyStartMinutes: earlyStart,
+    dayEndMinutes: end,
+    blockOrder
+  });
 
   for (const [dayIndex, day] of seedingDays.entries()) {
     const dayStart = usesTuesdayScheduleStart(input, day) ? earlyStart : start;
@@ -3318,33 +3431,22 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
       nextTournamentDayIndex >= 0 ? tournamentDivisionsForDay(nextTournamentDayIndex, competitiveDivisions) : []
     );
 
-    for (let row = 0; row < rowCapacity && hasQueuedGames(queues); ) {
-      const dayBlockOrder = orderSeedingDivisions({
-        divisions: blockOrder.length ? blockOrder : defaultBlockOrder,
-        dayIndex,
-        seedingDayCount: seedingDays.length,
-        byDivision: seedingByDivision,
-        targetGamesByTeam,
-        targetGamesByDivision,
-        teamGameCounts,
-        divisionGameCounts,
-        queues
-      });
-      if (!dayBlockOrder.length) break;
-      const next = nextDivisionWithGames(dayBlockOrder, queues, 0, false);
-      if (!next) break;
-      for (let blockRow = 0; blockRow < blockRows && row < rowCapacity; blockRow++, row++) {
-        const divisionDeficit = divisionSeedingDeficit(next.division, seedingByDivision, targetGamesByTeam, teamGameCounts, queues);
+    let row = 0;
+    for (const dayPlan of divisionDayPlans.get(isoDate(day)) || []) {
+      let dayPlanGames = 0;
+      for (let blockRow = 0; blockRow < Math.max(1, dayPlan.rowCount) && row < rowCapacity; blockRow++, row++) {
+        if (dayPlanGames >= dayPlan.targetGames) break;
+        const divisionDeficit = divisionSeedingDeficit(dayPlan.division, seedingByDivision, targetGamesByTeam, teamGameCounts, queues);
         if (divisionDeficit <= 0) break;
-        const queue = queues.get(next.division) || [];
+        const queue = queues.get(dayPlan.division) || [];
         if (!queue.length) break;
         const rowMinute = dayStart + row * input.seedingMinutes;
         const rowStartsAt = at(day, rowMinute);
         const reservedCourts = reservedSeedingCourts.get(rowStartsAt) || new Set<number>();
         if (reservedCourts.size >= input.courts) continue;
-        const divisionTeams = seedingByDivision.get(next.division) || [];
+        const divisionTeams = seedingByDivision.get(dayPlan.division) || [];
         seedingSlots.push({
-          division: next.division,
+          division: dayPlan.division,
           startsAt: rowStartsAt,
           dayIndex,
           row,
@@ -3387,7 +3489,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
         };
         const usedTeamIds = scheduledTeamIdsAt(games, rowStartsAt);
         const rowMatchups: Matchup[] = [];
-        const availableSeedingCourts = Math.min(input.courts - reservedCourts.size, divisionDeficit);
+        const availableSeedingCourts = Math.min(input.courts - reservedCourts.size, divisionDeficit, dayPlan.targetGames - dayPlanGames);
         for (let court = 0; court < availableSeedingCourts; court++) {
           const result = takeTeamFirstMatchup(
             queue,
@@ -3396,11 +3498,11 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
             pairPlayCounts,
             divisionTeams,
             targetGamesByTeam,
-            teamCursorsByDivision.get(next.division) || 0,
+            teamCursorsByDivision.get(dayPlan.division) || 0,
             eligible
           );
           if (!result) break;
-          teamCursorsByDivision.set(next.division, result.nextCursor);
+          teamCursorsByDivision.set(dayPlan.division, result.nextCursor);
           rowMatchups.push(result.matchup);
           usedTeamIds.add(result.matchup.a.id);
           usedTeamIds.add(result.matchup.b.id);
@@ -3426,6 +3528,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
           unavailableTeamIds.add(assignment.matchup.b.id);
         }
         for (const { matchup, court } of assignments) {
+          dayPlanGames++;
           teamGameCounts.set(matchup.a.id, (teamGameCounts.get(matchup.a.id) || 0) + 1);
           teamGameCounts.set(matchup.b.id, (teamGameCounts.get(matchup.b.id) || 0) + 1);
           const pairKey = matchupKey(matchup.a, matchup.b);
@@ -3475,67 +3578,6 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
     });
     if (added === 0) break;
   }
-  const completeSeedingSlots = buildCompleteSeedingSlots({
-    seedingDays,
-    games,
-    input,
-    reservedSeedingCourts,
-    dayStartMinutes: start,
-    earlyStartMinutes: earlyStart,
-    dayEndMinutes: end,
-    tournamentDays
-  });
-  for (let pass = 0; pass < 5; pass++) {
-    const added = repairOpenSeedingCourts({
-      slots: completeSeedingSlots,
-      games,
-      queues,
-      teams,
-      byDivision: seedingByDivision,
-      input,
-      availability,
-      targetGamesByTeam,
-      fairnessTargetGamesByTeam,
-      preplayedGameCounts,
-      targetGamesByDivision,
-      teamGameCounts,
-      divisionGameCounts,
-      pairPlayCounts,
-      courtCountsByTeam,
-      matchupCourtCounts,
-      refCounts,
-      teamCursorsByDivision,
-      blockOrder,
-      morningRestRows,
-      preTournamentCutoff
-    });
-    if (added === 0) break;
-  }
-  rebuildSeedingTracking(games, teamGameCounts, pairPlayCounts, courtCountsByTeam, matchupCourtCounts);
-  compactSingleCourtSeedingRows({
-    slots: seedingSlots,
-    games,
-    teams,
-    input,
-    availability,
-    refCounts,
-    morningRestRows,
-    preTournamentCutoff
-  });
-  rebuildSeedingTracking(games, teamGameCounts, pairPlayCounts, courtCountsByTeam, matchupCourtCounts);
-  spreadSeedingGamesAcrossDays({
-    seedingDays,
-    games,
-    teams,
-    input,
-    availability,
-    reservedSeedingCourts,
-    dayStartMinutes: start,
-    earlyStartMinutes: earlyStart,
-    dayEndMinutes: end,
-    tournamentDays,
-    preTournamentCutoff
-  });
   rebuildSeedingTracking(games, teamGameCounts, pairPlayCounts, courtCountsByTeam, matchupCourtCounts);
 
   if (!fillAvailableSeedingSlots) {
