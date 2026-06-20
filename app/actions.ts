@@ -452,7 +452,7 @@ export async function generateScheduleAction(formData: FormData) {
   if (!(await ensureTournamentEditable(tournament.id))) return;
   const divisions = await listTournamentDivisions(tournament.id);
   if ((await recordedScoreCount(tournament.id)) > 0) redirect(`/admin/dashboard?view=schedule&tournament=${tournament.slug}&locked=scores`);
-  const targetGamesPerTeam = Math.max(scheduleDefaults.targetGamesPerTeam, num(formData, "target_games_per_team", scheduleDefaults.targetGamesPerTeam));
+  const targetGamesPerTeam = Math.max(1, num(formData, "target_games_per_team", scheduleDefaults.targetGamesPerTeam));
   const scheduleInput = {
     tournamentId: tournament.id,
     divisions: divisions.map((division) => division.name),

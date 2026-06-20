@@ -90,7 +90,7 @@ export async function AdminScheduleContent({
   const generatedCount = params.generated === undefined ? null : Number(params.generated);
   const scheduledSeedingCount = params.seeding_scheduled === undefined ? null : Number(params.seeding_scheduled);
   const targetSeedingCount = params.seeding_target === undefined ? null : Number(params.seeding_target);
-  const targetGamesPerTeam = Math.max(settings.targetGamesPerTeam, Number(params.target_games) || settings.targetGamesPerTeam);
+  const targetGamesPerTeam = Math.max(1, Number(params.target_games) || settings.targetGamesPerTeam);
   const balancedTargetDemand = teamCounts.reduce((sum, row) => sum + Math.ceil((Number(row.count) * targetGamesPerTeam) / 2), 0);
   const unscheduledCount = params.unscheduled === undefined ? 0 : Number(params.unscheduled);
   const unscheduledTournamentCount = params.unscheduled_tournament === undefined ? 0 : Number(params.unscheduled_tournament);
@@ -197,11 +197,11 @@ export async function AdminScheduleContent({
           </label>
           <label>
             Target games/team
-            <input name="target_games_per_team" type="number" min={scheduleDefaults.targetGamesPerTeam} defaultValue={targetGamesPerTeam} />
+            <input name="target_games_per_team" type="number" min="1" defaultValue={targetGamesPerTeam} />
           </label>
           <label>
-            Division target minimums
-            <input name="division_target_games" defaultValue={settings.divisionTargetGames} placeholder="A:15,C:15" />
+            Division target overrides
+            <input name="division_target_games" defaultValue={settings.divisionTargetGames} placeholder="A:10,B:12,C:12,D:12" />
           </label>
           <label>
             Pair repeat limit
