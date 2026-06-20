@@ -220,10 +220,6 @@ export default async function CenterDashboardPage({
               ))}
             </select>
           </label>
-          <label>
-            Tuesday opt-in
-            <input name="early_available" type="checkbox" />
-          </label>
           <div className="actions">
             <button className="button">Add Team</button>
           </div>
@@ -249,10 +245,6 @@ export default async function CenterDashboardPage({
                       <option key={division}>{division}</option>
                     ))}
                   </select>
-                </label>
-                <label>
-                  Tuesday opt-in
-                  <input name="early_available" type="checkbox" defaultChecked={Boolean(team.early_available)} />
                 </label>
                 <div className="actions">
                   <button className="button">Save Team</button>

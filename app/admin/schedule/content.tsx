@@ -157,7 +157,7 @@ export async function AdminScheduleContent({
             <input name="day_start" type="time" defaultValue={settings.dayStart} />
           </label>
           <label>
-            Early opt-in day start
+            Tuesday schedule start
             <input name="early_day_start" type="time" defaultValue={settings.earlyDayStart} />
           </label>
           <label>
@@ -236,7 +236,7 @@ export async function AdminScheduleContent({
             <input name="morning_rest_rows" type="number" min="0" defaultValue={settings.morningRestRows} />
           </label>
           <label>
-            Tuesdays are early opt-in only
+            Tuesday uses explicit blockers
             <input type="hidden" name="include_tuesday" value="on" />
             <input type="checkbox" defaultChecked disabled />
           </label>

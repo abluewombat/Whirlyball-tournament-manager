@@ -65,7 +65,6 @@ export function PublicTeamsList({ divisions, players, teams, basePath = "", hide
                       <a href={`${basePath === "/" ? "" : basePath}/teams/${team.id}`}>{team.name}</a>
                     </h3>
                     <p className="muted">{team.center_name}</p>
-                    <p>{team.early_available ? <span className="pill ok">Tuesday opt-in</span> : null}</p>
                     <ol>
                       {(playersByTeam.get(team.id) || []).map((player) => (
                         <li key={player.id}>{player.name}</li>

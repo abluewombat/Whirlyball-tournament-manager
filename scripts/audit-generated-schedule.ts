@@ -7,12 +7,19 @@ type Team = {
   name: string;
   division: string;
   center_name: string;
-  early_available: boolean;
+};
+
+type AvailabilityBlock = {
+  team_id: number;
+  starts_at: string;
+  ends_at: string;
+  reason: string | null;
 };
 
 type Assignment = {
   role: "play" | "ref";
   startsAt: string;
+  durationMinutes: number;
   court: number;
   phase: string;
   division: string;
@@ -48,13 +55,23 @@ async function main() {
   const divisions = divisionRows.map((division) => division.name);
   const exhibitionDivision = divisionRows.find((division) => division.is_exhibition)?.name;
   const teams = await query<Team>(
-    `SELECT teams.id, teams.name, teams.division, teams.early_available, centers.name as center_name
+    `SELECT teams.id, teams.name, teams.division, centers.name as center_name
      FROM teams JOIN centers ON centers.id = teams.center_id
      WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL
      ORDER BY teams.division, centers.name, teams.name`,
     [tournamentId]
   );
+  const availabilityBlocks = await query<AvailabilityBlock>(
+    `SELECT team_availability_blocks.team_id, team_availability_blocks.starts_at, team_availability_blocks.ends_at, team_availability_blocks.reason
+     FROM team_availability_blocks
+     JOIN teams ON teams.id = team_availability_blocks.team_id
+     WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL
+     ORDER BY team_availability_blocks.starts_at, team_availability_blocks.id`,
+    [tournamentId]
+  );
   const teamById = new Map(teams.map((team) => [team.id, team]));
+  const availabilityByTeam = new Map<number, AvailabilityBlock[]>();
+  for (const block of availabilityBlocks) availabilityByTeam.set(block.team_id, [...(availabilityByTeam.get(block.team_id) || []), block]);
   const result = await generateSchedule({
     tournamentId,
     divisions,
@@ -88,17 +105,18 @@ async function main() {
     const team1 = game.team1Id ? teamById.get(game.team1Id) : null;
     const team2 = game.team2Id ? teamById.get(game.team2Id) : null;
     const label = team1 && team2 ? `${team1.name} vs ${team2.name}` : `${game.division}: ${game.label || "Game"}`;
+    const durationMinutes = game.phase === "unlimited" ? 40 : game.phase === "tournament" ? scheduleDefaults.tournamentMinutes : scheduleDefaults.seedingMinutes;
     for (const teamId of [game.team1Id, game.team2Id]) {
       if (!teamId || !assignments.has(teamId)) continue;
-      assignments.get(teamId)?.push({ role: "play", startsAt: game.startsAt, court: game.court, phase: game.phase, division: game.division, label });
+      assignments.get(teamId)?.push({ role: "play", startsAt: game.startsAt, durationMinutes, court: game.court, phase: game.phase, division: game.division, label });
     }
     if (game.refTeamId && assignments.has(game.refTeamId)) {
-      assignments.get(game.refTeamId)?.push({ role: "ref", startsAt: game.startsAt, court: game.court, phase: game.phase, division: game.division, label });
+      assignments.get(game.refTeamId)?.push({ role: "ref", startsAt: game.startsAt, durationMinutes, court: game.court, phase: game.phase, division: game.division, label });
     }
   }
 
   const issues = auditAssignments(assignments, teamById);
-  const tuesdayOptInIssues = auditTuesdayOptIn(assignments, teamById);
+  const availabilityBlockIssues = auditAvailabilityBlocks(assignments, teamById, availabilityByTeam);
   const tournamentSegmentIssues = auditTournamentSegments(result.games);
   const severe = issues.filter((issue) => issue.severity >= 90).length;
   const high = issues.filter((issue) => issue.severity >= 70).length;
@@ -110,8 +128,8 @@ async function main() {
         unscheduledTournamentGames: result.unscheduledTournamentGames,
         severeIssues: severe,
         highIssues: high,
-        tuesdayOptInIssues: tuesdayOptInIssues.length,
-        tuesdayOptInExamples: tuesdayOptInIssues.slice(0, 20),
+        availabilityBlockIssues: availabilityBlockIssues.length,
+        availabilityBlockExamples: availabilityBlockIssues.slice(0, 20),
         tournamentSegmentIssues: tournamentSegmentIssues.length,
         tournamentSegmentExamples: tournamentSegmentIssues.slice(0, 20),
         issues: issues.slice(0, 80)
@@ -122,14 +140,21 @@ async function main() {
   );
 }
 
-function auditTuesdayOptIn(assignmentsByTeam: Map<number, Assignment[]>, teamsById: Map<number, Team>) {
+function auditAvailabilityBlocks(assignmentsByTeam: Map<number, Assignment[]>, teamsById: Map<number, Team>, availabilityByTeam: Map<number, AvailabilityBlock[]>) {
   const issues: string[] = [];
   for (const [teamId, items] of assignmentsByTeam.entries()) {
     const team = teamsById.get(teamId);
-    if (!team || team.early_available) continue;
+    if (!team) continue;
+    const blocks = availabilityByTeam.get(teamId) || [];
+    if (!blocks.length) continue;
     for (const item of items) {
-      if (!isTuesday(item.startsAt)) continue;
-      issues.push(`${team.division} ${team.center_name} ${team.name}: ${item.startsAt.slice(0, 16)} ${item.role.toUpperCase()} C${item.court}`);
+      const overlappingBlock = blocks.find((block) => intervalsOverlap(item.startsAt, item.durationMinutes, block.starts_at, minutesBetween(block.starts_at, block.ends_at)));
+      if (!overlappingBlock) continue;
+      issues.push(
+        `${team.division} ${team.center_name} ${team.name}: ${item.startsAt.slice(0, 16)} ${item.role.toUpperCase()} C${item.court} overlaps ${
+          overlappingBlock.starts_at.slice(0, 16)
+        }-${overlappingBlock.ends_at.slice(11, 16)}${overlappingBlock.reason ? ` (${overlappingBlock.reason})` : ""}`
+      );
     }
   }
   return issues.sort();
@@ -217,7 +242,7 @@ function issue(severity: number, team: Team, day: string, message: string, items
 }
 
 function minutesBetween(left: string, right: string) {
-  return (Date.parse(right) - Date.parse(left)) / 60000;
+  return (parseScheduleDateTime(right) - parseScheduleDateTime(left)) / 60000;
 }
 
 function fmt(minutes: number) {
@@ -226,8 +251,17 @@ function fmt(minutes: number) {
   return m ? `${h}h ${m}m` : `${h}h`;
 }
 
-function isTuesday(startsAt: string) {
-  return new Date(`${startsAt.slice(0, 10)}T00:00:00`).getDay() === 2;
+function intervalsOverlap(leftStartsAt: string, leftDurationMinutes: number, rightStartsAt: string, rightDurationMinutes: number) {
+  const leftStart = parseScheduleDateTime(leftStartsAt);
+  const leftEnd = leftStart + leftDurationMinutes * 60_000;
+  const rightStart = parseScheduleDateTime(rightStartsAt);
+  const rightEnd = rightStart + rightDurationMinutes * 60_000;
+  return leftStart < rightEnd && leftEnd > rightStart;
+}
+
+function parseScheduleDateTime(value: string) {
+  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)) return Date.parse(value);
+  return Date.parse(`${value}Z`);
 }
 
 function longestRun(values: string[]) {
