@@ -1,25 +1,12 @@
-import {
-  generateBracketAction,
-  saveCourtStreamAction,
-  scorekeeperLogoutAction,
-  syncScheduleFromBracketsAction
-} from "@/app/actions";
+import { saveCourtStreamAction, scorekeeperLogoutAction } from "@/app/actions";
 import { redirect } from "next/navigation";
 import { scoreEntryAccess } from "@/lib/auth";
-import { getActiveBracketScheduleSlots, getActiveBracketScoreLocks } from "@/lib/brackets";
 import { query } from "@/lib/db";
-import { ManagedBracketViewer, type ManagedBracketData } from "@/app/brackets/managed-bracket-viewer";
-import { ScoreEntryTables, type EditableBracketGame, type ScoreGame } from "@/app/score/score-entry-tables";
-import { currentTournament, tournamentDivisionNames } from "@/lib/tournaments";
+import { ScoreEntryTables, type ScoreGame } from "@/app/score/score-entry-tables";
+import { currentTournament } from "@/lib/tournaments";
 import { courtStreamsForTournament } from "@/lib/streams";
 
 export const dynamic = "force-dynamic";
-
-type BracketScoreGame = {
-  bracket_id: number;
-  division: string;
-  bracket_data_json: ManagedBracketData | null;
-};
 
 export default async function ScorePage({
   searchParams
@@ -28,7 +15,6 @@ export default async function ScorePage({
 }) {
   const params = await searchParams;
   const tournament = await currentTournament();
-  const bracketDivisions = await tournamentDivisionNames(tournament.id, false);
   const access = await scoreEntryAccess(tournament.id);
   if (!access) {
     redirect("/login?mode=score");
@@ -46,31 +32,7 @@ export default async function ScorePage({
      ORDER BY games.starts_at, games.court`,
     [tournament.id]
   );
-  const bracketGames = await query<BracketScoreGame>(
-    `SELECT brackets.id as bracket_id, brackets.division, brackets.bracket_data_json
-     FROM brackets
-     WHERE brackets.tournament_id = $1 AND brackets.status = 'active'
-     ORDER BY brackets.division, brackets.id`,
-    [tournament.id]
-  );
-  const editableBracketGames = await query<EditableBracketGame>(
-    `SELECT bracket_games.id, brackets.division, bracket_games.game_key, bracket_games.bracket_side,
-            bracket_games.round, bracket_games.position,
-            bracket_games.team_1_id, bracket_games.team_2_id, bracket_games.winner_team_id,
-            bracket_games.team_1_score, bracket_games.team_2_score,
-            bracket_games.result_type, bracket_games.forfeit_team_id,
-            t1.name as team_1, t2.name as team_2
-     FROM bracket_games
-     JOIN brackets ON brackets.id = bracket_games.bracket_id
-     LEFT JOIN teams t1 ON t1.id = bracket_games.team_1_id
-     LEFT JOIN teams t2 ON t2.id = bracket_games.team_2_id
-     WHERE brackets.tournament_id = $1 AND brackets.status = 'active'
-     ORDER BY brackets.division,
-              CASE bracket_games.bracket_side WHEN 'winners' THEN 1 WHEN 'losers' THEN 2 ELSE 3 END,
-              bracket_games.round, bracket_games.position`,
-    [tournament.id]
-  );
-  const activeBracketDivisions = new Set(bracketGames.map((game) => game.division));
+  const activeBracketDivisions = new Set<string>();
   const [streamSlots, courtStreams, currentStreamGames] = await Promise.all([
     query<{ court: number; stream_date: string }>(
       `SELECT DISTINCT court, TO_CHAR(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') as stream_date
@@ -102,8 +64,6 @@ export default async function ScorePage({
   ]);
   const streamBySlot = new Map(courtStreams.map((stream) => [`${stream.stream_date.slice(0, 10)}-${stream.court}`, stream]));
   const currentGameByStream = new Map(currentStreamGames.map((game) => [game.stream_id, game]));
-  const bracketScoreLocks = await getActiveBracketScoreLocks(tournament.id);
-  const bracketScheduleSlots = await getActiveBracketScheduleSlots(tournament.id);
   const seedingGames = games
     .filter((game) => game.phase === "seeding" && game.division !== "Unlimited")
     .map((game) => ({
@@ -113,25 +73,9 @@ export default async function ScorePage({
         ? "Locked after bracket generation. Rebuild or void the bracket before changing seeding results."
         : null
     }));
-  const editableBracketGamesWithLocks = editableBracketGames.map((game) => {
-    const lock = bracketScoreLocks.get(game.id);
-    const scheduleSlot = bracketScheduleSlots.get(game.id);
-    return {
-      ...game,
-      schedule_label: scheduleSlot?.schedule_label || null,
-      starts_at: scheduleSlot?.starts_at || null,
-      court: scheduleSlot?.court || null,
-      actual_started_at: scheduleSlot?.actual_started_at || null,
-      actual_ended_at: scheduleSlot?.actual_ended_at || null,
-      result_locked: Boolean(lock?.result_locked),
-      result_lock_reason: lock?.result_lock_reason || null,
-      reset_locked: Boolean(lock?.reset_locked),
-      reset_lock_reason: lock?.reset_lock_reason || null
-    };
-  });
   const unscoredSeedingCount = seedingGames.filter((game) => (game.team_1_score === null || game.team_2_score === null) && game.result_type !== "forfeit").length;
   const allSeedingScored = seedingGames.length > 0 && unscoredSeedingCount === 0;
-  const bracketsReady = allSeedingScored && bracketGames.length > 0;
+  const bracketsReady = false;
 
   return (
     <main className="content">
@@ -204,56 +148,14 @@ export default async function ScorePage({
       <section className="section card">
         <div className="section-heading">
           <div>
-            <h2>Bracket Setup</h2>
-            <p className="muted">
-              {allSeedingScored ? "All seeding scores are filled." : `${unscoredSeedingCount} seeding scores remaining.`}
-            </p>
+            <h2>Manual Bracket</h2>
+            <p className="muted">The tournament bracket is being handled manually. Score entry here covers scheduled seeding games only.</p>
           </div>
-          {bracketsReady ? (
-            <div className="actions">
-              <span className="pill ok">Bracket generated</span>
-              <form action={syncScheduleFromBracketsAction}>
-                <input name="tournament_id" type="hidden" value={tournament.id} />
-                <button className="button secondary">Sync Schedule</button>
-              </form>
-            </div>
-          ) : (
-            <div className="actions">
-              <form action={generateBracketAction}>
-                <input name="tournament_id" type="hidden" value={tournament.id} />
-                <button className="button" disabled={!allSeedingScored}>Generate Bracket</button>
-              </form>
-              {bracketGames.length ? (
-                <form action={syncScheduleFromBracketsAction}>
-                  <input name="tournament_id" type="hidden" value={tournament.id} />
-                  <button className="button secondary">Sync Schedule</button>
-                </form>
-              ) : null}
-            </div>
-          )}
+          <span className={allSeedingScored ? "pill ok" : "pill warn"}>{allSeedingScored ? "Seeding complete" : `${unscoredSeedingCount} seeding scores left`}</span>
         </div>
       </section>
 
-      <ScoreEntryTables seedingGames={seedingGames} bracketGames={editableBracketGamesWithLocks} bracketsReady={bracketsReady} />
-
-      {bracketGames.length ? (
-        <section className="section card bracket-page">
-          <h2>Bracket</h2>
-          {bracketDivisions.map((division) => {
-            const [divisionBracket] = bracketGames.filter((game) => game.division === division);
-            if (!divisionBracket?.bracket_data_json) return null;
-            return (
-              <details className="bracket-division-card" key={division} open={division === "A"}>
-                <summary>
-                  <span>{division} Division</span>
-                  <span className="pill">Double elimination</span>
-                </summary>
-                <ManagedBracketViewer data={divisionBracket.bracket_data_json} />
-              </details>
-            );
-          })}
-        </section>
-      ) : null}
+      <ScoreEntryTables seedingGames={seedingGames} bracketGames={[]} bracketsReady={bracketsReady} />
     </main>
   );
 }

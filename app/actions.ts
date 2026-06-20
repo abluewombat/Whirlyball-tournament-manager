@@ -498,7 +498,6 @@ export async function generateScheduleAction(formData: FormData) {
       );
     }
   });
-  await syncActiveBracketsToSchedule(tournament.id);
   revalidatePath("/admin/schedule");
   revalidatePath("/admin/dashboard");
   revalidatePath("/schedule");

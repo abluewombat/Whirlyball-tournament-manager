@@ -1,6 +1,6 @@
 const faqs = [
   {
-    question: "Where do I find teams, schedules, standings, and brackets?",
+    question: "Where do I find teams, schedules, and standings?",
     answer: "Use the Public navigation at the top of the site. Team pages show rosters, scheduled games, reffing assignments, results, and replay links when video timestamps are available."
   },
   {

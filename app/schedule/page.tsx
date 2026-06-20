@@ -1,6 +1,5 @@
 import { listTournamentDivisions, query } from "@/lib/db";
 import { LiveRefresh } from "@/app/live-refresh";
-import { syncActiveBracketsToSchedule } from "@/lib/brackets";
 import { currentTournament } from "@/lib/tournaments";
 import { LiveNow } from "@/app/live-now";
 import { formatStreamOffset, youtubeReplayOffsetSeconds, youtubeReplayUrl, youtubeWatchUrl } from "@/lib/streams";
@@ -63,7 +62,6 @@ export default async function PublicSchedulePage() {
   const hiddenDivisionLabels = new Set(
     divisionRows.length === 1 && divisionRows[0].public_label_hidden ? [divisionRows[0].name] : []
   );
-  await syncActiveBracketsToSchedule(tournament.id);
   const games = await query<PublicScheduleGame>(
     `SELECT games.phase, games.division, games.court, games.starts_at,
             games.team_1_id, games.team_2_id, games.team_1_score, games.team_2_score,

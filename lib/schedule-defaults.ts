@@ -7,7 +7,7 @@ export const scheduleDefaults = {
   courts: 2,
   seedingMinutes: 20,
   tournamentMinutes: 40,
-  tournamentDayStart: "08:00",
+  tournamentDayStart: "11:30",
   tournamentDayEnd: "19:00",
   finalDayEnd: "19:00",
   seedingMode: "balanced",
@@ -16,7 +16,7 @@ export const scheduleDefaults = {
   blockOrder: "C,B,D,A,Unlimited",
   blockRows: 8,
   preTournamentCutoff: "23:59",
-  unlimitedGameStart: "2026-06-26T13:00",
+  unlimitedGameStart: "2026-06-26T18:00",
   unlimitedCourt: 1,
   lateNightRows: 6,
   morningRestRows: 8
