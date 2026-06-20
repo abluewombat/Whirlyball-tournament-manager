@@ -105,6 +105,12 @@ type WarmupPlacement = {
   court: number;
 };
 
+type RefRow = {
+  startsAt: string;
+  durationMinutes: number;
+  games: GeneratedGame[];
+};
+
 const rank: Record<string, number> = { A: 1, B: 2, C: 3, D: 4, Unlimited: 2 };
 const defaultBlockOrder = ["C", "B", "D", "A", "Unlimited"];
 const unlimitedDivision = "Unlimited";
@@ -123,6 +129,7 @@ const manualSaturdayCLabel = "C Saturday Seeding";
 const manualSaturdayDLabel = "D Saturday Feature Seeding";
 const manualBufferDivision = "Buffer";
 const manualDailyBufferMinutes = 20;
+const refStintRows = 3;
 const manualFridayDMatchups = [
   { a: { center: "Michigan", division: "D", name: "Motown Motion" }, b: { center: "Seattle", division: "D", name: "Hollaback Whirl" } },
   { a: { center: "Minnesota", division: "D", name: "4 Lefts 1 Wrong" }, b: { center: "Michigan", division: "D", name: "Designated Drunk Drivers" } },
@@ -1627,34 +1634,179 @@ function chooseRefTeamForSchedule({
   return candidates[0] || null;
 }
 
+function refableScheduleGames(games: GeneratedGame[]) {
+  return games.filter((game) => game.phase !== "unlimited" && game.team1Id !== null && game.team2Id !== null && game.division !== manualBufferDivision);
+}
+
+function refRowsForSchedule(games: GeneratedGame[], input: ScheduleInput) {
+  const rows = new Map<string, GeneratedGame[]>();
+  for (const game of refableScheduleGames(games)) {
+    rows.set(game.startsAt, [...(rows.get(game.startsAt) || []), game]);
+  }
+
+  return [...rows.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([startsAt, rowGames]) => ({
+      startsAt,
+      durationMinutes: Math.max(...rowGames.map((game) => gameDurationMinutes(game, input))),
+      games: rowGames.sort((left, right) => left.court - right.court)
+    }));
+}
+
+function refRowTeamIds(row: RefRow) {
+  const teamIds = new Set<number>();
+  for (const game of row.games) {
+    if (game.team1Id !== null) teamIds.add(game.team1Id);
+    if (game.team2Id !== null) teamIds.add(game.team2Id);
+  }
+  return teamIds;
+}
+
+function teamPlaysDuringRefRow(teamId: number, row: RefRow, games: GeneratedGame[], input: ScheduleInput) {
+  return games.some(
+    (game) =>
+      teamPlaysInGame(teamId, game) &&
+      intervalsOverlap(row.startsAt, row.durationMinutes, game.startsAt, gameDurationMinutes(game, input))
+  );
+}
+
+function teamCanRefRow(team: TeamRow, row: RefRow, games: GeneratedGame[], availability: AvailabilityMap, input: ScheduleInput) {
+  if (!row.games.every((game) => refEligible(game.division, team))) return false;
+  if (refRowTeamIds(row).has(team.id)) return false;
+  if (teamBlockedAt(team.id, row.startsAt, row.durationMinutes, availability)) return false;
+  if (teamPlaysDuringRefRow(team.id, row, games, input)) return false;
+  return true;
+}
+
+function refStintBounds(rows: RefRow[]) {
+  const starts = rows.map((row) => parseScheduleDateTime(row.startsAt));
+  const ends = rows.map((row) => parseScheduleDateTime(row.startsAt) + row.durationMinutes * 60_000);
+  return {
+    start: Math.min(...starts),
+    end: Math.max(...ends)
+  };
+}
+
+function teamHasPlayTooCloseToRefStint(teamId: number, rows: RefRow[], games: GeneratedGame[], input: ScheduleInput) {
+  if (!rows.length) return false;
+  const bounds = refStintBounds(rows);
+  const offBlockMs = input.seedingMinutes * 60_000;
+  const guardedStart = bounds.start - offBlockMs;
+  const guardedEnd = bounds.end + offBlockMs;
+
+  return games.some((game) => {
+    if (!teamPlaysInGame(teamId, game)) return false;
+    const playStart = parseScheduleDateTime(game.startsAt);
+    const playEnd = playStart + gameDurationMinutes(game, input) * 60_000;
+    return playEnd > guardedStart && playStart < guardedEnd;
+  });
+}
+
+function teamCanRefStint(team: TeamRow, rows: RefRow[], games: GeneratedGame[], availability: AvailabilityMap, input: ScheduleInput) {
+  return rows.every((row) => teamCanRefRow(team, row, games, availability, input)) && !teamHasPlayTooCloseToRefStint(team.id, rows, games, input);
+}
+
+function nearestPlayingGapForRows(teamId: number, rows: RefRow[], games: GeneratedGame[], input: ScheduleInput) {
+  let nearest = Number.POSITIVE_INFINITY;
+  let sameDay = false;
+  for (const row of rows) {
+    for (const game of games) {
+      if (!teamPlaysInGame(teamId, game)) continue;
+      const gap = intervalGapMinutes(row.startsAt, row.durationMinutes, game.startsAt, gameDurationMinutes(game, input));
+      if (gap < nearest) nearest = gap;
+      if (game.startsAt.slice(0, 10) === row.startsAt.slice(0, 10)) sameDay = true;
+    }
+  }
+  return {
+    gap: Number.isFinite(nearest) ? Math.min(nearest, 720) : 720,
+    sameDay
+  };
+}
+
+function refStintScore({
+  team,
+  rows,
+  games,
+  teamById,
+  refRowCounts,
+  input,
+  previousRefTeamId
+}: {
+  team: TeamRow;
+  rows: RefRow[];
+  games: GeneratedGame[];
+  teamById: Map<number, TeamRow>;
+  refRowCounts: Map<number, number>;
+  input: ScheduleInput;
+  previousRefTeamId: number | null;
+}) {
+  const gameDivisions = new Set<string>();
+  let sameCenter = false;
+  for (const row of rows) {
+    for (const game of row.games) {
+      gameDivisions.add(game.division);
+      for (const teamId of [game.team1Id, game.team2Id]) {
+        if (teamId !== null && teamById.get(teamId)?.center_name === team.center_name) sameCenter = true;
+      }
+    }
+  }
+
+  const nearest = nearestPlayingGapForRows(team.id, rows, games, input);
+  const sameCenterPenalty = sameCenter ? 3_000 : 0;
+
+  const divisionDistance = Math.min(...[...gameDivisions].map((division) => Math.abs((rank[team.division] || 2) - (rank[division] || 2))));
+  const immediateRepeatPenalty = previousRefTeamId === team.id ? 8_000 : 0;
+  return (
+    immediateRepeatPenalty +
+    sameCenterPenalty +
+    (refRowCounts.get(team.id) || 0) * 500 +
+    nearest.gap * 0.4 +
+    (nearest.sameDay ? 0 : 600) +
+    divisionDistance * 40 +
+    rows.length * 5
+  );
+}
+
 function assignRefsForSchedule(games: GeneratedGame[], teams: TeamRow[], availability: AvailabilityMap, input: ScheduleInput, tournamentDays: Date[]) {
   const teamById = new Map(teams.map((team) => [team.id, team]));
-  const refCounts = new Map<number, number>();
-  const tournamentDateDivisions = tournamentDivisionsByDate(
-    tournamentDays,
-    input.divisions.filter((division) => division !== input.exhibitionDivision)
-  );
+  const refRowCounts = new Map<number, number>();
   const sortedGames = [...games].sort((left, right) => left.startsAt.localeCompare(right.startsAt) || left.court - right.court);
+  const rows = refRowsForSchedule(sortedGames, input);
+  let previousRefTeamId: number | null = null;
 
   for (const game of sortedGames) game.refTeamId = null;
 
-  for (const game of sortedGames) {
-    if (game.phase === "unlimited") continue;
-    const team1 = game.team1Id === null ? null : teamById.get(game.team1Id) || null;
-    const team2 = game.team2Id === null ? null : teamById.get(game.team2Id) || null;
-    const selected = chooseRefTeamForSchedule({
-      game,
-      teams,
-      team1,
-      team2,
-      games: sortedGames,
-      availability,
-      refCounts,
-      input,
-      tournamentDateDivisions
-    });
-    game.refTeamId = selected?.id || null;
-    if (selected) refCounts.set(selected.id, (refCounts.get(selected.id) || 0) + 1);
+  for (let index = 0; index < rows.length; ) {
+    let selected: TeamRow | null = null;
+    let selectedRows: RefRow[] = [];
+
+    for (let stintLength = Math.min(refStintRows, rows.length - index); stintLength >= 1; stintLength -= 1) {
+      const stintRows = rows.slice(index, index + stintLength);
+      const candidates = teams
+        .filter((team) => teamCanRefStint(team, stintRows, sortedGames, availability, input))
+        .sort((left, right) => {
+          const leftScore = refStintScore({ team: left, rows: stintRows, games: sortedGames, teamById, refRowCounts, input, previousRefTeamId });
+          const rightScore = refStintScore({ team: right, rows: stintRows, games: sortedGames, teamById, refRowCounts, input, previousRefTeamId });
+          if (leftScore !== rightScore) return leftScore - rightScore;
+          return left.name.localeCompare(right.name);
+        });
+      if (!candidates.length) continue;
+      selected = candidates[0];
+      selectedRows = stintRows;
+      break;
+    }
+
+    if (!selected || selectedRows.length === 0) {
+      index++;
+      continue;
+    }
+
+    for (const row of selectedRows) {
+      for (const game of row.games) game.refTeamId = selected.id;
+    }
+    refRowCounts.set(selected.id, (refRowCounts.get(selected.id) || 0) + selectedRows.length);
+    previousRefTeamId = selected.id;
+    index += selectedRows.length;
   }
 }
 

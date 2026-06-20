@@ -32,6 +32,9 @@ type GeneratedAuditGame = {
   startsAt: string;
   court: number;
   label: string;
+  team1Id: number | null;
+  team2Id: number | null;
+  refTeamId: number | null;
 };
 
 type Issue = {
@@ -100,6 +103,7 @@ async function main() {
 
   const assignments = new Map<number, Assignment[]>();
   for (const team of teams) assignments.set(team.id, []);
+  const seenRefRows = new Set<string>();
 
   for (const game of result.games) {
     const team1 = game.team1Id ? teamById.get(game.team1Id) : null;
@@ -111,6 +115,9 @@ async function main() {
       assignments.get(teamId)?.push({ role: "play", startsAt: game.startsAt, durationMinutes, court: game.court, phase: game.phase, division: game.division, label });
     }
     if (game.refTeamId && assignments.has(game.refTeamId)) {
+      const refRowKey = `${game.refTeamId}:${game.startsAt}`;
+      if (seenRefRows.has(refRowKey)) continue;
+      seenRefRows.add(refRowKey);
       assignments.get(game.refTeamId)?.push({ role: "ref", startsAt: game.startsAt, durationMinutes, court: game.court, phase: game.phase, division: game.division, label });
     }
   }
@@ -118,6 +125,8 @@ async function main() {
   const issues = auditAssignments(assignments, teamById);
   const availabilityBlockIssues = auditAvailabilityBlocks(assignments, teamById, availabilityByTeam);
   const backToBackCourtSwitchIssues = auditBackToBackCourtSwitches(assignments, teamById);
+  const refPlayBufferIssues = auditRefPlayBuffer(assignments, teamById, scheduleDefaults.seedingMinutes);
+  const refRowIssues = auditRefRows(result.games);
   const tournamentSegmentIssues = auditTournamentSegments(result.games);
   const severe = issues.filter((issue) => issue.severity >= 90).length;
   const high = issues.filter((issue) => issue.severity >= 70).length;
@@ -133,6 +142,10 @@ async function main() {
         availabilityBlockExamples: availabilityBlockIssues.slice(0, 20),
         backToBackCourtSwitchIssues: backToBackCourtSwitchIssues.length,
         backToBackCourtSwitchExamples: backToBackCourtSwitchIssues.slice(0, 20),
+        refPlayBufferIssues: refPlayBufferIssues.length,
+        refPlayBufferExamples: refPlayBufferIssues.slice(0, 20),
+        refRowIssues: refRowIssues.length,
+        refRowExamples: refRowIssues.slice(0, 20),
         tournamentSegmentIssues: tournamentSegmentIssues.length,
         tournamentSegmentExamples: tournamentSegmentIssues.slice(0, 20),
         issues: issues.slice(0, 80)
@@ -182,6 +195,45 @@ function auditBackToBackCourtSwitches(assignmentsByTeam: Map<number, Assignment[
         )}`
       );
     }
+  }
+  return issues.sort();
+}
+
+function auditRefPlayBuffer(assignmentsByTeam: Map<number, Assignment[]>, teamsById: Map<number, Team>, requiredGapMinutes: number) {
+  const issues: string[] = [];
+  for (const [teamId, items] of assignmentsByTeam.entries()) {
+    const team = teamsById.get(teamId);
+    if (!team) continue;
+    const plays = items.filter((item) => item.role === "play");
+    const refs = items.filter((item) => item.role === "ref");
+    for (const play of plays) {
+      const playStart = parseScheduleDateTime(play.startsAt);
+      const playEnd = playStart + play.durationMinutes * 60_000;
+      for (const ref of refs) {
+        const refStart = parseScheduleDateTime(ref.startsAt);
+        const refEnd = refStart + ref.durationMinutes * 60_000;
+        const gapMinutes = playEnd <= refStart ? (refStart - playEnd) / 60_000 : refEnd <= playStart ? (playStart - refEnd) / 60_000 : -1;
+        if (gapMinutes >= requiredGapMinutes) continue;
+        issues.push(
+          `${team.division} ${team.center_name} ${team.name}: ${play.startsAt.slice(0, 16)} PLAY and ${ref.startsAt.slice(0, 16)} REF gap ${gapMinutes}m`
+        );
+      }
+    }
+  }
+  return issues.sort();
+}
+
+function auditRefRows(games: GeneratedAuditGame[]) {
+  const rows = new Map<string, GeneratedAuditGame[]>();
+  for (const game of games.filter((candidate) => candidate.phase !== "unlimited" && candidate.team1Id !== null && candidate.team2Id !== null && candidate.division !== "Buffer")) {
+    rows.set(game.startsAt, [...(rows.get(game.startsAt) || []), game]);
+  }
+
+  const issues: string[] = [];
+  for (const [startsAt, rowGames] of rows.entries()) {
+    const refs = new Set(rowGames.map((game) => game.refTeamId).filter(Boolean));
+    if (refs.size === 0) issues.push(`${startsAt}: no ref assigned`);
+    if (refs.size > 1) issues.push(`${startsAt}: split refs across courts`);
   }
   return issues.sort();
 }
