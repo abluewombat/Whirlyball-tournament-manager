@@ -48,6 +48,18 @@ function checkbox(formData: FormData, key: string) {
   return formData.get(key) === "on";
 }
 
+function laterClockTime(value: string, minimum: string) {
+  const parse = (time: string) => {
+    const [hour, minute] = time.split(":").map(Number);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+    return hour * 60 + minute;
+  };
+  const parsedValue = parse(value);
+  const parsedMinimum = parse(minimum);
+  if (parsedValue === null || parsedMinimum === null) return minimum;
+  return parsedValue >= parsedMinimum ? value : minimum;
+}
+
 function dateTimeMs(value: string) {
   return Date.parse(`${value.length === 16 ? `${value}:00` : value}Z`);
 }
@@ -460,7 +472,7 @@ export async function generateScheduleAction(formData: FormData) {
     startDate: text(formData, "start_date") || scheduleDefaults.startDate,
     endDate: text(formData, "end_date") || scheduleDefaults.endDate,
     dayStart: text(formData, "day_start") || scheduleDefaults.dayStart,
-    earlyDayStart: text(formData, "early_day_start") || scheduleDefaults.earlyDayStart,
+    earlyDayStart: laterClockTime(text(formData, "early_day_start") || scheduleDefaults.earlyDayStart, scheduleDefaults.earlyDayStart),
     dayEnd: text(formData, "day_end") || scheduleDefaults.dayEnd,
     courts: Math.max(1, num(formData, "courts", scheduleDefaults.courts)),
     seedingMinutes: Math.max(10, num(formData, "seeding_minutes", scheduleDefaults.seedingMinutes)),

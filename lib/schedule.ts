@@ -131,6 +131,7 @@ const manualSaturdayDLabel = "D Saturday Feature Seeding";
 const manualBufferDivision = "Buffer";
 const manualDailyBufferMinutes = 20;
 const refStintRows = 3;
+const fillAvailableSeedingSlots = true;
 const manualFridayDMatchups = [
   { a: { center: "Michigan", division: "D", name: "Motown Motion" }, b: { center: "Seattle", division: "D", name: "Hollaback Whirl" } },
   { a: { center: "Minnesota", division: "D", name: "4 Lefts 1 Wrong" }, b: { center: "Michigan", division: "D", name: "Designated Drunk Drivers" } },
@@ -1873,7 +1874,7 @@ function refStintBounds(rows: RefRow[]) {
 function teamHasPlayTooCloseToRefStint(teamId: number, rows: RefRow[], games: GeneratedGame[], input: ScheduleInput) {
   if (!rows.length) return false;
   const bounds = refStintBounds(rows);
-  const offBlockMs = input.seedingMinutes * 60_000;
+  const offBlockMs = Math.max(input.seedingMinutes, ...rows.map((row) => row.durationMinutes)) * 60_000;
   const guardedStart = bounds.start - offBlockMs;
   const guardedEnd = bounds.end + offBlockMs;
 
@@ -2135,8 +2136,15 @@ function repairSeedingSlots({
     const availableCourts = Array.from({ length: input.courts }, (_, index) => index + 1).filter((court) => !occupiedCourts.has(court));
     const divisionTeams = byDivision.get(slot.division) || [];
     const eligible = (matchup: Matchup) => {
-      if (!matchup.required && matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)) return false;
       if (
+        !fillAvailableSeedingSlots &&
+        !matchup.required &&
+        matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)
+      ) {
+        return false;
+      }
+      if (
+        !fillAvailableSeedingSlots &&
         !matchup.required &&
         !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) &&
         !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts) &&
@@ -2299,8 +2307,15 @@ function repairOpenSeedingCourts({
         const queue = queues.get(division) || [];
         const divisionTeams = byDivision.get(division) || [];
         const eligible = (matchup: Matchup) => {
-          if (!matchup.required && matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)) return false;
           if (
+            !fillAvailableSeedingSlots &&
+            !matchup.required &&
+            matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)
+          ) {
+            return false;
+          }
+          if (
+            !fillAvailableSeedingSlots &&
             !matchup.required &&
             !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) &&
             !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts) &&
@@ -3035,7 +3050,9 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
   const seedingDays = manualSaturdayIndex >= 0 ? days.slice(0, manualSaturdayIndex) : days.slice(0, Math.max(1, days.length - 2));
   const tournamentDays: Date[] = [];
   const start = minutes(input.dayStart);
-  const earlyStart = minutes(input.earlyDayStart || input.dayStart);
+  const requestedEarlyStart = minutes(input.earlyDayStart || input.dayStart);
+  const defaultEarlyStart = minutes(scheduleDefaults.earlyDayStart);
+  const earlyStart = Number.isFinite(requestedEarlyStart) ? Math.max(requestedEarlyStart, defaultEarlyStart) : defaultEarlyStart;
   const end = endMinutes(input.dayEnd);
   const tournamentStart = minutes(input.tournamentDayStart || input.dayStart);
   const tournamentEnd = endMinutes(input.tournamentDayEnd || input.dayEnd);
@@ -3143,8 +3160,15 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
           nextDayTournamentDivisions
         });
         const eligible = (matchup: Matchup) => {
-          if (!matchup.required && matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)) return false;
           if (
+            !fillAvailableSeedingSlots &&
+            !matchup.required &&
+            matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)
+          ) {
+            return false;
+          }
+          if (
+            !fillAvailableSeedingSlots &&
             !matchup.required &&
             !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) &&
             !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts) &&
@@ -3314,22 +3338,24 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
   });
   rebuildSeedingTracking(games, teamGameCounts, pairPlayCounts, courtCountsByTeam, matchupCourtCounts);
 
-  equalizeSeedingGameCounts(games, seedingByDivision, targetGamesByTeam, protectedPairKeys);
-  compactSeedingGamesIntoOpenSlots({
-    seedingDays,
-    games,
-    teams,
-    input,
-    availability,
-    reservedSeedingCourts,
-    dayStartMinutes: start,
-    earlyStartMinutes: earlyStart,
-    dayEndMinutes: end,
-    tournamentDays,
-    morningRestRows,
-    preTournamentCutoff
-  });
-  rebuildSeedingTracking(games, teamGameCounts, pairPlayCounts, courtCountsByTeam, matchupCourtCounts);
+  if (!fillAvailableSeedingSlots) {
+    equalizeSeedingGameCounts(games, seedingByDivision, targetGamesByTeam, protectedPairKeys);
+    compactSeedingGamesIntoOpenSlots({
+      seedingDays,
+      games,
+      teams,
+      input,
+      availability,
+      reservedSeedingCourts,
+      dayStartMinutes: start,
+      earlyStartMinutes: earlyStart,
+      dayEndMinutes: end,
+      tournamentDays,
+      morningRestRows,
+      preTournamentCutoff
+    });
+    rebuildSeedingTracking(games, teamGameCounts, pairPlayCounts, courtCountsByTeam, matchupCourtCounts);
+  }
 
   const unscheduledTournamentGames = 0;
   assignRefsForSchedule(games, teams, availability, input, tournamentDays);

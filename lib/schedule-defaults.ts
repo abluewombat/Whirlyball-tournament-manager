@@ -2,7 +2,7 @@ export const scheduleDefaults = {
   startDate: "2026-06-23",
   endDate: "2026-06-28",
   dayStart: "08:00",
-  earlyDayStart: "14:00",
+  earlyDayStart: "17:00",
   dayEnd: "23:59",
   courts: 2,
   seedingMinutes: 20,
