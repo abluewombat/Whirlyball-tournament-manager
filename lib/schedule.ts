@@ -1306,8 +1306,20 @@ function matchupHasTargetRoom(matchup: Matchup, targetGamesByTeam: Map<number, n
   return aTarget !== undefined && bTarget !== undefined && teamGameCount(matchup.a, teamGameCounts) < aTarget && teamGameCount(matchup.b, teamGameCounts) < bTarget;
 }
 
-function matchupTouchesTeamAtTarget(matchup: Matchup, targetGamesByTeam: Map<number, number>, teamGameCounts: Map<number, number>) {
-  return targetGamesByTeam.size > 0 && (teamAtTarget(matchup.a, targetGamesByTeam, teamGameCounts) || teamAtTarget(matchup.b, targetGamesByTeam, teamGameCounts));
+function matchupBlockedByTarget(
+  matchup: Matchup,
+  targetGamesByTeam: Map<number, number>,
+  targetGamesByDivision: Map<string, number>,
+  teamGameCounts: Map<number, number>,
+  divisionGameCounts: Map<string, number>
+) {
+  if (!targetGamesByTeam.size) return false;
+  const aAtTarget = teamAtTarget(matchup.a, targetGamesByTeam, teamGameCounts);
+  const bAtTarget = teamAtTarget(matchup.b, targetGamesByTeam, teamGameCounts);
+  if (!aAtTarget && !bAtTarget) return false;
+  if (aAtTarget && bAtTarget) return true;
+  const divisionTarget = targetGamesByDivision.get(matchup.division);
+  return divisionTarget !== undefined && (divisionGameCounts.get(matchup.division) || 0) >= divisionTarget;
 }
 
 function matchupKeepsSeedingCountsBalanced(matchup: Matchup, divisionTeams: TeamRow[], teamGameCounts: Map<number, number>) {
@@ -2067,7 +2079,9 @@ function repairSeedingSlots({
   input,
   availability,
   targetGamesByTeam,
+  targetGamesByDivision,
   teamGameCounts,
+  divisionGameCounts,
   pairPlayCounts,
   courtCountsByTeam,
   matchupCourtCounts,
@@ -2084,7 +2098,9 @@ function repairSeedingSlots({
   input: ScheduleInput;
   availability: AvailabilityMap;
   targetGamesByTeam: Map<number, number>;
+  targetGamesByDivision: Map<string, number>;
   teamGameCounts: Map<number, number>;
+  divisionGameCounts: Map<string, number>;
   pairPlayCounts: Map<string, number>;
   courtCountsByTeam: Map<number, Map<number, number>>;
   matchupCourtCounts: Map<string, Map<number, number>>;
@@ -2106,7 +2122,7 @@ function repairSeedingSlots({
     const availableCourts = Array.from({ length: input.courts }, (_, index) => index + 1).filter((court) => !occupiedCourts.has(court));
     const divisionTeams = byDivision.get(slot.division) || [];
     const eligible = (matchup: Matchup) => {
-      if (!matchup.required && matchupTouchesTeamAtTarget(matchup, targetGamesByTeam, teamGameCounts)) return false;
+      if (!matchup.required && matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)) return false;
       if (!matchup.required && !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) && !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts)) return false;
       if (divisionBlockedDuringManualUnlimitedWindow(matchup.division, slot.startsAt, input.seedingMinutes, input)) return false;
       if (teamBlockedAt(matchup.a.id, slot.startsAt, input.seedingMinutes, availability)) return false;
@@ -2153,6 +2169,7 @@ function repairSeedingSlots({
 
       teamGameCounts.set(result.matchup.a.id, (teamGameCounts.get(result.matchup.a.id) || 0) + 1);
       teamGameCounts.set(result.matchup.b.id, (teamGameCounts.get(result.matchup.b.id) || 0) + 1);
+      divisionGameCounts.set(result.matchup.division, (divisionGameCounts.get(result.matchup.division) || 0) + 1);
       const pairKey = matchupKey(result.matchup.a, result.matchup.b);
       pairPlayCounts.set(pairKey, (pairPlayCounts.get(pairKey) || 0) + 1);
       incrementNested(courtCountsByTeam, result.matchup.a.id, court);
@@ -2187,7 +2204,9 @@ function repairOpenSeedingCourts({
   input,
   availability,
   targetGamesByTeam,
+  targetGamesByDivision,
   teamGameCounts,
+  divisionGameCounts,
   pairPlayCounts,
   courtCountsByTeam,
   matchupCourtCounts,
@@ -2205,7 +2224,9 @@ function repairOpenSeedingCourts({
   input: ScheduleInput;
   availability: AvailabilityMap;
   targetGamesByTeam: Map<number, number>;
+  targetGamesByDivision: Map<string, number>;
   teamGameCounts: Map<number, number>;
+  divisionGameCounts: Map<string, number>;
   pairPlayCounts: Map<string, number>;
   courtCountsByTeam: Map<number, Map<number, number>>;
   matchupCourtCounts: Map<string, Map<number, number>>;
@@ -2258,7 +2279,7 @@ function repairOpenSeedingCourts({
         const queue = queues.get(division) || [];
         const divisionTeams = byDivision.get(division) || [];
         const eligible = (matchup: Matchup) => {
-          if (!matchup.required && matchupTouchesTeamAtTarget(matchup, targetGamesByTeam, teamGameCounts)) return false;
+          if (!matchup.required && matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)) return false;
           if (!matchup.required && !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) && !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts)) return false;
           if (divisionBlockedDuringManualUnlimitedWindow(matchup.division, slot.startsAt, input.seedingMinutes, input)) return false;
           if (teamBlockedAt(matchup.a.id, slot.startsAt, input.seedingMinutes, availability)) return false;
@@ -2304,6 +2325,7 @@ function repairOpenSeedingCourts({
 
         teamGameCounts.set(result.matchup.a.id, (teamGameCounts.get(result.matchup.a.id) || 0) + 1);
         teamGameCounts.set(result.matchup.b.id, (teamGameCounts.get(result.matchup.b.id) || 0) + 1);
+        divisionGameCounts.set(result.matchup.division, (divisionGameCounts.get(result.matchup.division) || 0) + 1);
         const pairKey = matchupKey(result.matchup.a, result.matchup.b);
         pairPlayCounts.set(pairKey, (pairPlayCounts.get(pairKey) || 0) + 1);
         incrementNested(courtCountsByTeam, result.matchup.a.id, court);
@@ -3094,7 +3116,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
           nextDayTournamentDivisions
         });
         const eligible = (matchup: Matchup) => {
-          if (!matchup.required && matchupTouchesTeamAtTarget(matchup, targetGamesByTeam, teamGameCounts)) return false;
+          if (!matchup.required && matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)) return false;
           if (!matchup.required && !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) && !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts)) return false;
           if (divisionBlockedDuringManualUnlimitedWindow(matchup.division, rowStartsAt, input.seedingMinutes, input)) return false;
           if (teamBlockedAt(matchup.a.id, rowStartsAt, input.seedingMinutes, availability)) return false;
@@ -3184,7 +3206,9 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
       input,
       availability,
       targetGamesByTeam,
+      targetGamesByDivision,
       teamGameCounts,
+      divisionGameCounts,
       pairPlayCounts,
       courtCountsByTeam,
       matchupCourtCounts,
@@ -3215,7 +3239,9 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
       input,
       availability,
       targetGamesByTeam,
+      targetGamesByDivision,
       teamGameCounts,
+      divisionGameCounts,
       pairPlayCounts,
       courtCountsByTeam,
       matchupCourtCounts,
