@@ -133,7 +133,7 @@ const manualDailyBufferMinutes = 20;
 const refStintRows = 3;
 const manualFridayDMatchups = [
   { a: { center: "Michigan", division: "D", name: "Motown Motion" }, b: { center: "Seattle", division: "D", name: "Hollaback Whirl" } },
-  { a: { center: "Minnesota", division: "D", name: "4 Lefts 1 Wrong" }, b: { center: "Michigan", division: "D", name: "Designated Drivers" } },
+  { a: { center: "Minnesota", division: "D", name: "4 Lefts 1 Wrong" }, b: { center: "Michigan", division: "D", name: "Designated Drunk Drivers" } },
   { a: { center: "Texas", division: "D", name: "I Don't Remember" }, b: { center: "Chicago", division: "D", name: "SWATTY BALLZ" } },
   { a: { center: "Cleveland", division: "D", name: "The Goon Squad" }, b: { center: "Texas", division: "D", name: "The 30%ers" } }
 ];
@@ -143,7 +143,7 @@ const manualPreplayedSeedingMatchups = [
     removeAllGenerated: false,
     requiredRemainingGenerated: 1,
     a: { center: "Michigan", division: "D", name: "Motown Motion" },
-    b: { center: "Michigan", division: "D", name: "Designated Drivers" }
+    b: { center: "Michigan", division: "D", name: "Designated Drunk Drivers" }
   },
   {
     count: 1,
