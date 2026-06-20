@@ -818,52 +818,52 @@ th {
 
 .schedule-game-cell.division-a,
 .legend-chip.division-a {
-  background: #ffd966;
+  background: #ffff00;
   color: #202124;
 }
 
 .schedule-game-cell.division-b,
 .legend-chip.division-b {
-  background: #f4b183;
+  background: #ffc000;
   color: #202124;
 }
 
 .schedule-game-cell.division-c,
 .legend-chip.division-c {
-  background: #5b9bd5;
+  background: #00b0f0;
   color: #202124;
 }
 
 .schedule-game-cell.division-d,
 .legend-chip.division-d {
-  background: #70ad47;
+  background: #92d050;
   color: #202124;
 }
 
 .schedule-game-cell.division-unlimited,
 .legend-chip.division-unlimited {
-  background: #d9c2e9;
+  background: #f4cccc;
   color: #202124;
 }
 
 .schedule-ref-cell.division-a {
-  background: #fff2cc;
+  background: #fff9b0;
 }
 
 .schedule-ref-cell.division-b {
-  background: #fce4d6;
+  background: #ffe699;
 }
 
 .schedule-ref-cell.division-c {
-  background: #ddebf7;
+  background: #c9f0ff;
 }
 
 .schedule-ref-cell.division-d {
-  background: #e2f0d9;
+  background: #d9ead3;
 }
 
 .schedule-ref-cell.division-unlimited {
-  background: #eadcf8;
+  background: #fce4ec;
 }
 
 .muted-game-row {
@@ -1077,52 +1077,52 @@ th {
 }
 
 .team-role-pill.playing.division-a {
-  background: #ffd966;
+  background: #ffff00;
   color: #202124;
 }
 
 .team-role-pill.playing.division-b {
-  background: #f4b183;
+  background: #ffc000;
   color: #202124;
 }
 
 .team-role-pill.playing.division-c {
-  background: #5b9bd5;
+  background: #00b0f0;
   color: #202124;
 }
 
 .team-role-pill.playing.division-d {
-  background: #70ad47;
+  background: #92d050;
   color: #202124;
 }
 
 .team-role-pill.playing.division-unlimited {
-  background: #d9c2e9;
+  background: #f4cccc;
   color: #202124;
 }
 
 .team-role-pill.reffing.division-a {
-  background: #fff2cc;
+  background: #fff9b0;
   color: #202124;
 }
 
 .team-role-pill.reffing.division-b {
-  background: #fce4d6;
+  background: #ffe699;
   color: #202124;
 }
 
 .team-role-pill.reffing.division-c {
-  background: #ddebf7;
+  background: #c9f0ff;
   color: #202124;
 }
 
 .team-role-pill.reffing.division-d {
-  background: #e2f0d9;
+  background: #d9ead3;
   color: #202124;
 }
 
 .team-role-pill.reffing.division-unlimited {
-  background: #eadcf8;
+  background: #fce4ec;
   color: #202124;
 }
 

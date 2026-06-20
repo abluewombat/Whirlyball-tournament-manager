@@ -40,11 +40,11 @@ type ScheduleTeamStats = {
 };
 
 const divisionColors: Record<string, string> = {
-  A: "FFD966",
-  B: "F4B183",
-  C: "5B9BD5",
-  D: "70AD47",
-  Unlimited: "D9C2E9"
+  A: "FFFF00",
+  B: "FFC000",
+  C: "00B0F0",
+  D: "92D050",
+  Unlimited: "F4CCCC"
 };
 
 const divisionTextColors: Record<string, string> = {
@@ -56,11 +56,11 @@ const divisionTextColors: Record<string, string> = {
 };
 
 const refDivisionColors: Record<string, string> = {
-  A: "FFF2CC",
-  B: "FCE4D6",
-  C: "DDEBF7",
-  D: "E2F0D9",
-  Unlimited: "EADCF8"
+  A: "FFF9B0",
+  B: "FFE699",
+  C: "C9F0FF",
+  D: "D9EAD3",
+  Unlimited: "FCE4EC"
 };
 
 export async function GET() {
