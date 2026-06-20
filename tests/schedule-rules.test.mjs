@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildScheduleRulesReport } from "../lib/schedule-rules.ts";
 
-test("blocked ref rule flags ref teams with overlapping blockers", () => {
+test("blocked assignment rule flags ref teams with overlapping blockers", () => {
   const report = reportFor({
     games: [
       {
@@ -21,12 +21,36 @@ test("blocked ref rule flags ref teams with overlapping blockers", () => {
     availabilityBlocks: [{ id: 1, team_id: 201, starts_at: "2026-06-23T10:10:00", ends_at: "2026-06-23T10:30:00", reason: "Arriving late" }]
   });
 
-  const rule = ruleById(report, "blocked-ref-assignments");
+  const rule = ruleById(report, "blocked-assignments");
   assert.equal(rule.issueCount, 1);
   assert.equal(rule.issues[0].team, "B Texas Refs");
 });
 
-test("blocked ref rule treats touching blocker boundaries as available", () => {
+test("blocked assignment rule flags playing teams with overlapping blockers", () => {
+  const report = reportFor({
+    games: [
+      {
+        id: 1,
+        phase: "seeding",
+        division: "A",
+        court: 1,
+        starts_at: "2026-06-23T10:00:00",
+        team_1_id: 101,
+        team_2_id: 102,
+        ref_team_id: 201,
+        label: "A R1"
+      }
+    ],
+    teams: [{ id: 101, division: "A", center: "Texas", name: "Blocked Player" }],
+    availabilityBlocks: [{ id: 1, team_id: 101, starts_at: "2026-06-23T09:50:00", ends_at: "2026-06-23T10:10:00", reason: "Travel" }]
+  });
+
+  const rule = ruleById(report, "blocked-assignments");
+  assert.equal(rule.issueCount, 1);
+  assert.equal(rule.issues[0].details.role, "play");
+});
+
+test("blocked assignment rule treats touching blocker boundaries as available", () => {
   const report = reportFor({
     games: [
       {
@@ -45,10 +69,10 @@ test("blocked ref rule treats touching blocker boundaries as available", () => {
     availabilityBlocks: [{ id: 1, team_id: 201, starts_at: "2026-06-23T09:00:00", ends_at: "2026-06-23T10:00:00", reason: null }]
   });
 
-  assert.equal(ruleById(report, "blocked-ref-assignments").issueCount, 0);
+  assert.equal(ruleById(report, "blocked-assignments").issueCount, 0);
 });
 
-test("blocked ref rule uses tournament duration for ref windows", () => {
+test("blocked assignment rule uses tournament duration for ref windows", () => {
   const report = reportFor({
     games: [
       {
@@ -68,7 +92,29 @@ test("blocked ref rule uses tournament duration for ref windows", () => {
     settings: { tournamentMinutes: 40 }
   });
 
-  assert.equal(ruleById(report, "blocked-ref-assignments").issueCount, 1);
+  assert.equal(ruleById(report, "blocked-assignments").issueCount, 1);
+});
+
+test("blocked assignment rule blocks non-early teams before 7 PM Tuesday", () => {
+  const report = reportFor({
+    games: [{ ...seedingGame(1, "A", "2026-06-23T18:40:00", 1), team_1_id: 101 }],
+    teams: [{ id: 101, division: "A", center: "Texas", name: "Late Arrival", early_available: false }],
+    settings: { seedingMinutes: 20, startDate: "2026-06-23", endDate: "2026-06-28", includeTuesday: true }
+  });
+
+  const rule = ruleById(report, "blocked-assignments");
+  assert.equal(rule.issueCount, 1);
+  assert.equal(rule.issues[0].details.reason, "Default Tuesday arrival (19:00)");
+});
+
+test("blocked assignment rule allows early-available teams before 7 PM Tuesday", () => {
+  const report = reportFor({
+    games: [{ ...seedingGame(1, "A", "2026-06-23T18:40:00", 1), team_1_id: 101 }],
+    teams: [{ id: 101, division: "A", center: "Texas", name: "Early Team", early_available: true }],
+    settings: { seedingMinutes: 20, startDate: "2026-06-23", endDate: "2026-06-28", includeTuesday: true }
+  });
+
+  assert.equal(ruleById(report, "blocked-assignments").issueCount, 0);
 });
 
 test("first/last division rule flags any division present in both edge rows", () => {

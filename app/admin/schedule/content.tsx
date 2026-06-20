@@ -236,7 +236,7 @@ export async function AdminScheduleContent({
             <input name="morning_rest_rows" type="number" min="0" defaultValue={settings.morningRestRows} />
           </label>
           <label>
-            Tuesday uses explicit blockers
+            Tuesday blocks non-early teams until 7 PM
             <input type="hidden" name="include_tuesday" value="on" />
             <input type="checkbox" defaultChecked disabled />
           </label>

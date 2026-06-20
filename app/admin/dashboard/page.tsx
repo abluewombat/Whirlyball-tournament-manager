@@ -115,6 +115,10 @@ export default async function AdminDashboardPage({
                 {divisions.map((division) => <option key={division}>{division}</option>)}
               </select>
             </label>
+            <label>
+              Available before 7 PM Tuesday
+              <input name="early_available" type="checkbox" />
+            </label>
             <button className="button">Add Team</button>
           </form>
         </article>

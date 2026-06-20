@@ -497,7 +497,7 @@ export async function generateScheduleAction(formData: FormData) {
   const result = await generateSchedule(scheduleInput);
   const [teams, availabilityBlocks] = await Promise.all([
     query<ScheduleRuleTeam>(
-      `SELECT teams.id, teams.division, teams.name, COALESCE(centers.name, 'Draft') as center
+      `SELECT teams.id, teams.division, teams.name, teams.early_available, COALESCE(centers.name, 'Draft') as center
        FROM teams LEFT JOIN centers ON centers.id = teams.center_id
        WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL
        ORDER BY teams.division, center, teams.name`,

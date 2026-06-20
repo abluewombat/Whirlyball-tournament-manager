@@ -132,6 +132,7 @@ const manualBufferDivision = "Buffer";
 const manualDailyBufferMinutes = 20;
 const refStintRows = 3;
 const fillAvailableSeedingSlots = true;
+const tuesdayDefaultArrivalTime = "19:00";
 const manualFridayDMatchups = [
   { a: { center: "Michigan", division: "D", name: "Motown Motion" }, b: { center: "Seattle", division: "D", name: "Hollaback Whirl" } },
   { a: { center: "Minnesota", division: "D", name: "4 Lefts 1 Wrong" }, b: { center: "Michigan", division: "D", name: "Designated Drunk Drivers" } },
@@ -224,6 +225,28 @@ function buildAvailabilityMap(blocks: TeamAvailabilityBlockRow[]) {
   const map: AvailabilityMap = new Map();
   for (const block of blocks) map.set(block.team_id, [...(map.get(block.team_id) || []), block]);
   return map;
+}
+
+function addTuesdayArrivalAvailabilityBlocks(availability: AvailabilityMap, teams: TeamRow[], input: ScheduleInput) {
+  if (!input.includeTuesday) return;
+  for (const day of dateRange(input.startDate, input.endDate)) {
+    if (!isTuesday(day)) continue;
+    const startsAt = manualDateTime(isoDate(day), "00:00");
+    const endsAt = manualDateTime(isoDate(day), tuesdayDefaultArrivalTime);
+    for (const team of teams) {
+      if (team.early_available) continue;
+      availability.set(team.id, [
+        ...(availability.get(team.id) || []),
+        {
+          id: -team.id,
+          team_id: team.id,
+          starts_at: startsAt,
+          ends_at: endsAt,
+          reason: `Default Tuesday arrival (${tuesdayDefaultArrivalTime})`
+        }
+      ]);
+    }
+  }
 }
 
 function teamBlockedAt(teamId: number, startsAt: string, durationMinutes: number, availability: AvailabilityMap) {
@@ -3204,6 +3227,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
     [input.tournamentId]
   );
   const availability = buildAvailabilityMap(availabilityBlocks);
+  addTuesdayArrivalAvailabilityBlocks(availability, teams, input);
   const byDivision = new Map<string, TeamRow[]>();
   for (const team of teams) byDivision.set(team.division, [...(byDivision.get(team.division) || []), team]);
   const exhibitionDivision = input.exhibitionDivision || null;

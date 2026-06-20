@@ -167,6 +167,10 @@ export function AdminTeamManager({
                 ))}
               </select>
             </label>
+            <label>
+              Available before 7 PM Tuesday
+              <input name="early_available" type="checkbox" defaultChecked={Boolean(selectedTeam.early_available)} disabled={Boolean(selectedTeam.deleted_at)} />
+            </label>
             <div className="actions">
               {selectedTeam.deleted_at ? (
                 <button className="button" formAction={restoreTeamAction}>

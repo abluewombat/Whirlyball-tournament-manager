@@ -32,8 +32,8 @@ try {
     blockers: blocks.length,
     status: rulesReport.status,
     issueCount: rulesReport.issueCount,
-    blockedRefAssignments: ruleById.get("blocked-ref-assignments")?.issueCount || 0,
-    blockedRefExamples: ruleById.get("blocked-ref-assignments")?.issues.slice(0, 30) || [],
+    blockedAssignments: ruleById.get("blocked-assignments")?.issueCount || 0,
+    blockedAssignmentExamples: ruleById.get("blocked-assignments")?.issues.slice(0, 30) || [],
     firstLastDivisionConflicts: ruleById.get("first-last-division")?.issueCount || 0,
     firstLastDivisionExamples: ruleById.get("first-last-division")?.issues.slice(0, 30) || [],
     concurrentCourtConflicts: ruleById.get("cross-court-buffer")?.issueCount || 0,
@@ -91,7 +91,7 @@ async function loadGames(tournamentId) {
 
 async function loadTeams(tournamentId) {
   const result = await pool.query(
-    `SELECT teams.id, teams.tournament_id, teams.name, teams.division, COALESCE(centers.name, 'Draft') as center
+    `SELECT teams.id, teams.tournament_id, teams.name, teams.division, teams.early_available, COALESCE(centers.name, 'Draft') as center
      FROM teams
      LEFT JOIN centers ON centers.id = teams.center_id
      WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL

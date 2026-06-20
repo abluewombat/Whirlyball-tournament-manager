@@ -23,6 +23,7 @@ export type ScheduleRuleTeam = {
   center?: string | null;
   center_name?: string | null;
   name: string;
+  early_available?: boolean;
 };
 
 export type ScheduleRuleAvailabilityBlock = {
@@ -34,6 +35,9 @@ export type ScheduleRuleAvailabilityBlock = {
 };
 
 export type ScheduleRuleSettings = {
+  startDate?: string;
+  endDate?: string;
+  includeTuesday?: boolean;
   seedingMinutes?: number;
   seeding_minutes?: number;
   tournamentMinutes?: number;
@@ -81,12 +85,14 @@ type ScheduleRuleDefinition = {
   check: (context: ScheduleRuleContext, rule: Pick<ScheduleRuleDefinition, "id" | "name" | "severity">) => ScheduleRuleIssue[];
 };
 
+const tuesdayDefaultArrivalTime = "19:00";
+
 export const scheduleRules: ScheduleRuleDefinition[] = [
   {
-    id: "blocked-ref-assignments",
-    name: "Refs Are Present",
+    id: "blocked-assignments",
+    name: "Teams Are Present",
     severity: "error",
-    check: auditBlockedRefAssignments
+    check: auditBlockedAssignments
   },
   {
     id: "first-last-division",
@@ -118,7 +124,7 @@ export function buildScheduleRulesReport({
   const context: ScheduleRuleContext = {
     games,
     teamsById: new Map(teams.map((team) => [Number(team.id), team])),
-    blocksByTeam: groupBlocksByTeam(availabilityBlocks),
+    blocksByTeam: groupBlocksByTeam([...availabilityBlocks, ...buildTuesdayArrivalAvailabilityBlocks(teams, settings)]),
     settings
   };
   const rules = scheduleRules.map((rule) => {
@@ -153,35 +159,43 @@ export function normalizeDateTime(value: string) {
   return value.slice(0, 19);
 }
 
-function auditBlockedRefAssignments(context: ScheduleRuleContext, rule: Pick<ScheduleRuleDefinition, "id" | "name" | "severity">) {
+function auditBlockedAssignments(context: ScheduleRuleContext, rule: Pick<ScheduleRuleDefinition, "id" | "name" | "severity">) {
   const issues: ScheduleRuleIssue[] = [];
   for (const game of context.games) {
-    const refTeamId = refTeamIdForGame(game);
-    if (!refTeamId) continue;
     const startsAt = startsAtForGame(game);
     const durationMinutes = gameDurationMinutes(game, context.settings);
-    const overlappingBlock = (context.blocksByTeam.get(refTeamId) || []).find((block) =>
-      intervalsOverlap(startsAt, durationMinutes, block.starts_at, blockerDurationMinutes(block))
-    );
-    if (!overlappingBlock) continue;
-    const team = context.teamsById.get(refTeamId);
-    issues.push({
-      ruleId: rule.id,
-      ruleName: rule.name,
-      severity: rule.severity,
-      team: team ? formatTeam(team) : `Team ${refTeamId}`,
-      startsAt,
-      message: `${team ? formatTeam(team) : `Team ${refTeamId}`} is reffing while blocked`,
-      details: {
-        gameId: game.id ?? null,
-        court: Number(game.court),
-        division: game.division,
-        phase: game.phase,
-        blockerStart: normalizeDateTime(overlappingBlock.starts_at),
-        blockerEnd: normalizeDateTime(overlappingBlock.ends_at),
-        reason: overlappingBlock.reason || null
-      }
-    });
+    const assignments = [
+      { teamId: team1IdForGame(game), role: "play" },
+      { teamId: team2IdForGame(game), role: "play" },
+      { teamId: refTeamIdForGame(game), role: "ref" }
+    ] as const;
+    for (const assignment of assignments) {
+      if (!assignment.teamId) continue;
+      const overlappingBlock = (context.blocksByTeam.get(assignment.teamId) || []).find((block) =>
+        intervalsOverlap(startsAt, durationMinutes, block.starts_at, blockerDurationMinutes(block))
+      );
+      if (!overlappingBlock) continue;
+      const team = context.teamsById.get(assignment.teamId);
+      const teamName = team ? formatTeam(team) : `Team ${assignment.teamId}`;
+      issues.push({
+        ruleId: rule.id,
+        ruleName: rule.name,
+        severity: rule.severity,
+        team: teamName,
+        startsAt,
+        message: `${teamName} is scheduled to ${assignment.role} while blocked`,
+        details: {
+          role: assignment.role,
+          gameId: game.id ?? null,
+          court: Number(game.court),
+          division: game.division,
+          phase: game.phase,
+          blockerStart: normalizeDateTime(overlappingBlock.starts_at),
+          blockerEnd: normalizeDateTime(overlappingBlock.ends_at),
+          reason: overlappingBlock.reason || null
+        }
+      });
+    }
   }
   return issues.sort(compareIssues);
 }
@@ -358,6 +372,45 @@ function groupBlocksByTeam(blocks: ScheduleRuleAvailabilityBlock[]) {
     grouped.set(teamId, [...(grouped.get(teamId) || []), block]);
   }
   return grouped;
+}
+
+function buildTuesdayArrivalAvailabilityBlocks(teams: ScheduleRuleTeam[], settings: ScheduleRuleSettings) {
+  if (!settings.includeTuesday || !settings.startDate || !settings.endDate) return [];
+  const blocks: ScheduleRuleAvailabilityBlock[] = [];
+  for (const day of dateRange(settings.startDate, settings.endDate)) {
+    if (!isTuesday(day)) continue;
+    const date = isoDate(day);
+    for (const team of teams) {
+      if (team.early_available) continue;
+      blocks.push({
+        id: -team.id,
+        team_id: team.id,
+        starts_at: `${date}T00:00:00`,
+        ends_at: `${date}T${tuesdayDefaultArrivalTime}:00`,
+        reason: `Default Tuesday arrival (${tuesdayDefaultArrivalTime})`
+      });
+    }
+  }
+  return blocks;
+}
+
+function dateRange(start: string, end: string) {
+  const days: Date[] = [];
+  const cursor = new Date(`${start}T00:00:00`);
+  const last = new Date(`${end}T00:00:00`);
+  while (cursor <= last) {
+    days.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return days;
+}
+
+function isoDate(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function isTuesday(date: Date) {
+  return date.getDay() === 2;
 }
 
 function formatTeam(team: ScheduleRuleTeam) {
