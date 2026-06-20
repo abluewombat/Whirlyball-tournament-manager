@@ -108,7 +108,7 @@ export const scheduleRules: ScheduleRuleDefinition[] = [
   },
   {
     id: "division-daily-blocks",
-    name: "Divisions Stay In One Daily Block",
+    name: "Large Divisions Split Into Two Daily Blocks",
     severity: "warning",
     check: auditDivisionDailyBlocks
   }
@@ -322,21 +322,24 @@ function auditDivisionDailyBlocks(context: ScheduleRuleContext, rule: Pick<Sched
     const divisionBlocks = divisionBlocksForStarts(dayGames, starts);
     const divisions = [...new Set(dayGames.map((game) => game.division))].sort();
     for (const division of divisions) {
+      const divisionRows = starts.filter((startsAt) => dayGames.some((game) => startsAtForGame(game) === startsAt && game.division === division));
+      if (divisionRows.length < 4) continue;
       const blockIndexes = divisionBlockIndexes(divisionBlocks, division);
       const blocks = blockIndexes.length;
-      if (blocks <= 1 || allowedSoftSplitBlockIndexes(divisionBlocks, division)) continue;
+      if (allowedSoftSplitBlockIndexes(divisionBlocks, division)) continue;
       issues.push({
         ruleId: rule.id,
         ruleName: rule.name,
         severity: rule.severity,
         startsAt: `${day}T00:00:00`,
-        message: `${division} has ${blocks} separate seeding blocks on ${day}`,
+        message: `${division} needs two seeding blocks with one other block between them on ${day}`,
         details: {
           day,
           division,
           blocks,
+          rowCount: divisionRows.length,
           blockIndexes: blockIndexes.map(String),
-          rows: starts.filter((startsAt) => dayGames.some((game) => startsAtForGame(game) === startsAt && game.division === division))
+          rows: divisionRows
         }
       });
     }

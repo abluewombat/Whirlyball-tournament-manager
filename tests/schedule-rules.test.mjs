@@ -275,7 +275,7 @@ test("buffer rule allows play and ref after a full one-game buffer", () => {
   assert.equal(ruleById(report, "cross-court-buffer").issueCount, 0);
 });
 
-test("division block rule allows one contiguous daily division block", () => {
+test("division block rule allows one contiguous daily division block below the minimum size", () => {
   const report = reportFor({
     games: [
       seedingGame(1, "A", "2026-06-24T09:00:00", 1),
@@ -287,12 +287,31 @@ test("division block rule allows one contiguous daily division block", () => {
   assert.equal(ruleById(report, "division-daily-blocks").issueCount, 0);
 });
 
-test("division block rule allows two blocks with one intervening division block", () => {
+test("division block rule warns when a large division stays in one daily block", () => {
   const report = reportFor({
     games: [
       seedingGame(1, "A", "2026-06-24T09:00:00", 1),
-      seedingGame(2, "B", "2026-06-24T09:20:00", 1),
-      seedingGame(3, "A", "2026-06-24T09:40:00", 1)
+      seedingGame(2, "A", "2026-06-24T09:20:00", 1),
+      seedingGame(3, "A", "2026-06-24T09:40:00", 1),
+      seedingGame(4, "A", "2026-06-24T10:00:00", 1),
+      seedingGame(5, "B", "2026-06-24T10:20:00", 1)
+    ]
+  });
+
+  const rule = ruleById(report, "division-daily-blocks");
+  assert.equal(rule.issueCount, 1);
+  assert.equal(rule.issues[0].details.division, "A");
+  assert.equal(rule.issues[0].details.rowCount, 4);
+});
+
+test("division block rule allows large divisions in two blocks with one intervening division block", () => {
+  const report = reportFor({
+    games: [
+      seedingGame(1, "A", "2026-06-24T09:00:00", 1),
+      seedingGame(2, "A", "2026-06-24T09:20:00", 1),
+      seedingGame(3, "B", "2026-06-24T09:40:00", 1),
+      seedingGame(4, "A", "2026-06-24T10:00:00", 1),
+      seedingGame(5, "A", "2026-06-24T10:20:00", 1)
     ]
   });
 
@@ -303,9 +322,11 @@ test("division block rule warns when a division split has more than one block be
   const report = reportFor({
     games: [
       seedingGame(1, "A", "2026-06-24T09:00:00", 1),
-      seedingGame(2, "B", "2026-06-24T09:20:00", 1),
-      seedingGame(3, "C", "2026-06-24T09:40:00", 1),
-      seedingGame(4, "A", "2026-06-24T10:00:00", 1)
+      seedingGame(2, "A", "2026-06-24T09:20:00", 1),
+      seedingGame(3, "B", "2026-06-24T09:40:00", 1),
+      seedingGame(4, "C", "2026-06-24T10:00:00", 1),
+      seedingGame(5, "A", "2026-06-24T10:20:00", 1),
+      seedingGame(6, "A", "2026-06-24T10:40:00", 1)
     ]
   });
 
@@ -319,10 +340,11 @@ test("division block rule warns when a division appears in three daily blocks", 
   const report = reportFor({
     games: [
       seedingGame(1, "A", "2026-06-24T09:00:00", 1),
-      seedingGame(2, "B", "2026-06-24T09:20:00", 1),
-      seedingGame(3, "A", "2026-06-24T09:40:00", 1),
-      seedingGame(4, "C", "2026-06-24T10:00:00", 1),
-      seedingGame(5, "A", "2026-06-24T10:20:00", 1)
+      seedingGame(2, "A", "2026-06-24T09:20:00", 1),
+      seedingGame(3, "B", "2026-06-24T09:40:00", 1),
+      seedingGame(4, "A", "2026-06-24T10:00:00", 1),
+      seedingGame(5, "C", "2026-06-24T10:20:00", 1),
+      seedingGame(6, "A", "2026-06-24T10:40:00", 1)
     ]
   });
 

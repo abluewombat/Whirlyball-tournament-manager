@@ -332,8 +332,8 @@ function splitLargeDivisionBlocks(plan: DivisionDayPlan[], courts: number) {
   const secondBlocks: DivisionDayPlan[] = [];
 
   for (const item of plan) {
-    if (item.rowCount >= 6 && item.targetGames > courts * 2) {
-      const secondRows = Math.max(1, Math.min(item.rowCount - 1, Math.floor(item.rowCount / 3)));
+    if (item.rowCount >= 4 && item.targetGames > courts * 2) {
+      const secondRows = Math.max(1, Math.min(item.rowCount - 1, Math.floor(item.rowCount / 2)));
       const secondTargetGames = Math.max(1, Math.min(item.targetGames - 1, secondRows * courts));
       primaryBlocks.push({
         ...item,
