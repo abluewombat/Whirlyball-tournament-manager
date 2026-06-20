@@ -387,11 +387,13 @@ function allCourtReservations(startsAt: string, durationMinutes: number, courts:
 function buildManualUnlimitedReservations(input: ScheduleInput) {
   const court = Math.max(1, Math.min(input.courts, input.unlimitedCourt || scheduleDefaults.unlimitedCourt));
   const date = (input.unlimitedGameStart || scheduleDefaults.unlimitedGameStart).slice(0, 10) || manualFridayDate;
-  return manualUnlimitedStartTimes.map((time) => ({
-    startsAt: manualDateTime(date, time),
-    durationMinutes: unlimitedBlockMinutes,
-    court
-  }));
+  return manualUnlimitedStartTimes.flatMap((time) =>
+    [0, input.seedingMinutes].map((offset) => ({
+      startsAt: addMinutes(manualDateTime(date, time), offset),
+      durationMinutes: input.seedingMinutes,
+      court
+    }))
+  );
 }
 
 function buildManualScheduleReservations(input: ScheduleInput) {
@@ -1610,7 +1612,7 @@ function refEligible(gameDivision: string, team: TeamRow) {
 }
 
 function gameDurationMinutes(game: GeneratedGame, input: ScheduleInput) {
-  if (game.phase === "unlimited") return unlimitedBlockMinutes;
+  if (game.phase === "unlimited") return input.seedingMinutes;
   return game.phase === "tournament" ? input.tournamentMinutes : input.seedingMinutes;
 }
 
