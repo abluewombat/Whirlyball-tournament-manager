@@ -201,7 +201,7 @@ export async function AdminScheduleContent({
           </label>
           <label>
             Division target overrides
-            <input name="division_target_games" defaultValue={settings.divisionTargetGames} placeholder="A:10,B:12,C:15,D:14" />
+            <input name="division_target_games" defaultValue={settings.divisionTargetGames} placeholder="A:15,B:12,C:15,D:14" />
           </label>
           <label>
             Pair repeat limit

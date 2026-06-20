@@ -1146,14 +1146,11 @@ function parseDivisionTargets(value: string | undefined, defaultTarget: number, 
 
 function buildTargetGamesByTeam(byDivision: Map<string, TeamRow[]>, divisionTargets: Map<string, number>, maxPairRepeats: number) {
   const targetGamesByTeam = new Map<number, number>();
-  const aTeams = byDivision.get("A") || [];
-  const aOneRoundTarget = Math.max(0, aTeams.length - 1);
 
   for (const [division, teams] of byDivision.entries()) {
     const maxPossible = Math.max(0, (teams.length - 1) * maxPairRepeats);
     const configuredTarget = divisionTargets.get(division) ?? 0;
-    const divisionCap = division === "A" ? aOneRoundTarget : Number.POSITIVE_INFINITY;
-    const target = Math.min(configuredTarget, maxPossible, divisionCap);
+    const target = Math.min(configuredTarget, maxPossible);
     for (const team of teams) targetGamesByTeam.set(team.id, target);
   }
   return targetGamesByTeam;
