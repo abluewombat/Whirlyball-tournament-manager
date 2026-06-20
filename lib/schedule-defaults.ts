@@ -11,7 +11,7 @@ export const scheduleDefaults = {
   tournamentDayEnd: "19:00",
   finalDayEnd: "18:30",
   seedingMode: "balanced",
-  targetGamesPerTeam: 12,
+  targetGamesPerTeam: 15,
   divisionTargetGames: "",
   roundsPerPair: 2,
   blockOrder: "A,B,C,D,Unlimited",

@@ -1148,12 +1148,11 @@ function buildTargetGamesByTeam(byDivision: Map<string, TeamRow[]>, divisionTarg
   const targetGamesByTeam = new Map<number, number>();
   const aTeams = byDivision.get("A") || [];
   const aOneRoundTarget = Math.max(0, aTeams.length - 1);
-  const nonATargetCap = aOneRoundTarget > 0 ? aOneRoundTarget + maxSeedingCoverageSpread : Number.POSITIVE_INFINITY;
 
   for (const [division, teams] of byDivision.entries()) {
     const maxPossible = Math.max(0, (teams.length - 1) * maxPairRepeats);
     const configuredTarget = divisionTargets.get(division) ?? 0;
-    const divisionCap = division === "A" ? aOneRoundTarget : nonATargetCap;
+    const divisionCap = division === "A" ? aOneRoundTarget : Number.POSITIVE_INFINITY;
     const target = Math.min(configuredTarget, maxPossible, divisionCap);
     for (const team of teams) targetGamesByTeam.set(team.id, target);
   }
@@ -1196,6 +1195,25 @@ function divisionSeedingDeficit(
     return sum + missing;
   }, 0);
   return missingTeamGames > 0 ? Math.max(Math.ceil(missingTeamGames / 2), maxTeamMissing) : remainingMatchups;
+}
+
+function divisionTargetGap(division: string, byDivision: Map<string, TeamRow[]>, targetGamesByTeam: Map<number, number>, teamGameCounts: Map<number, number>) {
+  if (!targetGamesByTeam.size) return 0;
+  const teams = byDivision.get(division) || [];
+  let maxTeamMissing = 0;
+  const missingTeamGames = teams.reduce((sum, team) => {
+    const missing = Math.max(0, (targetGamesByTeam.get(team.id) || 0) - teamGameCount(team, teamGameCounts));
+    maxTeamMissing = Math.max(maxTeamMissing, missing);
+    return sum + missing;
+  }, 0);
+  return missingTeamGames > 0 ? Math.max(Math.ceil(missingTeamGames / 2), maxTeamMissing) : 0;
+}
+
+function fillPriority(division: string) {
+  const preferredIndex = ["A", "B", "C"].indexOf(division);
+  if (preferredIndex >= 0) return preferredIndex;
+  if (division === "D") return 3;
+  return 4;
 }
 
 function divisionGameStats(division: string, byDivision: Map<string, TeamRow[]>, teamGameCounts: Map<number, number>) {
@@ -2193,6 +2211,14 @@ function repairOpenSeedingCourts({
       const divisionOrder = (blockOrder.length ? blockOrder : defaultBlockOrder)
         .filter((division) => (queues.get(division) || []).length > 0)
         .sort((left, right) => {
+          const leftTargetGap = divisionTargetGap(left, byDivision, targetGamesByTeam, teamGameCounts);
+          const rightTargetGap = divisionTargetGap(right, byDivision, targetGamesByTeam, teamGameCounts);
+          if ((leftTargetGap > 0) !== (rightTargetGap > 0)) return leftTargetGap > 0 ? -1 : 1;
+          if (leftTargetGap > 0 && rightTargetGap > 0) {
+            const leftPriority = fillPriority(left);
+            const rightPriority = fillPriority(right);
+            if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+          }
           const leftStats = divisionGameStats(left, byDivision, teamGameCounts);
           const rightStats = divisionGameStats(right, byDivision, teamGameCounts);
           if (leftStats.min !== rightStats.min) return leftStats.min - rightStats.min;
@@ -2283,6 +2309,66 @@ function repairOpenSeedingCourts({
   }
 
   return added;
+}
+
+function buildCompleteSeedingSlots({
+  seedingDays,
+  games,
+  input,
+  reservedSeedingCourts,
+  dayStartMinutes,
+  earlyStartMinutes,
+  dayEndMinutes,
+  tournamentDays
+}: {
+  seedingDays: Date[];
+  games: GeneratedGame[];
+  input: ScheduleInput;
+  reservedSeedingCourts: Map<string, Set<number>>;
+  dayStartMinutes: number;
+  earlyStartMinutes: number;
+  dayEndMinutes: number;
+  tournamentDays: Date[];
+}) {
+  const slots: SeedingSlot[] = [];
+  let previousDayLateTeamIds = new Set<number>();
+  const competitiveDivisions = input.divisions.filter((division) => division !== input.exhibitionDivision);
+
+  for (const [dayIndex, day] of seedingDays.entries()) {
+    const startsAtMinute = usesTuesdayScheduleStart(input, day) ? earlyStartMinutes : dayStartMinutes;
+    const rowCapacity = Math.max(0, Math.floor((dayEndMinutes - startsAtMinute) / input.seedingMinutes));
+    const nextDay = new Date(day);
+    nextDay.setDate(nextDay.getDate() + 1);
+    const nextTournamentDayIndex = tournamentDays.findIndex((tournamentDay) => isoDate(tournamentDay) === isoDate(nextDay));
+    const nextDayTournamentDivisions = new Set(nextTournamentDayIndex >= 0 ? tournamentDivisionsForDay(nextTournamentDayIndex, competitiveDivisions) : []);
+
+    for (let row = 0; row < rowCapacity; row++) {
+      const rowMinute = startsAtMinute + row * input.seedingMinutes;
+      const startsAt = at(day, rowMinute);
+      slots.push({
+        division: "",
+        startsAt,
+        dayIndex,
+        row,
+        rowMinute,
+        reservedCourts: reservedSeedingCourts.get(startsAt) || new Set<number>(),
+        previousDayLateTeamIds,
+        nextDayTournamentDivisions
+      });
+    }
+
+    const lateCutoff = dayEndMinutes - Math.max(0, input.lateNightRows ?? scheduleDefaults.lateNightRows) * input.seedingMinutes;
+    const currentDayLateTeamIds = new Set<number>();
+    const dayKey = isoDate(day);
+    for (const game of games.filter((candidate) => candidate.phase === "seeding" && candidate.startsAt.startsWith(dayKey))) {
+      if (minutes(game.startsAt.slice(11, 16)) < lateCutoff) continue;
+      if (game.team1Id !== null) currentDayLateTeamIds.add(game.team1Id);
+      if (game.team2Id !== null) currentDayLateTeamIds.add(game.team2Id);
+    }
+    previousDayLateTeamIds = currentDayLateTeamIds;
+  }
+
+  return slots;
 }
 
 function compactSingleCourtSeedingRows({
@@ -3083,9 +3169,19 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
     });
     if (added === 0) break;
   }
+  const completeSeedingSlots = buildCompleteSeedingSlots({
+    seedingDays,
+    games,
+    input,
+    reservedSeedingCourts,
+    dayStartMinutes: start,
+    earlyStartMinutes: earlyStart,
+    dayEndMinutes: end,
+    tournamentDays
+  });
   for (let pass = 0; pass < 5; pass++) {
     const added = repairOpenSeedingCourts({
-      slots: seedingSlots,
+      slots: completeSeedingSlots,
       games,
       queues,
       teams,
