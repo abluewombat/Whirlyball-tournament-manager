@@ -1301,6 +1301,24 @@ function matchupWithinTargetBand(
   return teamCanAddGame(matchup.a) && teamCanAddGame(matchup.b);
 }
 
+function matchupKeepsDivisionCoverageBand(
+  matchup: Matchup,
+  divisionTeams: TeamRow[],
+  teamGameCounts: Map<number, number>,
+  preplayedGameCounts: Map<number, number>
+) {
+  if (divisionTeams.length < 3) return true;
+  const currentCounts = divisionTeams.map((team) => effectiveTeamGameCount(team, teamGameCounts, preplayedGameCounts));
+  const currentMin = Math.min(...currentCounts);
+  const nextCounts = divisionTeams.map((team) => effectiveTeamGameCount(team, teamGameCounts, preplayedGameCounts) + (team.id === matchup.a.id || team.id === matchup.b.id ? 1 : 0));
+  const nextSpread = Math.max(...nextCounts) - Math.min(...nextCounts);
+  if (nextSpread <= maxSeedingCoverageSpread) return true;
+
+  const aCount = effectiveTeamGameCount(matchup.a, teamGameCounts, preplayedGameCounts);
+  const bCount = effectiveTeamGameCount(matchup.b, teamGameCounts, preplayedGameCounts);
+  return aCount === currentMin || bCount === currentMin;
+}
+
 function teamAtTarget(team: TeamRow, targetGamesByTeam: Map<number, number>, teamGameCounts: Map<number, number>) {
   const target = targetGamesByTeam.get(team.id);
   return target !== undefined && teamGameCount(team, teamGameCounts) >= target;
@@ -2147,6 +2165,7 @@ function repairSeedingSlots({
     const divisionTeams = byDivision.get(slot.division) || [];
     const eligible = (matchup: Matchup) => {
       if (!matchup.required && !matchupWithinTargetBand(matchup, teamGameCounts, preplayedGameCounts, fairnessTargetGamesByTeam)) return false;
+      if (!matchup.required && !matchupKeepsDivisionCoverageBand(matchup, divisionTeams, teamGameCounts, preplayedGameCounts)) return false;
       if (
         !fillAvailableSeedingSlots &&
         !matchup.required &&
@@ -2323,6 +2342,7 @@ function repairOpenSeedingCourts({
         const divisionTeams = byDivision.get(division) || [];
         const eligible = (matchup: Matchup) => {
           if (!matchup.required && !matchupWithinTargetBand(matchup, teamGameCounts, preplayedGameCounts, fairnessTargetGamesByTeam)) return false;
+          if (!matchup.required && !matchupKeepsDivisionCoverageBand(matchup, divisionTeams, teamGameCounts, preplayedGameCounts)) return false;
           if (
             !fillAvailableSeedingSlots &&
             !matchup.required &&
@@ -3311,6 +3331,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
         });
         const eligible = (matchup: Matchup) => {
           if (!matchup.required && !matchupWithinTargetBand(matchup, teamGameCounts, preplayedGameCounts, fairnessTargetGamesByTeam)) return false;
+          if (!matchup.required && !matchupKeepsDivisionCoverageBand(matchup, divisionTeams, teamGameCounts, preplayedGameCounts)) return false;
           if (
             !fillAvailableSeedingSlots &&
             !matchup.required &&
