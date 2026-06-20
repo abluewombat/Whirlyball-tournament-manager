@@ -1157,6 +1157,25 @@ function buildTargetGamesByTeam(byDivision: Map<string, TeamRow[]>, divisionTarg
   return targetGamesByTeam;
 }
 
+function roundsNeededForDivisionTargets(byDivision: Map<string, TeamRow[]>, divisionTargets: Map<string, number>, fallbackRounds: number) {
+  let rounds = fallbackRounds;
+  for (const [division, teams] of byDivision.entries()) {
+    if (teams.length < 2) continue;
+    const target = divisionTargets.get(division) || 0;
+    rounds = Math.max(rounds, Math.ceil(target / Math.max(1, teams.length - 1)));
+  }
+  return rounds;
+}
+
+function buildPreplayedGameCounts(preplayedMatchups: ReturnType<typeof buildPreplayedSeedingMatchups>) {
+  const counts = new Map<number, number>();
+  for (const preplayed of preplayedMatchups) {
+    counts.set(preplayed.a.id, (counts.get(preplayed.a.id) || 0) + preplayed.count);
+    counts.set(preplayed.b.id, (counts.get(preplayed.b.id) || 0) + preplayed.count);
+  }
+  return counts;
+}
+
 function buildTargetGamesByDivision(queues: Map<string, Matchup[]>, byDivision: Map<string, TeamRow[]>, targetGamesByTeam: Map<number, number>) {
   const targets = new Map<string, number>();
   for (const [division, teams] of byDivision.entries()) {
@@ -1293,6 +1312,25 @@ function unscheduledTargetGames(targetGamesByTeam: Map<number, number>, teamGame
 
 function teamGameCount(team: TeamRow, teamGameCounts: Map<number, number>) {
   return teamGameCounts.get(team.id) || 0;
+}
+
+function effectiveTeamGameCount(team: TeamRow, teamGameCounts: Map<number, number>, preplayedGameCounts: Map<number, number>) {
+  return teamGameCount(team, teamGameCounts) + (preplayedGameCounts.get(team.id) || 0);
+}
+
+function matchupWithinTargetBand(
+  matchup: Matchup,
+  teamGameCounts: Map<number, number>,
+  preplayedGameCounts: Map<number, number>,
+  targetGamesByTeam: Map<number, number>
+) {
+  if (!targetGamesByTeam.size) return true;
+  const teamCanAddGame = (team: TeamRow) => {
+    const target = targetGamesByTeam.get(team.id);
+    if (target === undefined) return true;
+    return effectiveTeamGameCount(team, teamGameCounts, preplayedGameCounts) + 1 <= target + maxSeedingCoverageSpread;
+  };
+  return teamCanAddGame(matchup.a) && teamCanAddGame(matchup.b);
 }
 
 function teamAtTarget(team: TeamRow, targetGamesByTeam: Map<number, number>, teamGameCounts: Map<number, number>) {
@@ -2093,6 +2131,8 @@ function repairSeedingSlots({
   input,
   availability,
   targetGamesByTeam,
+  fairnessTargetGamesByTeam,
+  preplayedGameCounts,
   targetGamesByDivision,
   teamGameCounts,
   divisionGameCounts,
@@ -2112,6 +2152,8 @@ function repairSeedingSlots({
   input: ScheduleInput;
   availability: AvailabilityMap;
   targetGamesByTeam: Map<number, number>;
+  fairnessTargetGamesByTeam: Map<number, number>;
+  preplayedGameCounts: Map<number, number>;
   targetGamesByDivision: Map<string, number>;
   teamGameCounts: Map<number, number>;
   divisionGameCounts: Map<string, number>;
@@ -2136,6 +2178,7 @@ function repairSeedingSlots({
     const availableCourts = Array.from({ length: input.courts }, (_, index) => index + 1).filter((court) => !occupiedCourts.has(court));
     const divisionTeams = byDivision.get(slot.division) || [];
     const eligible = (matchup: Matchup) => {
+      if (!matchup.required && !matchupWithinTargetBand(matchup, teamGameCounts, preplayedGameCounts, fairnessTargetGamesByTeam)) return false;
       if (
         !fillAvailableSeedingSlots &&
         !matchup.required &&
@@ -2232,6 +2275,8 @@ function repairOpenSeedingCourts({
   input,
   availability,
   targetGamesByTeam,
+  fairnessTargetGamesByTeam,
+  preplayedGameCounts,
   targetGamesByDivision,
   teamGameCounts,
   divisionGameCounts,
@@ -2252,6 +2297,8 @@ function repairOpenSeedingCourts({
   input: ScheduleInput;
   availability: AvailabilityMap;
   targetGamesByTeam: Map<number, number>;
+  fairnessTargetGamesByTeam: Map<number, number>;
+  preplayedGameCounts: Map<number, number>;
   targetGamesByDivision: Map<string, number>;
   teamGameCounts: Map<number, number>;
   divisionGameCounts: Map<string, number>;
@@ -2307,6 +2354,7 @@ function repairOpenSeedingCourts({
         const queue = queues.get(division) || [];
         const divisionTeams = byDivision.get(division) || [];
         const eligible = (matchup: Matchup) => {
+          if (!matchup.required && !matchupWithinTargetBand(matchup, teamGameCounts, preplayedGameCounts, fairnessTargetGamesByTeam)) return false;
           if (
             !fillAvailableSeedingSlots &&
             !matchup.required &&
@@ -3076,21 +3124,26 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
     scheduleReservations
   );
   const seedingMode = input.seedingMode || scheduleDefaults.seedingMode;
-  const maxPairRepeats = Math.max(1, input.roundsPerPair);
+  const configuredPairRepeats = Math.max(1, input.roundsPerPair);
+  const divisionTargets = parseDivisionTargets(
+    input.divisionTargetGames,
+    Math.max(1, input.targetGamesPerTeam || scheduleDefaults.targetGamesPerTeam),
+    [...seedingByDivision.keys()]
+  );
+  const maxPairRepeats = fillAvailableSeedingSlots ? roundsNeededForDivisionTargets(seedingByDivision, divisionTargets, configuredPairRepeats) : configuredPairRepeats;
   const targetGamesByTeam =
     seedingMode === "balanced"
-      ? buildTargetGamesByTeam(
-          seedingByDivision,
-          parseDivisionTargets(input.divisionTargetGames, Math.max(1, input.targetGamesPerTeam || scheduleDefaults.targetGamesPerTeam), [...seedingByDivision.keys()]),
-          maxPairRepeats
-        )
+      ? buildTargetGamesByTeam(seedingByDivision, divisionTargets, maxPairRepeats)
       : new Map<number, number>();
+  const fairnessTargetGamesByTeam = new Map(targetGamesByTeam);
 
   const queues = new Map<string, Matchup[]>();
   for (const [division, divTeams] of seedingByDivision.entries()) {
     queues.set(division, buildDivisionMatchups(divTeams, maxPairRepeats));
   }
-  applyPreplayedSeedingAdjustments(queues, targetGamesByTeam, buildPreplayedSeedingMatchups(teams));
+  const preplayedSeedingMatchups = buildPreplayedSeedingMatchups(teams);
+  const preplayedGameCounts = buildPreplayedGameCounts(preplayedSeedingMatchups);
+  applyPreplayedSeedingAdjustments(queues, targetGamesByTeam, preplayedSeedingMatchups);
   const protectedPairKeys = protectedSeedingPairKeys(queues);
   const targetGamesByDivision = buildTargetGamesByDivision(queues, seedingByDivision, targetGamesByTeam);
   const targetSeedingGames = [...targetGamesByDivision.values()].reduce((sum, count) => sum + count, 0);
@@ -3160,6 +3213,7 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
           nextDayTournamentDivisions
         });
         const eligible = (matchup: Matchup) => {
+          if (!matchup.required && !matchupWithinTargetBand(matchup, teamGameCounts, preplayedGameCounts, fairnessTargetGamesByTeam)) return false;
           if (
             !fillAvailableSeedingSlots &&
             !matchup.required &&
@@ -3264,6 +3318,8 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
       input,
       availability,
       targetGamesByTeam,
+      fairnessTargetGamesByTeam,
+      preplayedGameCounts,
       targetGamesByDivision,
       teamGameCounts,
       divisionGameCounts,
@@ -3297,6 +3353,8 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
       input,
       availability,
       targetGamesByTeam,
+      fairnessTargetGamesByTeam,
+      preplayedGameCounts,
       targetGamesByDivision,
       teamGameCounts,
       divisionGameCounts,
