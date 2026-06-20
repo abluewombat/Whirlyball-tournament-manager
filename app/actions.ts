@@ -16,6 +16,7 @@ import {
 } from "@/lib/auth";
 import { hashSecret } from "@/lib/security";
 import { generateSchedule } from "@/lib/schedule";
+import { buildScheduleRulesReport, type ScheduleRuleAvailabilityBlock, type ScheduleRuleTeam } from "@/lib/schedule-rules";
 import { scheduleDefaults } from "@/lib/schedule-defaults";
 import {
   activeBracketExistsForDivision,
@@ -494,8 +495,34 @@ export async function generateScheduleAction(formData: FormData) {
     lateNightRows: Math.max(0, num(formData, "late_night_rows", scheduleDefaults.lateNightRows))
   };
   const result = await generateSchedule(scheduleInput);
-  await exec("UPDATE tournament_settings SET schedule_settings_json = $1::jsonb, updated_at = NOW() WHERE tournament_id = $2", [
+  const [teams, availabilityBlocks] = await Promise.all([
+    query<ScheduleRuleTeam>(
+      `SELECT teams.id, teams.division, teams.name, COALESCE(centers.name, 'Draft') as center
+       FROM teams LEFT JOIN centers ON centers.id = teams.center_id
+       WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL
+       ORDER BY teams.division, center, teams.name`,
+      [tournament.id]
+    ),
+    query<ScheduleRuleAvailabilityBlock>(
+      `SELECT team_availability_blocks.id, team_availability_blocks.team_id,
+              team_availability_blocks.starts_at, team_availability_blocks.ends_at,
+              team_availability_blocks.reason
+       FROM team_availability_blocks
+       JOIN teams ON teams.id = team_availability_blocks.team_id
+       WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL
+       ORDER BY team_availability_blocks.starts_at, team_availability_blocks.id`,
+      [tournament.id]
+    )
+  ]);
+  const rulesReport = buildScheduleRulesReport({
+    games: result.games,
+    teams,
+    availabilityBlocks,
+    settings: scheduleInput
+  });
+  await exec("UPDATE tournament_settings SET schedule_settings_json = $1::jsonb, schedule_rules_report_json = $2::jsonb, updated_at = NOW() WHERE tournament_id = $3", [
     JSON.stringify(scheduleInput),
+    JSON.stringify(rulesReport),
     tournament.id
   ]);
   await withTransaction(async (client) => {

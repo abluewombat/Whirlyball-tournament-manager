@@ -255,8 +255,11 @@ export async function initDb() {
         scorekeeper_passcode_hash TEXT NOT NULL,
         announcement TEXT,
         schedule_settings_json JSONB,
+        schedule_rules_report_json JSONB,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+
+      ALTER TABLE tournament_settings ADD COLUMN IF NOT EXISTS schedule_rules_report_json JSONB;
 
       CREATE TABLE IF NOT EXISTS court_streams (
         id SERIAL PRIMARY KEY,

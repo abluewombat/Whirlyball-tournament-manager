@@ -1,17 +1,20 @@
 import ExcelJS from "exceljs";
 import { hasAdminAccess } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { buildScheduleRulesReport, type ScheduleRuleAvailabilityBlock, type ScheduleRulesReport } from "@/lib/schedule-rules";
 import { currentTournament } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
 
 type GameExportRow = {
+  id: number;
   phase: string;
   division: string;
   court: number;
   starts_at: string;
   team_1_id: number | null;
   team_2_id: number | null;
+  ref_team_id: number | null;
   team_1: string | null;
   team_1_center: string | null;
   team_2: string | null;
@@ -28,6 +31,11 @@ type TeamExportRow = {
   name: string;
   early_available: boolean;
   deleted_at: string | null;
+};
+
+type TournamentScheduleSettingsRow = {
+  schedule_settings_json: Record<string, unknown> | null;
+  schedule_rules_report_json: ScheduleRulesReport | null;
 };
 
 type ScheduleTeamStats = {
@@ -68,6 +76,10 @@ export async function GET() {
     return new Response("Unauthorized", { status: 401 });
   }
   const tournament = await currentTournament();
+  const [scheduleSettings] = await query<TournamentScheduleSettingsRow>(
+    "SELECT schedule_settings_json, schedule_rules_report_json FROM tournament_settings WHERE tournament_id = $1",
+    [tournament.id]
+  );
 
   const teams = await query<TeamExportRow>(
     `SELECT teams.id, COALESCE(centers.name, 'Draft') as center, teams.division, teams.name, teams.early_available, teams.deleted_at
@@ -99,8 +111,15 @@ export async function GET() {
      WHERE players.tournament_id = $1 AND shirt_orders.deleted_at IS NULL ORDER BY center, team, player`,
     [tournament.id]
   );
-  const availabilityBlocks = await query(
-    `SELECT centers.name as center, teams.division, teams.name as team,
+  const availabilityBlocks = await query<
+    ScheduleRuleAvailabilityBlock & {
+      center: string;
+      division: string;
+      team: string;
+    }
+  >(
+    `SELECT team_availability_blocks.id, team_availability_blocks.team_id,
+            centers.name as center, teams.division, teams.name as team,
             team_availability_blocks.starts_at, team_availability_blocks.ends_at, team_availability_blocks.reason
      FROM team_availability_blocks
      JOIN teams ON teams.id = team_availability_blocks.team_id
@@ -110,8 +129,8 @@ export async function GET() {
     [tournament.id]
   );
   const games = await query<GameExportRow>(
-    `SELECT games.phase, games.division, games.court, games.starts_at,
-            games.team_1_id, games.team_2_id,
+    `SELECT games.id, games.phase, games.division, games.court, games.starts_at,
+            games.team_1_id, games.team_2_id, games.ref_team_id,
             t1.name as team_1, c1.name as team_1_center,
             t2.name as team_2, c2.name as team_2_center,
             tr.name as ref_team, tr.division as ref_team_division, games.label
@@ -125,11 +144,20 @@ export async function GET() {
      ORDER BY games.starts_at, games.court`,
     [tournament.id]
   );
+  const rulesReport =
+    scheduleSettings?.schedule_rules_report_json ||
+    buildScheduleRulesReport({
+      games,
+      teams,
+      availabilityBlocks,
+      settings: scheduleSettings?.schedule_settings_json || {}
+    });
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Whirlyball Manager";
   workbook.created = new Date();
 
+  addRulesCheckSheet(workbook, rulesReport);
   addScheduleGridSheet(workbook, games);
   addScheduleSummarySheet(workbook, teams, games);
   addOpponentMatrixSheet(workbook, teams, games);
@@ -146,6 +174,85 @@ export async function GET() {
       "Content-Disposition": `attachment; filename="${tournament.slug}-export.xlsx"`
     }
   });
+}
+
+function addRulesCheckSheet(workbook: ExcelJS.Workbook, report: ScheduleRulesReport) {
+  const sheet = workbook.addWorksheet("Rules Check", {
+    views: [{ state: "frozen", ySplit: 5 }]
+  });
+  sheet.columns = [
+    { header: "Rule", key: "rule", width: 42 },
+    { header: "Status", key: "status", width: 12 },
+    { header: "Severity", key: "severity", width: 12 },
+    { header: "Issues", key: "issues", width: 10 },
+    { header: "Team", key: "team", width: 32 },
+    { header: "Time", key: "time", width: 20 },
+    { header: "Message", key: "message", width: 56 },
+    { header: "Details", key: "details", width: 64 }
+  ];
+
+  sheet.spliceRows(1, 0, ["Schedule Rules Check"]);
+  sheet.mergeCells("A1:H1");
+  sheet.getCell("A1").font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
+  sheet.getCell("A1").fill = solidFill(report.status === "pass" ? "38761D" : "B00020");
+  sheet.getCell("A1").alignment = { horizontal: "center" };
+
+  sheet.addRow(["Overall", report.status === "pass" ? "Clean" : "Issues Found", "", report.issueCount, "", formatValue(report.generatedAt), "", ""]);
+  const summaryRow = sheet.getRow(2);
+  summaryRow.font = { bold: true };
+  summaryRow.eachCell((cell) => {
+    cell.border = thinBorder();
+    cell.alignment = { vertical: "middle", wrapText: true };
+  });
+  summaryRow.getCell(2).fill = solidFill(report.status === "pass" ? "D9EAD3" : "F4CCCC");
+
+  sheet.addRow([]);
+  const header = sheet.addRow(["Rule", "Status", "Severity", "Issues", "Team", "Time", "Message", "Details"]);
+  styleHeader(header);
+
+  for (const rule of report.rules) {
+    const row = sheet.addRow({
+      rule: rule.name,
+      status: rule.status === "pass" ? "Pass" : "Fail",
+      severity: titleCase(rule.severity),
+      issues: rule.issueCount,
+      team: "",
+      time: "",
+      message: rule.status === "pass" ? "No issues" : `${rule.issueCount} issue${rule.issueCount === 1 ? "" : "s"}`,
+      details: rule.id
+    });
+    styleRulesCheckRow(row, rule.status === "pass");
+
+    for (const issue of rule.issues) {
+      const issueRow = sheet.addRow({
+        rule: rule.name,
+        status: "Issue",
+        severity: titleCase(issue.severity),
+        issues: "",
+        team: issue.team || "",
+        time: issue.startsAt ? formatDateTime(issue.startsAt) : "",
+        message: issue.message,
+        details: issue.details ? formatRuleDetails(issue.details) : ""
+      });
+      styleRulesCheckRow(issueRow, false);
+      issueRow.getCell("rule").alignment = { vertical: "middle", wrapText: true, indent: 1 };
+    }
+  }
+}
+
+function styleRulesCheckRow(row: ExcelJS.Row, pass: boolean) {
+  row.eachCell((cell) => {
+    cell.border = thinBorder();
+    cell.alignment = { vertical: "middle", wrapText: true };
+  });
+  row.getCell("status").fill = solidFill(pass ? "D9EAD3" : "F4CCCC");
+  row.getCell("status").font = { bold: true, color: { argb: "FF202124" } };
+}
+
+function formatRuleDetails(details: Record<string, string | number | null | string[]>) {
+  return Object.entries(details)
+    .map(([key, value]) => `${titleCase(key)}: ${Array.isArray(value) ? value.join(", ") : value ?? ""}`)
+    .join("; ");
 }
 
 function addScheduleGridSheet(workbook: ExcelJS.Workbook, games: GameExportRow[]) {

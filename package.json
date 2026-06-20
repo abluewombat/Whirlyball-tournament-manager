@@ -1,12 +1,14 @@
 {
   "name": "whirlyball-manager",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "audit:schedule:prod": "node --experimental-strip-types --env-file-if-exists=.env.local --env-file-if-exists=.env.production.local scripts/audit-prod-schedule.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
