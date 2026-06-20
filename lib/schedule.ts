@@ -1325,13 +1325,28 @@ function uniqueOpponentCount(team: TeamRow, divisionTeams: TeamRow[], pairPlayCo
   return divisionTeams.filter((opponent) => opponent.id !== team.id && (pairPlayCounts.get(matchupKey(team, opponent)) || 0) > 0).length;
 }
 
-function repeatPairAllowed(matchup: Matchup, divisionTeams: TeamRow[], targetGamesByTeam: Map<number, number>, pairPlayCounts: Map<string, number>) {
+function availableUniqueOpponentCount(team: TeamRow, queue: Matchup[], pairPlayCounts: Map<string, number>) {
+  const opponents = new Set<number>();
+  for (const matchup of queue) {
+    const opponent = matchupOpponent(matchup, team);
+    if (opponent) opponents.add(opponent.id);
+  }
+  for (const key of pairPlayCounts.keys()) {
+    const [left, right] = key.split(":").map(Number);
+    if (left === team.id) opponents.add(right);
+    if (right === team.id) opponents.add(left);
+  }
+  return opponents.size;
+}
+
+function repeatPairAllowed(matchup: Matchup, divisionTeams: TeamRow[], targetGamesByTeam: Map<number, number>, pairPlayCounts: Map<string, number>, queue: Matchup[] = []) {
   if (matchupPlayCount(matchup, pairPlayCounts) === 0) return true;
   if (!targetGamesByTeam.size) return true;
 
   const uniqueOpponentTarget = (team: TeamRow) => {
     const target = targetGamesByTeam.get(team.id);
-    return Math.min(target ?? divisionTeams.length - 1, Math.max(0, divisionTeams.length - 1));
+    const possibleUniqueOpponents = queue.length ? availableUniqueOpponentCount(team, queue, pairPlayCounts) : Math.max(0, divisionTeams.length - 1);
+    return Math.min(target ?? possibleUniqueOpponents, possibleUniqueOpponents);
   };
 
   return (
@@ -1409,7 +1424,7 @@ function bestMatchupForAnchor(
     const opponent = matchupOpponent(matchup, anchor);
     if (!opponent) continue;
     if (usedTeamIds.has(anchor.id) || usedTeamIds.has(opponent.id)) continue;
-    if (!repeatPairAllowed(matchup, divisionTeams, targetGamesByTeam, pairPlayCounts)) continue;
+    if (!repeatPairAllowed(matchup, divisionTeams, targetGamesByTeam, pairPlayCounts, queue)) continue;
     if (!eligible(matchup) || !preservesPairCoverage(matchup, queue, usedTeamIds, pairPlayCounts, eligible)) continue;
     const score = scoreAnchorMatchup(matchup, anchor, opponent, teamGameCounts, pairPlayCounts, targetGamesByTeam);
     if (score < bestScore) {
@@ -2693,13 +2708,13 @@ function findWarmupPairing(
         (matchup) =>
           matchupOpponent(matchup, left) &&
           remaining.has(matchupOpponent(matchup, left)?.id || -1) &&
-          repeatPairAllowed(matchup, divisionTeams, targetGamesByTeam, pairPlayCounts)
+          repeatPairAllowed(matchup, divisionTeams, targetGamesByTeam, pairPlayCounts, queue)
       ).length;
       const rightOptions = queue.filter(
         (matchup) =>
           matchupOpponent(matchup, right) &&
           remaining.has(matchupOpponent(matchup, right)?.id || -1) &&
-          repeatPairAllowed(matchup, divisionTeams, targetGamesByTeam, pairPlayCounts)
+          repeatPairAllowed(matchup, divisionTeams, targetGamesByTeam, pairPlayCounts, queue)
       ).length;
       if (leftOptions !== rightOptions) return leftOptions - rightOptions;
       return teamGameCount(left, teamGameCounts) - teamGameCount(right, teamGameCounts);
@@ -2708,7 +2723,7 @@ function findWarmupPairing(
     const candidates = queue
       .filter((matchup) => {
         const opponent = matchupOpponent(matchup, anchor);
-        return opponent && remaining.has(opponent.id) && repeatPairAllowed(matchup, divisionTeams, targetGamesByTeam, pairPlayCounts);
+        return opponent && remaining.has(opponent.id) && repeatPairAllowed(matchup, divisionTeams, targetGamesByTeam, pairPlayCounts, queue);
       })
       .sort((left, right) => {
         const leftOpponent = matchupOpponent(left, anchor);
