@@ -212,10 +212,6 @@ export async function AdminScheduleContent({
             <input name="block_order" defaultValue={settings.blockOrder} />
           </label>
           <label>
-            Rows per division block
-            <input name="block_rows" type="number" min="1" defaultValue={settings.blockRows} />
-          </label>
-          <label>
             Next-day tournament cutoff
             <input name="pre_tournament_cutoff" type="time" defaultValue={settings.preTournamentCutoff} />
           </label>

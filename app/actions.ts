@@ -487,7 +487,6 @@ export async function generateScheduleAction(formData: FormData) {
     divisionTargetGames: text(formData, "division_target_games") || scheduleDefaults.divisionTargetGames,
     includeTuesday: true,
     blockOrder: text(formData, "block_order") || scheduleDefaults.blockOrder,
-    blockRows: Math.max(1, num(formData, "block_rows", scheduleDefaults.blockRows)),
     preTournamentCutoff: text(formData, "pre_tournament_cutoff") || scheduleDefaults.preTournamentCutoff,
     unlimitedGameStart: text(formData, "unlimited_game_start") || scheduleDefaults.unlimitedGameStart,
     unlimitedCourt: Math.max(1, num(formData, "unlimited_court", scheduleDefaults.unlimitedCourt)),

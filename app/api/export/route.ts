@@ -342,7 +342,7 @@ function addScheduleDetailSheet(workbook: ExcelJS.Workbook, games: GameExportRow
       time: formatTime(game.starts_at),
       court: game.court,
       division: game.division,
-      game: game.team_1 && game.team_2 ? `${game.team_1} vs. ${game.team_2}` : game.label || `${game.division} game`,
+      game: exportGameText(game, false),
       ref: game.ref_team || ""
     });
     colorGameCell(row.getCell("game"), game.division);
@@ -492,7 +492,7 @@ function buildScheduleGrid(games: GameExportRow[]) {
         court2Ref: "",
         court2RefDivision: ""
       };
-    const gameText = game.team_1 && game.team_2 ? `${game.division}: ${game.team_1} vs. ${game.team_2}` : `${game.division}: ${game.label || "Game"}`;
+    const gameText = exportGameText(game, true);
     if (game.court === 1) {
       row.court1Ref = game.ref_team || "";
       row.court1RefDivision = game.ref_team_division || "";
@@ -508,6 +508,16 @@ function buildScheduleGrid(games: GameExportRow[]) {
   }
 
   return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row);
+}
+
+function exportGameText(game: GameExportRow, includeDivision: boolean) {
+  if (isOpenScheduleSlot(game)) return game.label || "Open schedule slot";
+  if (game.team_1 && game.team_2) return `${includeDivision ? `${game.division}: ` : ""}${game.team_1} vs. ${game.team_2}`;
+  return `${includeDivision ? `${game.division}: ` : ""}${game.label || "Game"}`;
+}
+
+function isOpenScheduleSlot(game: GameExportRow) {
+  return game.division === "Open" && game.label === "Open schedule slot" && game.team_1_id === null && game.team_2_id === null && game.ref_team_id === null;
 }
 
 function buildScheduleQuality(teams: TeamExportRow[], games: GameExportRow[]) {

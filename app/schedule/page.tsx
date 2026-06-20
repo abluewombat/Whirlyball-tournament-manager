@@ -180,8 +180,7 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
         court2RefDivision: ""
       };
     const resultText = publicResultText(game);
-    const divisionPrefix = hiddenDivisionLabels.has(game.division) ? "" : `${game.division}: `;
-    const gameText = game.team_1 && game.team_2 ? `${divisionPrefix}${game.team_1} vs. ${game.team_2}${resultText}` : `${divisionPrefix}${game.label || "Game"}${resultText}`;
+    const gameText = scheduleGameText(game, hiddenDivisionLabels, resultText);
     const scored = isCompleteResult(game);
     const streamLink = publicStreamLink(game, scored);
 
@@ -207,6 +206,16 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
   }
 
   return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row);
+}
+
+function scheduleGameText(game: PublicScheduleGame, hiddenDivisionLabels: Set<string>, resultText: string) {
+  if (isOpenScheduleSlot(game)) return `${game.label || "Open schedule slot"}${resultText}`;
+  const divisionPrefix = hiddenDivisionLabels.has(game.division) ? "" : `${game.division}: `;
+  return game.team_1 && game.team_2 ? `${divisionPrefix}${game.team_1} vs. ${game.team_2}${resultText}` : `${divisionPrefix}${game.label || "Game"}${resultText}`;
+}
+
+function isOpenScheduleSlot(game: PublicScheduleGame) {
+  return game.division === "Open" && game.label === "Open schedule slot" && game.team_1_id === null && game.team_2_id === null;
 }
 
 function publicStreamLink(game: PublicScheduleGame, scored: boolean) {

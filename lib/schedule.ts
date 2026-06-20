@@ -23,7 +23,6 @@ type ScheduleInput = {
   divisionTargetGames?: string;
   includeTuesday: boolean;
   blockOrder?: string;
-  blockRows?: number;
   preTournamentCutoff?: string;
   unlimitedGameStart?: string;
   unlimitedCourt?: number;
@@ -135,6 +134,8 @@ const manualFridayDLabel = "D Friday Seeding";
 const manualSaturdayCLabel = "C Saturday Seeding";
 const manualSaturdayDLabel = "D Saturday Feature Seeding";
 const manualBufferDivision = "Buffer";
+const openSlotDivision = "Open";
+const openSlotLabel = "Open schedule slot";
 const manualDailyBufferMinutes = 20;
 const refStintRows = 3;
 const fillAvailableSeedingSlots = true;
@@ -309,14 +310,67 @@ function reorderPlanToAvoidSameFirstLast(plan: DivisionDayPlan[], fallbackOrder:
   if (plan.length <= 1) return plan;
   const ordered = [...plan];
   if (ordered[0].division !== ordered[ordered.length - 1].division) return ordered;
-  const replacementIndex = ordered.findIndex((item, index) => index > 0 && item.division !== ordered[0].division);
+  if (allowedSoftSplitPlan(ordered, ordered[0].division)) return ordered;
+  const replacementIndex = ordered.findIndex((item, index) => index > 0 && index < ordered.length - 1 && item.division !== ordered[0].division);
   if (replacementIndex > 0) {
     const [replacement] = ordered.splice(replacementIndex, 1);
-    ordered.push(replacement);
+    ordered.unshift(replacement);
   } else {
     ordered.sort((left, right) => fallbackOrder.indexOf(left.division) - fallbackOrder.indexOf(right.division));
   }
   return ordered;
+}
+
+function allowedSoftSplitPlan(plan: DivisionDayPlan[], division: string) {
+  const indexes = plan.flatMap((item, index) => (item.division === division ? [index] : []));
+  return indexes.length === 2 && indexes[1] - indexes[0] === 2;
+}
+
+function splitLargeDivisionBlocks(plan: DivisionDayPlan[], courts: number) {
+  if (plan.length <= 1) return plan;
+  const primaryBlocks: DivisionDayPlan[] = [];
+  const secondBlocks: DivisionDayPlan[] = [];
+
+  for (const item of plan) {
+    if (item.rowCount >= 6 && item.targetGames > courts * 2) {
+      const secondRows = Math.max(1, Math.min(item.rowCount - 1, Math.floor(item.rowCount / 3)));
+      const secondTargetGames = Math.max(1, Math.min(item.targetGames - 1, secondRows * courts));
+      primaryBlocks.push({
+        ...item,
+        targetGames: item.targetGames - secondTargetGames,
+        rowCount: item.rowCount - secondRows
+      });
+      secondBlocks.push({
+        ...item,
+        targetGames: secondTargetGames,
+        rowCount: secondRows
+      });
+    } else {
+      primaryBlocks.push(item);
+    }
+  }
+
+  const ordered = [...primaryBlocks];
+  for (const block of secondBlocks) {
+    const firstIndex = ordered.findIndex((item) => item.division === block.division);
+    const insertIndex = firstIndex >= 0 ? firstIndex + 2 : ordered.length;
+    if (
+      insertIndex <= ordered.length &&
+      ordered[insertIndex - 1]?.division !== block.division &&
+      ordered[insertIndex]?.division !== block.division
+    ) {
+      ordered.splice(insertIndex, 0, block);
+    } else {
+      ordered.push(block);
+    }
+  }
+
+  return ordered;
+}
+
+function orderDivisionDayPlan(plan: DivisionDayPlan[], fallbackOrder: string[], courts: number) {
+  const ordered = plan.sort((left, right) => fallbackOrder.indexOf(left.division) - fallbackOrder.indexOf(right.division));
+  return reorderPlanToAvoidSameFirstLast(splitLargeDivisionBlocks(ordered, courts), fallbackOrder);
 }
 
 function buildDivisionDayPlans({
@@ -369,7 +423,7 @@ function buildDivisionDayPlans({
       largest.rowCount--;
       rowsUsed--;
     }
-    plans.set(dayKey, reorderPlanToAvoidSameFirstLast(plan.sort((left, right) => order.indexOf(left.division) - order.indexOf(right.division)), order));
+    plans.set(dayKey, orderDivisionDayPlan(plan, order, input.courts));
   }
 
   return plans;
@@ -532,6 +586,43 @@ function buildManualScheduleReservations(input: ScheduleInput) {
       court: Math.max(1, Math.min(input.courts, input.unlimitedCourt || scheduleDefaults.unlimitedCourt))
     }))
   ];
+}
+
+function isOpenScheduleSlot(game: GeneratedGame) {
+  return game.phase === "seeding" && game.division === openSlotDivision && game.team1Id === null && game.team2Id === null && game.refTeamId === null;
+}
+
+function addOpenSeedingSlotGames(
+  games: GeneratedGame[],
+  seedingDays: Date[],
+  input: ScheduleInput,
+  dayStartMinutes: number,
+  earlyStartMinutes: number,
+  dayEndMinutes: number
+) {
+  const occupied = new Set(games.map((game) => `${game.startsAt}:${game.court}`));
+  for (const day of seedingDays) {
+    const startsAtMinute = usesTuesdayScheduleStart(input, day) ? earlyStartMinutes : dayStartMinutes;
+    const rowCapacity = Math.max(0, Math.floor((dayEndMinutes - startsAtMinute) / input.seedingMinutes));
+    for (let row = 0; row < rowCapacity; row++) {
+      const startsAt = at(day, startsAtMinute + row * input.seedingMinutes);
+      for (let court = 1; court <= input.courts; court++) {
+        const key = `${startsAt}:${court}`;
+        if (occupied.has(key)) continue;
+        games.push({
+          phase: "seeding",
+          division: openSlotDivision,
+          court,
+          startsAt,
+          team1Id: null,
+          team2Id: null,
+          refTeamId: null,
+          label: openSlotLabel
+        });
+        occupied.add(key);
+      }
+    }
+  }
 }
 
 function divisionBlockedDuringManualUnlimitedWindow(division: string, startsAt: string, durationMinutes: number, input: ScheduleInput) {
@@ -3406,19 +3497,6 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
     if (game.phase !== "seeding") continue;
     divisionGameCounts.set(game.division, (divisionGameCounts.get(game.division) || 0) + 1);
   }
-  const divisionDayPlans = buildDivisionDayPlans({
-    seedingDays,
-    divisions: competitiveDivisions,
-    input,
-    targetGamesByDivision,
-    divisionGameCounts,
-    reservedSeedingCourts,
-    dayStartMinutes: start,
-    earlyStartMinutes: earlyStart,
-    dayEndMinutes: end,
-    blockOrder
-  });
-
   for (const [dayIndex, day] of seedingDays.entries()) {
     const dayStart = usesTuesdayScheduleStart(input, day) ? earlyStart : start;
     const rowCapacity = Math.max(1, Math.floor((end - dayStart) / input.seedingMinutes));
@@ -3431,124 +3509,196 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
       nextTournamentDayIndex >= 0 ? tournamentDivisionsForDay(nextTournamentDayIndex, competitiveDivisions) : []
     );
 
-    let row = 0;
-    for (const dayPlan of divisionDayPlans.get(isoDate(day)) || []) {
-      let dayPlanGames = 0;
-      for (let blockRow = 0; blockRow < Math.max(1, dayPlan.rowCount) && row < rowCapacity; blockRow++, row++) {
-        if (dayPlanGames >= dayPlan.targetGames) break;
-        const divisionDeficit = divisionSeedingDeficit(dayPlan.division, seedingByDivision, targetGamesByTeam, teamGameCounts, queues);
-        if (divisionDeficit <= 0) break;
-        const queue = queues.get(dayPlan.division) || [];
-        if (!queue.length) break;
-        const rowMinute = dayStart + row * input.seedingMinutes;
-        const rowStartsAt = at(day, rowMinute);
-        const reservedCourts = reservedSeedingCourts.get(rowStartsAt) || new Set<number>();
-        if (reservedCourts.size >= input.courts) continue;
-        const divisionTeams = seedingByDivision.get(dayPlan.division) || [];
-        seedingSlots.push({
-          division: dayPlan.division,
-          startsAt: rowStartsAt,
-          dayIndex,
-          row,
-          rowMinute,
-          reservedCourts,
-          previousDayLateTeamIds,
-          nextDayTournamentDivisions
-        });
-        const eligible = (matchup: Matchup) => {
-          if (!matchup.required && !matchupWithinTargetBand(matchup, teamGameCounts, preplayedGameCounts, fairnessTargetGamesByTeam)) return false;
-          if (!matchup.required && !matchupKeepsDivisionCoverageBand(matchup, divisionTeams, teamGameCounts, preplayedGameCounts)) return false;
-          if (
-            !fillAvailableSeedingSlots &&
-            !matchup.required &&
-            matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)
-          ) {
-            return false;
-          }
-          if (
-            !fillAvailableSeedingSlots &&
-            !matchup.required &&
-            !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) &&
-            !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts) &&
-            !matchupCanFillDivisionTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)
-          ) {
-            return false;
-          }
-          if (divisionBlockedDuringManualUnlimitedWindow(matchup.division, rowStartsAt, input.seedingMinutes, input)) return false;
-          if (teamBlockedAt(matchup.a.id, rowStartsAt, input.seedingMinutes, availability)) return false;
-          if (teamBlockedAt(matchup.b.id, rowStartsAt, input.seedingMinutes, availability)) return false;
-          if (nextDayTournamentDivisions.has(matchup.division) && rowMinute >= preTournamentCutoff) return false;
-          if (
-            morningRestRows > 0 &&
-            row < morningRestRows &&
-            (previousDayLateTeamIds.has(matchup.a.id) || previousDayLateTeamIds.has(matchup.b.id))
-          ) {
-            return false;
-          }
-          return true;
-        };
-        const usedTeamIds = scheduledTeamIdsAt(games, rowStartsAt);
-        const rowMatchups: Matchup[] = [];
-        const availableSeedingCourts = Math.min(input.courts - reservedCourts.size, divisionDeficit, dayPlan.targetGames - dayPlanGames);
-        for (let court = 0; court < availableSeedingCourts; court++) {
-          const result = takeTeamFirstMatchup(
-            queue,
-            usedTeamIds,
-            teamGameCounts,
-            pairPlayCounts,
-            divisionTeams,
-            targetGamesByTeam,
-            teamCursorsByDivision.get(dayPlan.division) || 0,
-            eligible
-          );
-          if (!result) break;
-          teamCursorsByDivision.set(dayPlan.division, result.nextCursor);
-          rowMatchups.push(result.matchup);
-          usedTeamIds.add(result.matchup.a.id);
-          usedTeamIds.add(result.matchup.b.id);
-        }
+    const dayPlans = (buildDivisionDayPlans({
+      seedingDays: seedingDays.slice(dayIndex),
+      divisions: competitiveDivisions,
+      input,
+      targetGamesByDivision,
+      divisionGameCounts,
+      reservedSeedingCourts,
+      dayStartMinutes: start,
+      earlyStartMinutes: earlyStart,
+      dayEndMinutes: end,
+      blockOrder
+    }).get(isoDate(day)) || []).map((plan) => ({
+      ...plan,
+      placedGames: 0,
+      placedRows: 0
+    }));
 
-        if (!rowMatchups.length) {
+    let row = 0;
+    let planIndex = 0;
+    let attemptsAtRow = 0;
+    while (row < rowCapacity && dayPlans.length) {
+      if (planIndex >= dayPlans.length) planIndex = 0;
+      const dayPlan = dayPlans[planIndex];
+
+      if (dayPlan.placedGames >= dayPlan.targetGames || dayPlan.placedRows >= Math.max(1, dayPlan.rowCount)) {
+        dayPlans.splice(planIndex, 1);
+        attemptsAtRow = 0;
+        continue;
+      }
+
+      const divisionDeficit = divisionSeedingDeficit(dayPlan.division, seedingByDivision, targetGamesByTeam, teamGameCounts, queues);
+      if (divisionDeficit <= 0) {
+        dayPlans.splice(planIndex, 1);
+        attemptsAtRow = 0;
+        continue;
+      }
+
+      const queue = queues.get(dayPlan.division) || [];
+      if (!queue.length) {
+        dayPlans.splice(planIndex, 1);
+        attemptsAtRow = 0;
+        continue;
+      }
+
+      const rowMinute = dayStart + row * input.seedingMinutes;
+      const rowStartsAt = at(day, rowMinute);
+      const reservedCourts = reservedSeedingCourts.get(rowStartsAt) || new Set<number>();
+      if (reservedCourts.size >= input.courts) {
+        row++;
+        attemptsAtRow = 0;
+        continue;
+      }
+
+      const divisionTeams = seedingByDivision.get(dayPlan.division) || [];
+      seedingSlots.push({
+        division: dayPlan.division,
+        startsAt: rowStartsAt,
+        dayIndex,
+        row,
+        rowMinute,
+        reservedCourts,
+        previousDayLateTeamIds,
+        nextDayTournamentDivisions
+      });
+      const eligible = (matchup: Matchup) => {
+        if (!matchup.required && !matchupWithinTargetBand(matchup, teamGameCounts, preplayedGameCounts, fairnessTargetGamesByTeam)) return false;
+        if (!matchup.required && !matchupKeepsDivisionCoverageBand(matchup, divisionTeams, teamGameCounts, preplayedGameCounts)) return false;
+        if (
+          !fillAvailableSeedingSlots &&
+          !matchup.required &&
+          matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)
+        ) {
+          return false;
+        }
+        if (
+          !fillAvailableSeedingSlots &&
+          !matchup.required &&
+          !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) &&
+          !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts) &&
+          !matchupCanFillDivisionTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)
+        ) {
+          return false;
+        }
+        if (divisionBlockedDuringManualUnlimitedWindow(matchup.division, rowStartsAt, input.seedingMinutes, input)) return false;
+        if (teamBlockedAt(matchup.a.id, rowStartsAt, input.seedingMinutes, availability)) return false;
+        if (teamBlockedAt(matchup.b.id, rowStartsAt, input.seedingMinutes, availability)) return false;
+        if (nextDayTournamentDivisions.has(matchup.division) && rowMinute >= preTournamentCutoff) return false;
+        if (
+          morningRestRows > 0 &&
+          row < morningRestRows &&
+          (previousDayLateTeamIds.has(matchup.a.id) || previousDayLateTeamIds.has(matchup.b.id))
+        ) {
+          return false;
+        }
+        return true;
+      };
+      const usedTeamIds = scheduledTeamIdsAt(games, rowStartsAt);
+      const rowMatchups: Matchup[] = [];
+      const availableSeedingCourts = Math.min(input.courts - reservedCourts.size, divisionDeficit, dayPlan.targetGames - dayPlan.placedGames);
+      for (let court = 0; court < availableSeedingCourts; court++) {
+        const result = takeTeamFirstMatchup(
+          queue,
+          usedTeamIds,
+          teamGameCounts,
+          pairPlayCounts,
+          divisionTeams,
+          targetGamesByTeam,
+          teamCursorsByDivision.get(dayPlan.division) || 0,
+          eligible
+        );
+        if (!result) break;
+        teamCursorsByDivision.set(dayPlan.division, result.nextCursor);
+        rowMatchups.push(result.matchup);
+        usedTeamIds.add(result.matchup.a.id);
+        usedTeamIds.add(result.matchup.b.id);
+      }
+
+      if (!rowMatchups.length) {
+        if (dayPlan.placedRows > 0 || dayPlan.placedGames > 0) {
+          dayPlans.splice(planIndex, 1);
+          attemptsAtRow = 0;
+          continue;
+        }
+        planIndex = (planIndex + 1) % dayPlans.length;
+        attemptsAtRow++;
+        if (attemptsAtRow >= dayPlans.length) {
           row++;
-          break;
+          attemptsAtRow = 0;
         }
-        const assignments = assignCourts(rowMatchups, input.courts, courtCountsByTeam, matchupCourtCounts, reservedCourts, {
-          startsAt: rowStartsAt,
-          durationMinutes: input.seedingMinutes,
-          games,
-          input
-        });
-        const assignedMatchups = new Set(assignments.map((assignment) => assignment.matchup));
-        for (const matchup of rowMatchups) {
-          if (!assignedMatchups.has(matchup)) queue.push(matchup);
-        }
-        const unavailableTeamIds = blockedTeamIdsAt(teams, rowStartsAt, input.seedingMinutes, availability);
-        for (const assignment of assignments) {
-          unavailableTeamIds.add(assignment.matchup.a.id);
-          unavailableTeamIds.add(assignment.matchup.b.id);
-        }
-        for (const { matchup, court } of assignments) {
-          dayPlanGames++;
-          teamGameCounts.set(matchup.a.id, (teamGameCounts.get(matchup.a.id) || 0) + 1);
-          teamGameCounts.set(matchup.b.id, (teamGameCounts.get(matchup.b.id) || 0) + 1);
-          const pairKey = matchupKey(matchup.a, matchup.b);
-          pairPlayCounts.set(pairKey, (pairPlayCounts.get(pairKey) || 0) + 1);
-          divisionGameCounts.set(matchup.division, (divisionGameCounts.get(matchup.division) || 0) + 1);
-          if (rowMinute >= lateCutoff) {
-            currentDayLateTeamIds.add(matchup.a.id);
-            currentDayLateTeamIds.add(matchup.b.id);
+        continue;
+      }
+
+      const assignments = assignCourts(rowMatchups, input.courts, courtCountsByTeam, matchupCourtCounts, reservedCourts, {
+        startsAt: rowStartsAt,
+        durationMinutes: input.seedingMinutes,
+        games,
+        input
+      });
+      const assignedMatchups = new Set(assignments.map((assignment) => assignment.matchup));
+      for (const matchup of rowMatchups) {
+        if (!assignedMatchups.has(matchup)) queue.push(matchup);
+      }
+
+      if (!assignments.length) {
+        if (dayPlan.placedRows > 0 || dayPlan.placedGames > 0) {
+          dayPlans.splice(planIndex, 1);
+        } else {
+          planIndex = (planIndex + 1) % dayPlans.length;
+          attemptsAtRow++;
+          if (attemptsAtRow >= dayPlans.length) {
+            row++;
+            attemptsAtRow = 0;
           }
-          games.push({
-            phase: "seeding",
-            division: matchup.division,
-            court,
-            startsAt: rowStartsAt,
-            team1Id: matchup.a.id,
-            team2Id: matchup.b.id,
-            refTeamId: chooseRefTeam(matchup.division, teams, matchup.a, matchup.b, unavailableTeamIds, refCounts),
-            label: `${matchup.division} R${matchup.round}`
-          });
         }
+        continue;
+      }
+
+      const unavailableTeamIds = blockedTeamIdsAt(teams, rowStartsAt, input.seedingMinutes, availability);
+      for (const assignment of assignments) {
+        unavailableTeamIds.add(assignment.matchup.a.id);
+        unavailableTeamIds.add(assignment.matchup.b.id);
+      }
+      for (const { matchup, court } of assignments) {
+        dayPlan.placedGames++;
+        teamGameCounts.set(matchup.a.id, (teamGameCounts.get(matchup.a.id) || 0) + 1);
+        teamGameCounts.set(matchup.b.id, (teamGameCounts.get(matchup.b.id) || 0) + 1);
+        const pairKey = matchupKey(matchup.a, matchup.b);
+        pairPlayCounts.set(pairKey, (pairPlayCounts.get(pairKey) || 0) + 1);
+        divisionGameCounts.set(matchup.division, (divisionGameCounts.get(matchup.division) || 0) + 1);
+        if (rowMinute >= lateCutoff) {
+          currentDayLateTeamIds.add(matchup.a.id);
+          currentDayLateTeamIds.add(matchup.b.id);
+        }
+        games.push({
+          phase: "seeding",
+          division: matchup.division,
+          court,
+          startsAt: rowStartsAt,
+          team1Id: matchup.a.id,
+          team2Id: matchup.b.id,
+          refTeamId: chooseRefTeam(matchup.division, teams, matchup.a, matchup.b, unavailableTeamIds, refCounts),
+          label: `${matchup.division} R${matchup.round}`
+        });
+      }
+
+      dayPlan.placedRows++;
+      row++;
+      attemptsAtRow = 0;
+      if (dayPlan.placedGames >= dayPlan.targetGames || dayPlan.placedRows >= Math.max(1, dayPlan.rowCount)) {
+        dayPlans.splice(planIndex, 1);
       }
     }
     previousDayLateTeamIds = currentDayLateTeamIds;
@@ -3606,6 +3756,8 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
     availability,
     reservedSeedingCourts
   });
+
+  addOpenSeedingSlotGames(games, seedingDays, input, start, earlyStart, end);
 
   const unscheduledTournamentGames = 0;
   assignRefsForSchedule(games, teams, availability, input, tournamentDays);

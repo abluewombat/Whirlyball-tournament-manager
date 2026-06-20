@@ -189,6 +189,10 @@ function buildScheduleGrid(games: AdminScheduleGame[]) {
         court1: emptyCell(),
         court2: emptyCell()
       };
+    if (isOpenScheduleSlot(game)) {
+      rows.set(game.starts_at, row);
+      continue;
+    }
     const cell = {
       game,
       gameText: game.team_1 && game.team_2 ? `${game.division}: ${game.team_1} vs. ${game.team_2}` : `${game.division}: ${game.label || "Game"}`,
@@ -220,6 +224,10 @@ function refCellClass(division: string) {
 function scheduleLockReason(game: AdminScheduleGame) {
   if (game.team_1_score !== null || game.team_2_score !== null || game.result_type === "forfeit") return "Scored game locked";
   return "";
+}
+
+function isOpenScheduleSlot(game: AdminScheduleGame) {
+  return game.division === "Open" && game.label === "Open schedule slot" && !game.team_1 && !game.team_2 && !game.ref_team;
 }
 
 function formatDay(value: string) {

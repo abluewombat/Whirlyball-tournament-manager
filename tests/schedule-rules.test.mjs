@@ -117,13 +117,13 @@ test("blocked assignment rule allows early-available teams before 7 PM Tuesday",
   assert.equal(ruleById(report, "blocked-assignments").issueCount, 0);
 });
 
-test("first/last division rule flags any division present in both edge rows", () => {
+test("first/last division rule flags edge repeats outside the soft split shape", () => {
   const report = reportFor({
     games: [
       seedingGame(1, "A", "2026-06-23T09:00:00", 1),
-      seedingGame(2, "B", "2026-06-23T09:00:00", 2),
-      seedingGame(3, "C", "2026-06-23T10:00:00", 1),
-      seedingGame(4, "A", "2026-06-23T11:00:00", 1)
+      seedingGame(2, "B", "2026-06-23T09:20:00", 1),
+      seedingGame(3, "C", "2026-06-23T09:40:00", 1),
+      seedingGame(4, "A", "2026-06-23T10:00:00", 1)
     ]
   });
 
@@ -138,6 +138,18 @@ test("first/last division rule ignores single-row days and non-seeding games", (
       seedingGame(1, "A", "2026-06-23T09:00:00", 1),
       { ...seedingGame(2, "A", "2026-06-24T09:00:00", 1), phase: "tournament" },
       { ...seedingGame(3, "A", "2026-06-24T18:00:00", 1), phase: "unlimited" }
+    ]
+  });
+
+  assert.equal(ruleById(report, "first-last-division").issueCount, 0);
+});
+
+test("first/last division rule allows a soft split with one intervening division block", () => {
+  const report = reportFor({
+    games: [
+      seedingGame(1, "A", "2026-06-23T09:00:00", 1),
+      seedingGame(2, "B", "2026-06-23T09:20:00", 1),
+      seedingGame(3, "A", "2026-06-23T09:40:00", 1)
     ]
   });
 
@@ -275,7 +287,7 @@ test("division block rule allows one contiguous daily division block", () => {
   assert.equal(ruleById(report, "division-daily-blocks").issueCount, 0);
 });
 
-test("division block rule warns when a division is split across a day", () => {
+test("division block rule allows two blocks with one intervening division block", () => {
   const report = reportFor({
     games: [
       seedingGame(1, "A", "2026-06-24T09:00:00", 1),
@@ -284,10 +296,52 @@ test("division block rule warns when a division is split across a day", () => {
     ]
   });
 
+  assert.equal(ruleById(report, "division-daily-blocks").issueCount, 0);
+});
+
+test("division block rule warns when a division split has more than one block between", () => {
+  const report = reportFor({
+    games: [
+      seedingGame(1, "A", "2026-06-24T09:00:00", 1),
+      seedingGame(2, "B", "2026-06-24T09:20:00", 1),
+      seedingGame(3, "C", "2026-06-24T09:40:00", 1),
+      seedingGame(4, "A", "2026-06-24T10:00:00", 1)
+    ]
+  });
+
   const rule = ruleById(report, "division-daily-blocks");
   assert.equal(rule.issueCount, 1);
   assert.equal(rule.issues[0].severity, "warning");
   assert.equal(rule.issues[0].details.division, "A");
+});
+
+test("division block rule warns when a division appears in three daily blocks", () => {
+  const report = reportFor({
+    games: [
+      seedingGame(1, "A", "2026-06-24T09:00:00", 1),
+      seedingGame(2, "B", "2026-06-24T09:20:00", 1),
+      seedingGame(3, "A", "2026-06-24T09:40:00", 1),
+      seedingGame(4, "C", "2026-06-24T10:00:00", 1),
+      seedingGame(5, "A", "2026-06-24T10:20:00", 1)
+    ]
+  });
+
+  const rule = ruleById(report, "division-daily-blocks");
+  assert.equal(rule.issueCount, 1);
+  assert.equal(rule.issues[0].details.division, "A");
+});
+
+test("rules ignore open schedule slots without teams", () => {
+  const report = reportFor({
+    games: [
+      seedingGame(1, "A", "2026-06-24T09:00:00", 1),
+      { ...seedingGame(2, "Open", "2026-06-24T09:20:00", 1), team_1_id: null, team_2_id: null, ref_team_id: null, label: "Open schedule slot" },
+      seedingGame(3, "A", "2026-06-24T09:40:00", 1)
+    ]
+  });
+
+  assert.equal(ruleById(report, "blocked-assignments").issueCount, 0);
+  assert.equal(ruleById(report, "division-daily-blocks").issueCount, 0);
 });
 
 function reportFor({ games, teams = [], availabilityBlocks = [], settings = { seedingMinutes: 20 } }) {

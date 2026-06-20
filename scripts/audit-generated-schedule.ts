@@ -95,7 +95,6 @@ async function main() {
     targetGamesPerTeam: scheduleDefaults.targetGamesPerTeam,
     includeTuesday: true,
     blockOrder: scheduleDefaults.blockOrder,
-    blockRows: scheduleDefaults.blockRows,
     preTournamentCutoff: scheduleDefaults.preTournamentCutoff,
     morningRestRows: scheduleDefaults.morningRestRows,
     lateNightRows: scheduleDefaults.lateNightRows

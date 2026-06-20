@@ -15,7 +15,6 @@ export const scheduleDefaults = {
   divisionTargetGames: "",
   roundsPerPair: 2,
   blockOrder: "A,B,C,D,Unlimited",
-  blockRows: 8,
   preTournamentCutoff: "23:59",
   unlimitedGameStart: "2026-06-26T18:00",
   unlimitedCourt: 1,

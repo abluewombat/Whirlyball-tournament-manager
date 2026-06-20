@@ -220,11 +220,15 @@ function auditSameDivisionFirstAndLastSeedingRows(context: ScheduleRuleContext, 
   for (const [day, dayGames] of byDay.entries()) {
     const starts = [...new Set(dayGames.map(startsAtForGame))].sort();
     if (starts.length < 2) continue;
+    const divisionBlocks = divisionBlocksForStarts(dayGames, starts);
     const firstStart = starts[0];
     const lastStart = starts[starts.length - 1];
     const firstDivisions = new Set(dayGames.filter((game) => startsAtForGame(game) === firstStart).map((game) => game.division));
     const lastDivisions = new Set(dayGames.filter((game) => startsAtForGame(game) === lastStart).map((game) => game.division));
-    const repeatedDivisions = [...firstDivisions].filter((division) => lastDivisions.has(division)).sort();
+    const repeatedDivisions = [...firstDivisions]
+      .filter((division) => lastDivisions.has(division))
+      .filter((division) => !allowedSoftSplitBlockIndexes(divisionBlocks, division))
+      .sort();
     if (!repeatedDivisions.length) continue;
     issues.push({
       ruleId: rule.id,
@@ -315,11 +319,12 @@ function auditDivisionDailyBlocks(context: ScheduleRuleContext, rule: Pick<Sched
 
   for (const [day, dayGames] of byDay.entries()) {
     const starts = [...new Set(dayGames.map(startsAtForGame))].sort();
+    const divisionBlocks = divisionBlocksForStarts(dayGames, starts);
     const divisions = [...new Set(dayGames.map((game) => game.division))].sort();
     for (const division of divisions) {
-      const rows = starts.map((startsAt) => dayGames.some((game) => startsAtForGame(game) === startsAt && game.division === division));
-      const blocks = countTrueRuns(rows);
-      if (blocks <= 1) continue;
+      const blockIndexes = divisionBlockIndexes(divisionBlocks, division);
+      const blocks = blockIndexes.length;
+      if (blocks <= 1 || allowedSoftSplitBlockIndexes(divisionBlocks, division)) continue;
       issues.push({
         ruleId: rule.id,
         ruleName: rule.name,
@@ -330,6 +335,7 @@ function auditDivisionDailyBlocks(context: ScheduleRuleContext, rule: Pick<Sched
           day,
           division,
           blocks,
+          blockIndexes: blockIndexes.map(String),
           rows: starts.filter((startsAt) => dayGames.some((game) => startsAtForGame(game) === startsAt && game.division === division))
         }
       });
@@ -339,14 +345,37 @@ function auditDivisionDailyBlocks(context: ScheduleRuleContext, rule: Pick<Sched
   return issues.sort(compareIssues);
 }
 
-function countTrueRuns(values: boolean[]) {
-  let count = 0;
-  let previous = false;
-  for (const value of values) {
-    if (value && !previous) count++;
-    previous = value;
+function divisionBlocksForStarts(dayGames: ScheduleRuleGame[], starts: string[]) {
+  const blocks: Array<Set<string>> = [];
+  for (const startsAt of starts) {
+    const rowDivisions = new Set(dayGames.filter((game) => startsAtForGame(game) === startsAt).map((game) => game.division));
+    const previous = blocks[blocks.length - 1];
+    if (previous && setsEqual(previous, rowDivisions)) continue;
+    blocks.push(rowDivisions);
   }
-  return count;
+  return blocks;
+}
+
+function divisionBlockIndexes(blocks: Array<Set<string>>, division: string) {
+  const indexes: number[] = [];
+  for (const [index, block] of blocks.entries()) {
+    const previous = index > 0 ? blocks[index - 1] : null;
+    if (block.has(division) && !previous?.has(division)) indexes.push(index);
+  }
+  return indexes;
+}
+
+function allowedSoftSplitBlockIndexes(blocks: Array<Set<string>>, division: string) {
+  const indexes = divisionBlockIndexes(blocks, division);
+  return indexes.length === 2 && indexes[1] - indexes[0] === 2;
+}
+
+function setsEqual(left: Set<string>, right: Set<string>) {
+  if (left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
 }
 
 function assignmentBufferConflictReason(
