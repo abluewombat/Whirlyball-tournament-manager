@@ -705,6 +705,17 @@ function buildManualUnlimitedGames(teams: TeamRow[], input: ScheduleInput): Gene
   const seattle = findManualUnlimitedTeam(teams, "Seattle");
   const label = (fallback: string, parts: Array<string | null | undefined>) => parts.filter(Boolean).join(" vs ") || fallback;
   const starts = manualUnlimitedStartTimes.map((time) => manualDateTime(date, time));
+  const gameHalves = (startsAt: string, gameLabel: string) =>
+    [0, input.seedingMinutes].map((offset, index) => ({
+      phase: "unlimited" as const,
+      division: unlimitedDivision,
+      court,
+      startsAt: addMinutes(startsAt, offset),
+      team1Id: null,
+      team2Id: null,
+      refTeamId: null,
+      label: `${gameLabel} (${index === 0 ? "first" : "second"} half)`
+    }));
 
   return [
     ...allCourtReservations(manualCeremonyStart, manualCeremonyMinutes, input.courts).map((reservation) => ({
@@ -717,56 +728,11 @@ function buildManualUnlimitedGames(teams: TeamRow[], input: ScheduleInput): Gene
       refTeamId: null,
       label: "Group picture / National Anthem"
     })),
-    {
-      phase: "unlimited" as const,
-      division: unlimitedDivision,
-      court,
-      startsAt: starts[0],
-      team1Id: null,
-      team2Id: null,
-      refTeamId: null,
-      label: `Unlimited Game 1: ${label("Michigan vs Texas", [michigan?.center_name, texas?.center_name])}`
-    },
-    {
-      phase: "unlimited" as const,
-      division: unlimitedDivision,
-      court,
-      startsAt: starts[1],
-      team1Id: null,
-      team2Id: null,
-      refTeamId: null,
-      label: `Unlimited Game 2: ${label("Seattle vs Winner of Game 1", [seattle?.center_name, "Winner of Game 1"])}`
-    },
-    {
-      phase: "unlimited" as const,
-      division: unlimitedDivision,
-      court,
-      startsAt: starts[2],
-      team1Id: null,
-      team2Id: null,
-      refTeamId: null,
-      label: "Unlimited Game 3: Loser of Game 1 vs Loser of Game 2"
-    },
-    {
-      phase: "unlimited" as const,
-      division: unlimitedDivision,
-      court,
-      startsAt: starts[3],
-      team1Id: null,
-      team2Id: null,
-      refTeamId: null,
-      label: "Unlimited Game 4: Winner of Game 3 vs Winner of Game 2"
-    },
-    {
-      phase: "unlimited" as const,
-      division: unlimitedDivision,
-      court,
-      startsAt: starts[4],
-      team1Id: null,
-      team2Id: null,
-      refTeamId: null,
-      label: "Unlimited Game 5 if needed: bracket reset final"
-    }
+    ...gameHalves(starts[0], `Unlimited Game 1: ${label("Michigan vs Texas", [michigan?.center_name, texas?.center_name])}`),
+    ...gameHalves(starts[1], `Unlimited Game 2: ${label("Seattle vs Winner of Game 1", [seattle?.center_name, "Winner of Game 1"])}`),
+    ...gameHalves(starts[2], "Unlimited Game 3: Loser of Game 1 vs Loser of Game 2"),
+    ...gameHalves(starts[3], "Unlimited Game 4: Winner of Game 3 vs Winner of Game 2"),
+    ...gameHalves(starts[4], "Unlimited Game 5 if needed: bracket reset final")
   ];
 }
 
@@ -1284,9 +1250,9 @@ function orderSeedingDivisions({
     })
     .filter((item) => item.deficit > 0)
     .sort((left, right) => {
-      if (left.belowSoftLimit !== right.belowSoftLimit) return left.belowSoftLimit ? -1 : 1;
       if (left.minGames !== right.minGames) return left.minGames - right.minGames;
       if (left.averageGames !== right.averageGames) return left.averageGames - right.averageGames;
+      if (left.belowSoftLimit !== right.belowSoftLimit) return left.belowSoftLimit ? -1 : 1;
       if (left.deficitRatio !== right.deficitRatio) return right.deficitRatio - left.deficitRatio;
       if (left.deficit !== right.deficit) return right.deficit - left.deficit;
       return left.baseIndex - right.baseIndex;
@@ -2331,6 +2297,10 @@ function repairOpenSeedingCourts({
       const divisionOrder = (blockOrder.length ? blockOrder : defaultBlockOrder)
         .filter((division) => (queues.get(division) || []).length > 0)
         .sort((left, right) => {
+          const leftStats = divisionGameStats(left, byDivision, teamGameCounts);
+          const rightStats = divisionGameStats(right, byDivision, teamGameCounts);
+          if (leftStats.min !== rightStats.min) return leftStats.min - rightStats.min;
+          if (leftStats.average !== rightStats.average) return leftStats.average - rightStats.average;
           const leftTargetGap = divisionTargetGap(left, byDivision, targetGamesByTeam, teamGameCounts);
           const rightTargetGap = divisionTargetGap(right, byDivision, targetGamesByTeam, teamGameCounts);
           if ((leftTargetGap > 0) !== (rightTargetGap > 0)) return leftTargetGap > 0 ? -1 : 1;
@@ -2339,10 +2309,6 @@ function repairOpenSeedingCourts({
             const rightPriority = fillPriority(right);
             if (leftPriority !== rightPriority) return leftPriority - rightPriority;
           }
-          const leftStats = divisionGameStats(left, byDivision, teamGameCounts);
-          const rightStats = divisionGameStats(right, byDivision, teamGameCounts);
-          if (leftStats.min !== rightStats.min) return leftStats.min - rightStats.min;
-          if (leftStats.average !== rightStats.average) return leftStats.average - rightStats.average;
           const leftDeficit = divisionSeedingDeficit(left, byDivision, targetGamesByTeam, teamGameCounts, queues);
           const rightDeficit = divisionSeedingDeficit(right, byDivision, targetGamesByTeam, teamGameCounts, queues);
           if (leftDeficit !== rightDeficit) return rightDeficit - leftDeficit;

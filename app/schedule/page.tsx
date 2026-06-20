@@ -206,57 +206,7 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
     rows.set(game.starts_at, row);
   }
 
-  addTwentyMinuteSkeletonRows(rows);
   return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row);
-}
-
-function emptyScheduleRow(startsAt: string): ScheduleGridRow {
-  return {
-    day: formatDay(startsAt),
-    time: formatTime(startsAt),
-    court1Ref: "",
-    court1RefDivision: "",
-    court1Game: "",
-    court1Division: "",
-    court1Scored: false,
-    court1StreamUrl: "",
-    court1StreamLabel: "",
-    court2Game: "",
-    court2Division: "",
-    court2Scored: false,
-    court2StreamUrl: "",
-    court2StreamLabel: "",
-    court2Ref: "",
-    court2RefDivision: ""
-  };
-}
-
-function addTwentyMinuteSkeletonRows(rows: Map<string, ScheduleGridRow>) {
-  const dayMinutes = new Map<string, number[]>();
-  for (const startsAt of rows.keys()) {
-    const parsed = parseLiteralStart(startsAt);
-    if (!parsed) continue;
-    dayMinutes.set(parsed.day, [...(dayMinutes.get(parsed.day) || []), parsed.minute]);
-  }
-
-  for (const [day, minutes] of dayMinutes.entries()) {
-    const first = Math.min(...minutes);
-    const last = Math.max(...minutes);
-    for (let minute = first; minute <= last; minute += 20) {
-      const startsAt = literalStart(day, minute);
-      if (!rows.has(startsAt)) rows.set(startsAt, emptyScheduleRow(startsAt));
-    }
-  }
-}
-
-function parseLiteralStart(value: string) {
-  const match = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
-  if (!match) return null;
-  return { day: match[1], minute: Number(match[2]) * 60 + Number(match[3]) };
-}
-
-function literalStart(day: string, minute: number) {
-  return `${day}T${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}:00`;
 }
 
 function publicStreamLink(game: PublicScheduleGame, scored: boolean) {
