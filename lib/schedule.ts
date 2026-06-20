@@ -1322,6 +1322,19 @@ function matchupBlockedByTarget(
   return divisionTarget !== undefined && (divisionGameCounts.get(matchup.division) || 0) >= divisionTarget;
 }
 
+function matchupCanFillDivisionTarget(
+  matchup: Matchup,
+  targetGamesByTeam: Map<number, number>,
+  targetGamesByDivision: Map<string, number>,
+  teamGameCounts: Map<number, number>,
+  divisionGameCounts: Map<string, number>
+) {
+  if (!targetGamesByTeam.size) return false;
+  const divisionTarget = targetGamesByDivision.get(matchup.division);
+  if (divisionTarget === undefined || (divisionGameCounts.get(matchup.division) || 0) >= divisionTarget) return false;
+  return !teamAtTarget(matchup.a, targetGamesByTeam, teamGameCounts) || !teamAtTarget(matchup.b, targetGamesByTeam, teamGameCounts);
+}
+
 function matchupKeepsSeedingCountsBalanced(matchup: Matchup, divisionTeams: TeamRow[], teamGameCounts: Map<number, number>) {
   if (!divisionTeams.length) return true;
   const currentCounts = divisionTeams.map((team) => teamGameCount(team, teamGameCounts));
@@ -2123,7 +2136,14 @@ function repairSeedingSlots({
     const divisionTeams = byDivision.get(slot.division) || [];
     const eligible = (matchup: Matchup) => {
       if (!matchup.required && matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)) return false;
-      if (!matchup.required && !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) && !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts)) return false;
+      if (
+        !matchup.required &&
+        !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) &&
+        !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts) &&
+        !matchupCanFillDivisionTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)
+      ) {
+        return false;
+      }
       if (divisionBlockedDuringManualUnlimitedWindow(matchup.division, slot.startsAt, input.seedingMinutes, input)) return false;
       if (teamBlockedAt(matchup.a.id, slot.startsAt, input.seedingMinutes, availability)) return false;
       if (teamBlockedAt(matchup.b.id, slot.startsAt, input.seedingMinutes, availability)) return false;
@@ -2280,7 +2300,14 @@ function repairOpenSeedingCourts({
         const divisionTeams = byDivision.get(division) || [];
         const eligible = (matchup: Matchup) => {
           if (!matchup.required && matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)) return false;
-          if (!matchup.required && !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) && !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts)) return false;
+          if (
+            !matchup.required &&
+            !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) &&
+            !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts) &&
+            !matchupCanFillDivisionTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)
+          ) {
+            return false;
+          }
           if (divisionBlockedDuringManualUnlimitedWindow(matchup.division, slot.startsAt, input.seedingMinutes, input)) return false;
           if (teamBlockedAt(matchup.a.id, slot.startsAt, input.seedingMinutes, availability)) return false;
           if (teamBlockedAt(matchup.b.id, slot.startsAt, input.seedingMinutes, availability)) return false;
@@ -3117,7 +3144,14 @@ export async function generateSchedule(input: ScheduleInput): Promise<{
         });
         const eligible = (matchup: Matchup) => {
           if (!matchup.required && matchupBlockedByTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)) return false;
-          if (!matchup.required && !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) && !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts)) return false;
+          if (
+            !matchup.required &&
+            !matchupKeepsSeedingCountsBalanced(matchup, divisionTeams, teamGameCounts) &&
+            !matchupHasTargetRoom(matchup, targetGamesByTeam, teamGameCounts) &&
+            !matchupCanFillDivisionTarget(matchup, targetGamesByTeam, targetGamesByDivision, teamGameCounts, divisionGameCounts)
+          ) {
+            return false;
+          }
           if (divisionBlockedDuringManualUnlimitedWindow(matchup.division, rowStartsAt, input.seedingMinutes, input)) return false;
           if (teamBlockedAt(matchup.a.id, rowStartsAt, input.seedingMinutes, availability)) return false;
           if (teamBlockedAt(matchup.b.id, rowStartsAt, input.seedingMinutes, availability)) return false;
