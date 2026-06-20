@@ -118,8 +118,11 @@ const manualCeremonyStart = "2026-06-26T17:45:00";
 const manualCeremonyMinutes = 15;
 const manualUnlimitedStartTimes = ["18:00", "19:00", "20:00", "21:00", "22:00"];
 const manualFridayDStartTimes = ["18:40", "19:40", "20:40", "21:40"];
-const manualFridayDLabel = "D Feature Seeding";
+const manualFridayDLabel = "D Friday Seeding";
 const manualSaturdayCLabel = "C Saturday Seeding";
+const manualSaturdayDLabel = "D Saturday Feature Seeding";
+const manualBufferDivision = "Buffer";
+const manualDailyBufferMinutes = 20;
 const manualFridayDMatchups = [
   { a: { center: "Michigan", division: "D", name: "Motown Motion" }, b: { center: "Seattle", division: "D", name: "Hollaback Whirl" } },
   { a: { center: "Minnesota", division: "D", name: "4 Lefts 1 Wrong" }, b: { center: "Michigan", division: "D", name: "Designated Drunk Drivers" } },
@@ -370,6 +373,7 @@ function buildManualScheduleReservations(input: ScheduleInput, sharedExhibitionP
       ? unlimitedReservations.flatMap((reservation) => allCourtReservations(reservation.startsAt, reservation.durationMinutes, input.courts))
       : unlimitedReservations;
   return [
+    ...buildDailyBufferReservations(input),
     ...allCourtReservations(manualCeremonyStart, manualCeremonyMinutes, input.courts),
     ...unlimitedScheduleReservations,
     ...manualFridayDStartTimes.flatMap((time) => allCourtReservations(manualDateTime(manualFridayDate, time), input.seedingMinutes, input.courts))
@@ -426,6 +430,42 @@ function buildOneGamePerTeamMatchups(teams: TeamRow[]) {
   return matchups;
 }
 
+function buildPairKey(left: TeamRow, right: TeamRow) {
+  return [left.id, right.id].sort((a, b) => a - b).join("-");
+}
+
+function buildGeneratedPairings(teams: TeamRow[], count: number, excludedPairKeys = new Set<string>()) {
+  const sortedTeams = [...teams].sort(compareManualTeams);
+  const useCounts = new Map<number, number>();
+  const pairings: Array<{ a: TeamRow; b: TeamRow }> = [];
+  const usedPairs = new Set(excludedPairKeys);
+
+  for (let index = 0; index < count; index++) {
+    const candidates: Array<{ a: TeamRow; b: TeamRow; score: number }> = [];
+    for (let left = 0; left < sortedTeams.length; left++) {
+      for (let right = left + 1; right < sortedTeams.length; right++) {
+        const a = sortedTeams[left];
+        const b = sortedTeams[right];
+        const key = buildPairKey(a, b);
+        if (usedPairs.has(key)) continue;
+        candidates.push({
+          a,
+          b,
+          score: (useCounts.get(a.id) || 0) * 100 + (useCounts.get(b.id) || 0) * 100 + (a.center_name === b.center_name ? 25 : 0) + left + right
+        });
+      }
+    }
+    const selected = candidates.sort((left, right) => left.score - right.score || compareManualTeams(left.a, right.a) || compareManualTeams(left.b, right.b))[0];
+    if (!selected) break;
+    pairings.push({ a: selected.a, b: selected.b });
+    usedPairs.add(buildPairKey(selected.a, selected.b));
+    useCounts.set(selected.a.id, (useCounts.get(selected.a.id) || 0) + 1);
+    useCounts.set(selected.b.id, (useCounts.get(selected.b.id) || 0) + 1);
+  }
+
+  return pairings;
+}
+
 function fixedSlotsEndingAt(date: string, gameCount: number, lastStartTime: string, durationMinutes: number, courts: number) {
   const rows = Math.ceil(gameCount / Math.max(1, courts));
   const firstMinute = Math.max(0, minutes(lastStartTime) - Math.max(0, rows - 1) * durationMinutes);
@@ -439,24 +479,122 @@ function fixedSlotsEndingAt(date: string, gameCount: number, lastStartTime: stri
   return slots;
 }
 
-function buildManualFridayDGames(teams: TeamRow[], input: ScheduleInput): GeneratedGame[] {
-  return manualFridayDMatchups.flatMap((matchup, index) => {
+function buildManualSaturdayDMatchups(teams: TeamRow[]) {
+  return manualFridayDMatchups.flatMap((matchup) => {
     const team1 = findManualTeam(teams, matchup.a);
     const team2 = findManualTeam(teams, matchup.b);
-    if (!team1 || !team2) return [];
-    return [
-      {
-        phase: "seeding" as const,
-        division: "D",
-        court: Math.max(1, Math.min(input.courts, input.unlimitedCourt || scheduleDefaults.unlimitedCourt)),
-        startsAt: manualDateTime(manualFridayDate, manualFridayDStartTimes[index] || manualFridayDStartTimes[manualFridayDStartTimes.length - 1]),
-        team1Id: team1.id,
-        team2Id: team2.id,
-        refTeamId: null,
-        label: manualFridayDLabel
-      }
-    ];
+    return team1 && team2 ? [{ a: team1, b: team2 }] : [];
   });
+}
+
+function buildManualFridayDGames(byDivision: Map<string, TeamRow[]>, teams: TeamRow[], input: ScheduleInput): GeneratedGame[] {
+  const saturdayPairs = new Set(buildManualSaturdayDMatchups(teams).map((matchup) => buildPairKey(matchup.a, matchup.b)));
+  const matchups = buildGeneratedPairings(byDivision.get("D") || [], manualFridayDStartTimes.length, saturdayPairs);
+  const court = Math.max(1, Math.min(input.courts, input.unlimitedCourt || scheduleDefaults.unlimitedCourt));
+  return matchups.map((matchup, index) => ({
+    phase: "seeding" as const,
+    division: "D",
+    court,
+    startsAt: manualDateTime(manualFridayDate, manualFridayDStartTimes[index] || manualFridayDStartTimes[manualFridayDStartTimes.length - 1]),
+    team1Id: matchup.a.id,
+    team2Id: matchup.b.id,
+    refTeamId: null,
+    label: manualFridayDLabel
+  }));
+}
+
+function buildManualSaturdayMorningGames(teams: TeamRow[], byDivision: Map<string, TeamRow[]>, input: ScheduleInput): GeneratedGame[] {
+  const cMatchups = buildOneGamePerTeamMatchups(byDivision.get("C") || []);
+  const dMatchups = buildManualSaturdayDMatchups(teams);
+  const totalRows = Math.ceil(cMatchups.length / Math.max(1, input.courts)) + 1 + Math.ceil(dMatchups.length / Math.max(1, input.courts));
+  const firstMinute = Math.max(0, minutes(manualSaturdayLastSeedingStart) - Math.max(0, totalRows - 1) * input.seedingMinutes);
+  const rowStartsAt = (row: number) =>
+    `${manualSaturdayDate}T${String(Math.floor((firstMinute + row * input.seedingMinutes) / 60)).padStart(2, "0")}:${String(
+      (firstMinute + row * input.seedingMinutes) % 60
+    ).padStart(2, "0")}:00`;
+  const games: GeneratedGame[] = [];
+  let row = 0;
+  let court = 1;
+
+  for (const matchup of cMatchups) {
+    games.push({
+      phase: "seeding" as const,
+      division: "C",
+      court,
+      startsAt: rowStartsAt(row),
+      team1Id: matchup.a.id,
+      team2Id: matchup.b.id,
+      refTeamId: null,
+      label: manualSaturdayCLabel
+    });
+    court++;
+    if (court > input.courts) {
+      court = 1;
+      row++;
+    }
+  }
+  if (court !== 1) row++;
+
+  for (let bufferCourt = 1; bufferCourt <= input.courts; bufferCourt++) {
+    games.push({
+      phase: "seeding" as const,
+      division: manualBufferDivision,
+      court: bufferCourt,
+      startsAt: rowStartsAt(row),
+      team1Id: null,
+      team2Id: null,
+      refTeamId: null,
+      label: `Schedule buffer (${manualDailyBufferMinutes} min)`
+    });
+  }
+  row++;
+  court = 1;
+
+  for (const matchup of dMatchups) {
+    games.push({
+      phase: "seeding" as const,
+      division: "D",
+      court,
+      startsAt: rowStartsAt(row),
+      team1Id: matchup.a.id,
+      team2Id: matchup.b.id,
+      refTeamId: null,
+      label: manualSaturdayDLabel
+    });
+    court++;
+    if (court > input.courts) {
+      court = 1;
+      row++;
+    }
+  }
+
+  return games;
+}
+
+function buildDailyBufferReservations(input: ScheduleInput) {
+  const days = dateRange(input.startDate, input.endDate).filter((day) => isoDate(day) !== manualSaturdayDate);
+  return days.flatMap((day) => allCourtReservations(defaultDailyBufferStart(day), manualDailyBufferMinutes, input.courts));
+}
+
+function defaultDailyBufferStart(day: Date) {
+  return manualDateTime(isoDate(day), isTuesday(day) ? "17:00" : "12:00");
+}
+
+function buildDailyBufferGames(input: ScheduleInput): GeneratedGame[] {
+  return dateRange(input.startDate, input.endDate)
+    .filter((day) => isoDate(day) !== manualSaturdayDate)
+    .flatMap((day) =>
+      allCourtReservations(defaultDailyBufferStart(day), manualDailyBufferMinutes, input.courts).map((reservation) => ({
+        phase: "seeding" as const,
+        division: manualBufferDivision,
+        court: reservation.court,
+        startsAt: reservation.startsAt,
+        team1Id: null,
+        team2Id: null,
+        refTeamId: null,
+        label: `Schedule buffer (${manualDailyBufferMinutes} min)`
+      }))
+    );
 }
 
 function buildManualSaturdayCGames(byDivision: Map<string, TeamRow[]>, input: ScheduleInput): GeneratedGame[] {
@@ -548,13 +686,14 @@ function buildManualUnlimitedGames(teams: TeamRow[], input: ScheduleInput): Gene
 }
 
 function addManualScheduleGames(games: GeneratedGame[], teams: TeamRow[], byDivision: Map<string, TeamRow[]>, input: ScheduleInput) {
+  games.push(...buildDailyBufferGames(input));
   games.push(...buildManualUnlimitedGames(teams, input));
-  games.push(...buildManualFridayDGames(teams, input));
-  games.push(...buildManualSaturdayCGames(byDivision, input));
+  games.push(...buildManualFridayDGames(byDivision, teams, input));
+  games.push(...buildManualSaturdayMorningGames(teams, byDivision, input));
 }
 
 function isManualFixedSeedingGame(game: GeneratedGame) {
-  return game.label === manualFridayDLabel || game.label === manualSaturdayCLabel;
+  return game.label === manualFridayDLabel || game.label === manualSaturdayCLabel || game.label === manualSaturdayDLabel || game.division === manualBufferDivision;
 }
 
 function addReservedSeedingCourtsForReservations(

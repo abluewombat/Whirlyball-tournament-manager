@@ -1,4 +1,4 @@
-import { clearAllScoresAction, generateScheduleAction } from "@/app/actions";
+import { clearAllScoresAction, generateScheduleAction, insertScheduleBufferAction } from "@/app/actions";
 import { requireAdmin } from "@/lib/auth";
 import { recordedScoreCount } from "@/lib/brackets";
 import { query } from "@/lib/db";
@@ -197,11 +197,11 @@ export async function AdminScheduleContent({
           </label>
           <label>
             Target games/team
-            <input name="target_games_per_team" type="number" min={settings.targetGamesPerTeam} defaultValue={targetGamesPerTeam} />
+            <input name="target_games_per_team" type="number" min={scheduleDefaults.targetGamesPerTeam} defaultValue={targetGamesPerTeam} />
           </label>
           <label>
             Division target minimums
-            <input name="division_target_games" placeholder="Optional higher targets: A:10,B:10,C:12,D:10" />
+            <input name="division_target_games" defaultValue={settings.divisionTargetGames} placeholder="A:15,C:15" />
           </label>
           <label>
             Pair repeat limit
@@ -244,6 +244,31 @@ export async function AdminScheduleContent({
             <button className="button" disabled={scoredResultCount > 0}>
               Generate Schedule
             </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="section card">
+        <h2>Insert Schedule Buffer</h2>
+        <p className="muted">
+          Adds a visible buffer row and shifts every unscored game later on that same calendar day by the selected amount. Other days are left alone.
+        </p>
+        <form action={insertScheduleBufferAction} className="form-grid">
+          <input name="tournament_id" type="hidden" value={tournament.id} />
+          <label>
+            Buffer starts
+            <input name="starts_at" type="datetime-local" required />
+          </label>
+          <label>
+            Length
+            <select name="minutes" defaultValue="20">
+              {[5, 10, 15, 20].map((value) => (
+                <option key={value} value={value}>{value} minutes</option>
+              ))}
+            </select>
+          </label>
+          <div className="actions">
+            <button className="button secondary">Insert Buffer and Bump Day</button>
           </div>
         </form>
       </section>

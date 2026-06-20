@@ -471,7 +471,7 @@ export async function generateScheduleAction(formData: FormData) {
     roundsPerPair: Math.max(1, num(formData, "rounds_per_pair", scheduleDefaults.roundsPerPair)),
     seedingMode: (text(formData, "seeding_mode") === "round_robin" ? "round_robin" : "balanced") as "round_robin" | "balanced",
     targetGamesPerTeam,
-    divisionTargetGames: text(formData, "division_target_games"),
+    divisionTargetGames: text(formData, "division_target_games") || scheduleDefaults.divisionTargetGames,
     includeTuesday: true,
     blockOrder: text(formData, "block_order") || scheduleDefaults.blockOrder,
     blockRows: Math.max(1, num(formData, "block_rows", scheduleDefaults.blockRows)),
@@ -610,6 +610,48 @@ export async function moveScheduleGameAction(input: { gameId: number; startsAt: 
       await client.query("UPDATE games SET starts_at = $1, court = $2 WHERE id = $3", [source.starts_at, source.court, target.id]);
     }
     await client.query("UPDATE games SET starts_at = $1, court = $2 WHERE id = $3", [targetStartsAt, targetCourt, gameId]);
+  });
+
+  revalidatePath("/admin/schedule");
+  revalidatePath("/admin/dashboard");
+  revalidatePath("/schedule");
+}
+
+export async function insertScheduleBufferAction(formData: FormData) {
+  await requireAdmin();
+  const tournament = await currentTournament(text(formData, "tournament_id") || null);
+  if (!(await ensureTournamentEditable(tournament.id))) return;
+  const startsAt = text(formData, "starts_at");
+  const minutesToBump = num(formData, "minutes");
+  if (!startsAt || Number.isNaN(dateTimeMs(startsAt)) || ![5, 10, 15, 20].includes(minutesToBump)) return;
+  const day = startsAt.slice(0, 10);
+
+  const [{ court_count: courtCountRaw } = { court_count: "2" }] = await query<{ court_count: string }>(
+    "SELECT COALESCE(MAX(court), 2)::text as court_count FROM games WHERE tournament_id = $1",
+    [tournament.id]
+  );
+  const courtCount = Math.max(1, Number(courtCountRaw) || scheduleDefaults.courts);
+
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE games
+       SET starts_at = starts_at + ($3::text || ' minutes')::interval
+       WHERE tournament_id = $1
+         AND starts_at >= $2::timestamptz
+         AND TO_CHAR(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') = $4
+         AND team_1_score IS NULL
+         AND team_2_score IS NULL
+         AND result_type IS NULL
+         AND actual_started_at IS NULL`,
+      [tournament.id, startsAt, minutesToBump, day]
+    );
+    for (let court = 1; court <= courtCount; court++) {
+      await client.query(
+        `INSERT INTO games (tournament_id, phase, division, court, starts_at, label)
+         VALUES ($1, 'seeding', 'Buffer', $2, $3, $4)`,
+        [tournament.id, court, startsAt, `Schedule buffer (${minutesToBump} min)`]
+      );
+    }
   });
 
   revalidatePath("/admin/schedule");
