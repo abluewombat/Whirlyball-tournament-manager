@@ -1670,8 +1670,9 @@ function teamPlaysDuringRefRow(teamId: number, row: RefRow, games: GeneratedGame
   );
 }
 
-function teamCanRefRow(team: TeamRow, row: RefRow, games: GeneratedGame[], availability: AvailabilityMap, input: ScheduleInput) {
-  if (!row.games.every((game) => refEligible(game.division, team))) return false;
+function teamCanRefRow(team: TeamRow, row: RefRow, games: GeneratedGame[], availability: AvailabilityMap, input: ScheduleInput, enforceDivisionEligibility = true) {
+  if (team.division === unlimitedDivision) return false;
+  if (enforceDivisionEligibility && !row.games.every((game) => refEligible(game.division, team))) return false;
   if (refRowTeamIds(row).has(team.id)) return false;
   if (teamBlockedAt(team.id, row.startsAt, row.durationMinutes, availability)) return false;
   if (teamPlaysDuringRefRow(team.id, row, games, input)) return false;
@@ -1702,8 +1703,11 @@ function teamHasPlayTooCloseToRefStint(teamId: number, rows: RefRow[], games: Ge
   });
 }
 
-function teamCanRefStint(team: TeamRow, rows: RefRow[], games: GeneratedGame[], availability: AvailabilityMap, input: ScheduleInput) {
-  return rows.every((row) => teamCanRefRow(team, row, games, availability, input)) && !teamHasPlayTooCloseToRefStint(team.id, rows, games, input);
+function teamCanRefStint(team: TeamRow, rows: RefRow[], games: GeneratedGame[], availability: AvailabilityMap, input: ScheduleInput, enforceDivisionEligibility = true) {
+  return (
+    rows.every((row) => teamCanRefRow(team, row, games, availability, input, enforceDivisionEligibility)) &&
+    !teamHasPlayTooCloseToRefStint(team.id, rows, games, input)
+  );
 }
 
 function nearestPlayingGapForRows(teamId: number, rows: RefRow[], games: GeneratedGame[], input: ScheduleInput) {
@@ -1782,18 +1786,21 @@ function assignRefsForSchedule(games: GeneratedGame[], teams: TeamRow[], availab
 
     for (let stintLength = Math.min(refStintRows, rows.length - index); stintLength >= 1; stintLength -= 1) {
       const stintRows = rows.slice(index, index + stintLength);
-      const candidates = teams
-        .filter((team) => teamCanRefStint(team, stintRows, sortedGames, availability, input))
-        .sort((left, right) => {
-          const leftScore = refStintScore({ team: left, rows: stintRows, games: sortedGames, teamById, refRowCounts, input, previousRefTeamId });
-          const rightScore = refStintScore({ team: right, rows: stintRows, games: sortedGames, teamById, refRowCounts, input, previousRefTeamId });
-          if (leftScore !== rightScore) return leftScore - rightScore;
-          return left.name.localeCompare(right.name);
-        });
-      if (!candidates.length) continue;
-      selected = candidates[0];
-      selectedRows = stintRows;
-      break;
+      for (const enforceDivisionEligibility of [true, false]) {
+        const candidates = teams
+          .filter((team) => teamCanRefStint(team, stintRows, sortedGames, availability, input, enforceDivisionEligibility))
+          .sort((left, right) => {
+            const leftScore = refStintScore({ team: left, rows: stintRows, games: sortedGames, teamById, refRowCounts, input, previousRefTeamId });
+            const rightScore = refStintScore({ team: right, rows: stintRows, games: sortedGames, teamById, refRowCounts, input, previousRefTeamId });
+            if (leftScore !== rightScore) return leftScore - rightScore;
+            return left.name.localeCompare(right.name);
+          });
+        if (!candidates.length) continue;
+        selected = candidates[0];
+        selectedRows = stintRows;
+        break;
+      }
+      if (selected) break;
     }
 
     if (!selected || selectedRows.length === 0) {
