@@ -12,7 +12,8 @@ type LiveGame = {
 
 export async function LiveNow({ tournament }: { tournament: TournamentRow }) {
   const games = await query<LiveGame>(
-    `SELECT games.court, games.division, t1.name as team_1, t2.name as team_2,
+    `SELECT DISTINCT ON (games.stream_id)
+            games.court, games.division, t1.name as team_1, t2.name as team_2,
             court_streams.youtube_video_id
      FROM games
      JOIN teams t1 ON t1.id = games.team_1_id
@@ -20,10 +21,11 @@ export async function LiveNow({ tournament }: { tournament: TournamentRow }) {
      JOIN court_streams ON court_streams.id = games.stream_id
      WHERE games.tournament_id = $1
        AND games.actual_started_at IS NOT NULL
+       AND games.actual_started_at <= NOW()
        AND games.actual_ended_at IS NULL
        AND (games.team_1_score IS NULL OR games.team_2_score IS NULL)
        AND games.result_type IS DISTINCT FROM 'forfeit'
-     ORDER BY games.court`,
+     ORDER BY games.stream_id, games.actual_started_at DESC`,
     [tournament.id]
   );
   if (!games.length) return null;

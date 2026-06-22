@@ -48,17 +48,19 @@ export default async function ScorePage({
       team_1: string;
       team_2: string;
     }>(
-      `SELECT games.stream_id, games.division, t1.name as team_1, t2.name as team_2
+      `SELECT DISTINCT ON (games.stream_id)
+              games.stream_id, games.division, t1.name as team_1, t2.name as team_2
        FROM games
        JOIN teams t1 ON t1.id = games.team_1_id
        JOIN teams t2 ON t2.id = games.team_2_id
        WHERE games.tournament_id = $1
          AND games.stream_id IS NOT NULL
          AND games.actual_started_at IS NOT NULL
+         AND games.actual_started_at <= NOW()
          AND games.actual_ended_at IS NULL
          AND (games.team_1_score IS NULL OR games.team_2_score IS NULL)
          AND games.result_type IS DISTINCT FROM 'forfeit'
-       ORDER BY games.actual_started_at`,
+       ORDER BY games.stream_id, games.actual_started_at DESC`,
       [tournament.id]
     )
   ]);
@@ -97,11 +99,11 @@ export default async function ScorePage({
           <div>
             <h2>Court Streams</h2>
             <p className="muted">
-              Saving a YouTube URL starts the first unscored game on that court. Each first-time final score advances the live game automatically.
+              Saving a YouTube URL connects that court and estimates replay timestamps from the stream start. Each first-time final score advances the next game to the current time.
             </p>
           </div>
         </div>
-        {params.stream_saved ? <p className="pill ok">Stream saved and court timeline started.</p> : null}
+        {params.stream_saved ? <p className="pill ok">Stream saved and replay estimates updated.</p> : null}
         {params.stream_error ? <p className="pill warn">Enter a valid YouTube video or live-stream URL.</p> : null}
         {streamSlots.length ? (
           <div className="grid">
@@ -135,7 +137,7 @@ export default async function ScorePage({
                       required
                     />
                   </label>
-                  <button className="button">{stream ? "Update Stream" : "Save Stream & Start Court"}</button>
+                  <button className="button">{stream ? "Update Stream" : "Save Stream"}</button>
                 </form>
               );
             })}

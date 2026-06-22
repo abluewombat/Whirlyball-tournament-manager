@@ -383,13 +383,15 @@ function isOpenScheduleSlot(game: PublicScheduleGame) {
 
 function publicStreamLink(game: PublicScheduleGame, scored: boolean) {
   if (!game.youtube_video_id || !game.actual_started_at || !game.stream_started_at) return { url: "", label: "" };
-  if (!scored && !game.actual_ended_at) {
+  const startedAt = Date.parse(game.actual_started_at);
+  const liveWindowMs = 45 * 60 * 1000;
+  if (!scored && !game.actual_ended_at && Number.isFinite(startedAt) && startedAt <= Date.now() && Date.now() - startedAt <= liveWindowMs) {
     return { url: youtubeWatchUrl(game.youtube_video_id), label: "Watch live" };
   }
   const offset = youtubeReplayOffsetSeconds(game.actual_started_at, game.stream_started_at);
   return {
     url: youtubeReplayUrl(game.youtube_video_id, game.actual_started_at, game.stream_started_at),
-    label: `Replay around ${formatStreamOffset(offset)}`
+    label: scored ? `Replay around ${formatStreamOffset(offset)}` : `Estimated replay ${formatStreamOffset(offset)}`
   };
 }
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { withTransaction } from "@/lib/db";
+import { estimateUnfilledStreamGameStarts, linkGamesToExistingCourtStreams } from "@/lib/streams";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -218,13 +219,18 @@ export async function POST(request: Request) {
         }
       }
 
+      const streamsLinked = await linkGamesToExistingCourtStreams(client, tournamentId);
+      const estimatedStarts = await estimateUnfilledStreamGameStarts(client, tournamentId);
+
       return {
         received: payload.games?.length || 0,
         inserted,
         updated,
         unchanged,
         removed,
-        duplicateRowsDeleted
+        duplicateRowsDeleted,
+        streamsLinked,
+        estimatedStarts
       };
     });
 

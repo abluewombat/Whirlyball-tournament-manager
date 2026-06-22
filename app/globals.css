@@ -1194,6 +1194,37 @@ th {
   color: #202124;
 }
 
+.team-inline-score-form {
+  align-items: end;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(90px, 1fr) minmax(90px, 1fr) auto;
+  min-width: 260px;
+}
+
+.team-inline-score-form label {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+}
+
+.team-inline-score-form span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.team-inline-score-form input {
+  min-width: 0;
+  padding: 7px 8px;
+  width: 100%;
+}
+
+.team-inline-score-form .button {
+  padding: 8px 10px;
+}
+
 .schedule-editor-toolbar {
   align-items: center;
   display: flex;

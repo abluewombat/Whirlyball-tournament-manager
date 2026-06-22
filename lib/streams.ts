@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import { query, withTransaction } from "./db";
 
 export type CourtStreamRow = {
@@ -59,6 +60,8 @@ export function formatStreamOffset(seconds: number) {
     : `${minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
+const streamGameLeadInMinutes = 10;
+
 async function youtubeActualStart(videoId: string) {
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) return null;
@@ -118,38 +121,75 @@ export async function saveCourtStream(input: {
       [streamId, input.tournamentId, input.court, timeZone, input.streamDate]
     );
 
-    const liveGame = await client.query(
-      `SELECT id
-       FROM games
-       WHERE stream_id = $1
-         AND actual_started_at IS NOT NULL
-         AND actual_ended_at IS NULL
-       LIMIT 1
-       FOR UPDATE`,
-      [streamId]
-    );
-    if (!liveGame.rowCount) {
-      const nextGame = await client.query<{ id: number }>(
-        `SELECT id
-         FROM games
-         WHERE stream_id = $1
-           AND team_1_id IS NOT NULL
-           AND team_2_id IS NOT NULL
-           AND (team_1_score IS NULL OR team_2_score IS NULL)
-           AND result_type IS DISTINCT FROM 'forfeit'
-         ORDER BY starts_at, id
-         LIMIT 1
-         FOR UPDATE`,
-        [streamId]
-      );
-      if (nextGame.rows[0]) {
-        await client.query(
-          "UPDATE games SET actual_started_at = NOW(), actual_ended_at = NULL WHERE id = $1",
-          [nextGame.rows[0].id]
-        );
-      }
-    }
+    await estimateUnfilledStreamGameStarts(client, input.tournamentId, [streamId]);
     return streamId;
+  });
+}
+
+export async function linkGamesToExistingCourtStreams(client: PoolClient, tournamentId: number) {
+  const result = await client.query(
+    `UPDATE games
+     SET stream_id = court_streams.id
+     FROM tournaments, court_streams
+     WHERE games.tournament_id = $1
+       AND tournaments.id = games.tournament_id
+       AND court_streams.tournament_id = games.tournament_id
+       AND court_streams.court = games.court
+       AND (games.starts_at AT TIME ZONE tournaments.timezone)::date = court_streams.stream_date::date
+       AND games.stream_id IS DISTINCT FROM court_streams.id`,
+    [tournamentId]
+  );
+  return result.rowCount || 0;
+}
+
+export async function estimateUnfilledStreamGameStarts(client: PoolClient, tournamentId: number, streamIds?: number[]) {
+  const streamResult = await client.query<{ id: number; stream_started_at: Date | string }>(
+    `SELECT id, stream_started_at
+     FROM court_streams
+     WHERE tournament_id = $1
+       ${streamIds?.length ? "AND id = ANY($2::int[])" : ""}
+     ORDER BY stream_date, court`,
+    streamIds?.length ? [tournamentId, streamIds] : [tournamentId]
+  );
+
+  let updated = 0;
+  for (const stream of streamResult.rows) {
+    const games = await client.query<{ id: number; starts_at: Date | string; actual_started_at: Date | string | null }>(
+      `SELECT id, starts_at, actual_started_at
+       FROM games
+       WHERE tournament_id = $1
+         AND stream_id = $2
+         AND team_1_id IS NOT NULL
+         AND team_2_id IS NOT NULL
+       ORDER BY starts_at, id
+       FOR UPDATE`,
+      [tournamentId, stream.id]
+    );
+    const firstGame = games.rows[0];
+    if (!firstGame) continue;
+    const streamStart = Date.parse(String(stream.stream_started_at));
+    const firstScheduledStart = Date.parse(String(firstGame.starts_at));
+    if (!Number.isFinite(streamStart) || !Number.isFinite(firstScheduledStart)) continue;
+
+    for (const game of games.rows) {
+      if (game.actual_started_at) continue;
+      const scheduledStart = Date.parse(String(game.starts_at));
+      if (!Number.isFinite(scheduledStart)) continue;
+      const estimatedStart = new Date(streamStart + streamGameLeadInMinutes * 60_000 + (scheduledStart - firstScheduledStart));
+      const result = await client.query("UPDATE games SET actual_started_at = $1 WHERE id = $2 AND actual_started_at IS NULL", [
+        estimatedStart.toISOString(),
+        game.id
+      ]);
+      updated += result.rowCount || 0;
+    }
+  }
+  return updated;
+}
+
+export async function estimateUnfilledStreamGameStartsForTournament(tournamentId: number) {
+  return withTransaction(async (client) => {
+    await linkGamesToExistingCourtStreams(client, tournamentId);
+    return estimateUnfilledStreamGameStarts(client, tournamentId);
   });
 }
 
@@ -194,7 +234,7 @@ export async function completeAndAdvanceCourtGame(gameId: number) {
 
     await client.query(
       `UPDATE games
-       SET actual_started_at = COALESCE(actual_started_at, NOW()),
+       SET actual_started_at = NOW(),
            actual_ended_at = NULL
        WHERE id = $1`,
       [nextGame.rows[0].id]
