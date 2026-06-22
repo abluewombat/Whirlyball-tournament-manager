@@ -158,17 +158,10 @@ function buildRepairPlan(context: Awaited<ReturnType<typeof loadContext>>) {
   const candidatePairs = buildCandidatePairs(games, context.tournament.timezone);
 
   while (currentIssues > 0 && iterations < maxIterations) {
-    let best: { leftId: number; rightId: number; issues: number; games: DbGame[] } | null = null;
     const scopedPairs = candidatePairsForIssues(candidatePairs, issues, games);
-    for (const [leftId, rightId] of scopedPairs.length ? scopedPairs : candidatePairs) {
-      const swapped = swapPayloads(games, leftId, rightId);
-      if (!swapped) continue;
-      if (hasSameTeamSameSlot(swapped)) continue;
-      const nextIssues = bufferIssuesFor(swapped, context.settings).length;
-      if (nextIssues < currentIssues && (!best || nextIssues < best.issues)) {
-        best = { leftId, rightId, issues: nextIssues, games: swapped };
-        if (nextIssues === 0) break;
-      }
+    let best = bestRepairSwap(scopedPairs.length ? scopedPairs : candidatePairs, games, currentIssues, context.settings);
+    if (!best && issues.length <= 5) {
+      best = bestRepairSwap(buildFallbackPairsForIssues(issues, games, context.tournament.timezone), games, currentIssues, context.settings);
     }
     if (!best) break;
     games = best.games;
@@ -196,6 +189,26 @@ function buildRepairPlan(context: Awaited<ReturnType<typeof loadContext>>) {
   return { games, iterations, changedSlots: changes.length, changes };
 }
 
+function bestRepairSwap(
+  candidatePairs: Array<[number, number]>,
+  games: DbGame[],
+  currentIssues: number,
+  settings: Record<string, unknown> | null | undefined
+) {
+  let best: { leftId: number; rightId: number; issues: number; games: DbGame[] } | null = null;
+  for (const [leftId, rightId] of candidatePairs) {
+    const swapped = swapPayloads(games, leftId, rightId);
+    if (!swapped) continue;
+    if (hasSameTeamSameSlot(swapped)) continue;
+    const nextIssues = bufferIssuesFor(swapped, settings).length;
+    if (nextIssues < currentIssues && (!best || nextIssues < best.issues)) {
+      best = { leftId, rightId, issues: nextIssues, games: swapped };
+      if (nextIssues === 0) break;
+    }
+  }
+  return best;
+}
+
 function candidatePairsForIssues(candidatePairs: Array<[number, number]>, issues: BufferIssue[], games: DbGame[]) {
   const movableIds = new Set(games.filter(isMovable).map((game) => game.id));
   const involved = new Set<number>();
@@ -204,6 +217,37 @@ function candidatePairsForIssues(candidatePairs: Array<[number, number]>, issues
     if (issue.rightGameId && movableIds.has(issue.rightGameId)) involved.add(issue.rightGameId);
   }
   return candidatePairs.filter(([leftId, rightId]) => involved.has(leftId) || involved.has(rightId));
+}
+
+function buildFallbackPairsForIssues(issues: BufferIssue[], games: DbGame[], timeZone: string) {
+  const movable = games.filter(isMovable);
+  const movableById = new Map(movable.map((game) => [game.id, game]));
+  const pairs: Array<[number, number]> = [];
+  const seen = new Set<string>();
+  const add = (leftId: number, rightId: number) => {
+    if (leftId === rightId || !movableById.has(leftId) || !movableById.has(rightId)) return;
+    const key = leftId < rightId ? `${leftId}:${rightId}` : `${rightId}:${leftId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    pairs.push(leftId < rightId ? [leftId, rightId] : [rightId, leftId]);
+  };
+
+  for (const issue of issues) {
+    for (const involvedId of [issue.leftGameId, issue.rightGameId]) {
+      if (!involvedId) continue;
+      const involvedGame = movableById.get(involvedId);
+      if (!involvedGame) continue;
+      const issueDay = dayKey(involvedGame.starts_at, timeZone);
+      for (const candidate of movable) {
+        if (candidate.id === involvedId) continue;
+        const sameStart = candidate.starts_at === involvedGame.starts_at;
+        const sameDay = dayKey(candidate.starts_at, timeZone) === issueDay;
+        if (sameStart || sameDay) add(involvedId, candidate.id);
+      }
+    }
+  }
+
+  return pairs;
 }
 
 function buildCandidatePairs(games: DbGame[], timeZone: string) {
@@ -222,7 +266,7 @@ function buildCandidatePairs(games: DbGame[], timeZone: string) {
     for (const right of movable) {
       if (left.id >= right.id) continue;
       if (left.starts_at === right.starts_at) add(left, right);
-      else if (dayKey(left.starts_at, timeZone) === dayKey(right.starts_at, timeZone)) add(left, right);
+      else if (left.division === right.division && dayKey(left.starts_at, timeZone) === dayKey(right.starts_at, timeZone)) add(left, right);
     }
   }
 
