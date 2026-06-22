@@ -74,3 +74,41 @@ The database tables and default centers are created automatically on first reque
 - Tournament generation has separate tournament-day and final-day end times so Sunday can stop earlier than seeding nights.
 - Tournament divisions can be assigned automatically by bracket size so the largest brackets are split across tournament days.
 - Excel export includes teams, players, extra shirts, and schedule.
+
+## Admin Schedule Import
+
+Use the permanent admin importer when a PDF/CSV/JSON schedule needs to replace or update the saved game rows.
+
+```bash
+npm run admin:import-schedule -- --input schedule.json
+npm run admin:import-schedule -- --input schedule.json --apply
+```
+
+The command is a dry run unless `--apply` is passed. On apply it creates a state snapshot, upserts `games`, optionally deletes missing seeding rows, and refreshes the saved schedule rules report.
+
+Direct PDF import requires Poppler's `pdftotext`:
+
+```bash
+brew install poppler
+npm run admin:import-schedule -- --pdf "2026 Novi Nats Teams 2.pdf" --out-json parsed-schedule.json
+npm run admin:import-schedule -- --input parsed-schedule.json --apply --delete-missing
+```
+
+Accepted JSON shape:
+
+```json
+{
+  "games": [
+    {
+      "starts_at": "2026-06-23T19:00:00-04:00",
+      "court": 1,
+      "division": "A",
+      "team_1_code": "MICH A1",
+      "team_2_code": "SEA A1",
+      "ref_team_code": "CHI B1"
+    }
+  ]
+}
+```
+
+The importer refuses same-division refs and scored-game overwrites by default. Use `--allow-scored-overwrite` only when intentionally replacing scored rows.

@@ -138,7 +138,7 @@ const openSlotDivision = "Open";
 const openSlotLabel = "Open schedule slot";
 const minimumSplitBlockGames = 4;
 const manualDailyBufferMinutes = 20;
-const refStintRows = 3;
+const maxRefCoverageBandMinutes = 165;
 const fillAvailableSeedingSlots = true;
 const tuesdayDefaultArrivalTime = "19:00";
 const manualFridayDMatchups = [
@@ -1847,10 +1847,12 @@ function incrementNested<K>(map: Map<K, Map<number, number>>, key: K, nestedKey:
   map.set(key, nested);
 }
 
-function refEligible(gameDivision: string, team: TeamRow) {
+function refEligible(gameDivision: string, team: TeamRow, enforceRankEligibility = true) {
   if (team.division === unlimitedDivision) return false;
+  if (team.division === gameDivision) return false;
+  if (!enforceRankEligibility) return true;
   const gameRank = rank[gameDivision] || 2;
-  if (gameDivision === "D") return team.division === "C" || team.division === "D";
+  if (gameDivision === "D") return team.division === "C";
   return Math.abs((rank[team.division] || 2) - gameRank) <= 1;
 }
 
@@ -1968,7 +1970,7 @@ function dailyExperiencePenalty(teamId: number, game: GeneratedGame, games: Gene
       penalty += game.phase === "tournament" ? 450 : 220;
     } else {
       penalty += Math.max(0, nearestRefGap - 80) * 55;
-      penalty += Math.max(0, refWindow - 160) * 70;
+      penalty += Math.max(0, refWindow - maxRefCoverageBandMinutes) * 70;
       if (nearestRefGap <= 40) penalty -= 450;
     }
     if (refsAfterThis > 2) penalty += (refsAfterThis - 2) * 1_200;
@@ -2102,9 +2104,9 @@ function teamPlaysDuringRefRow(teamId: number, row: RefRow, games: GeneratedGame
   );
 }
 
-function teamCanRefRow(team: TeamRow, row: RefRow, games: GeneratedGame[], availability: AvailabilityMap, input: ScheduleInput, enforceDivisionEligibility = true) {
+function teamCanRefRow(team: TeamRow, row: RefRow, games: GeneratedGame[], availability: AvailabilityMap, input: ScheduleInput, enforceRankEligibility = true) {
   if (team.division === unlimitedDivision) return false;
-  if (enforceDivisionEligibility && !row.games.every((game) => refEligible(game.division, team))) return false;
+  if (!row.games.every((game) => refEligible(game.division, team, enforceRankEligibility))) return false;
   if (refRowTeamIds(row).has(team.id)) return false;
   if (teamBlockedAt(team.id, row.startsAt, row.durationMinutes, availability)) return false;
   if (teamPlaysDuringRefRow(team.id, row, games, input)) return false;
@@ -2135,11 +2137,18 @@ function teamHasPlayTooCloseToRefStint(teamId: number, rows: RefRow[], games: Ge
   });
 }
 
-function teamCanRefStint(team: TeamRow, rows: RefRow[], games: GeneratedGame[], availability: AvailabilityMap, input: ScheduleInput, enforceDivisionEligibility = true) {
+function teamCanRefStint(team: TeamRow, rows: RefRow[], games: GeneratedGame[], availability: AvailabilityMap, input: ScheduleInput, enforceRankEligibility = true) {
   return (
-    rows.every((row) => teamCanRefRow(team, row, games, availability, input, enforceDivisionEligibility)) &&
+    refStintDurationMinutes(rows) <= maxRefCoverageBandMinutes &&
+    rows.every((row) => teamCanRefRow(team, row, games, availability, input, enforceRankEligibility)) &&
     !teamHasPlayTooCloseToRefStint(team.id, rows, games, input)
   );
+}
+
+function refStintDurationMinutes(rows: RefRow[]) {
+  if (!rows.length) return 0;
+  const bounds = refStintBounds(rows);
+  return Math.round((bounds.end - bounds.start) / 60_000);
 }
 
 function nearestPlayingGapForRows(teamId: number, rows: RefRow[], games: GeneratedGame[], input: ScheduleInput) {
@@ -2208,6 +2217,7 @@ function assignRefsForSchedule(games: GeneratedGame[], teams: TeamRow[], availab
   const refRowCounts = new Map<number, number>();
   const sortedGames = [...games].sort((left, right) => left.startsAt.localeCompare(right.startsAt) || left.court - right.court);
   const rows = refRowsForSchedule(sortedGames, input);
+  const maxRefStintRows = Math.max(1, Math.floor(maxRefCoverageBandMinutes / Math.max(1, input.seedingMinutes)));
   let previousRefTeamId: number | null = null;
 
   for (const game of sortedGames) game.refTeamId = null;
@@ -2216,11 +2226,11 @@ function assignRefsForSchedule(games: GeneratedGame[], teams: TeamRow[], availab
     let selected: TeamRow | null = null;
     let selectedRows: RefRow[] = [];
 
-    for (let stintLength = Math.min(refStintRows, rows.length - index); stintLength >= 1; stintLength -= 1) {
+    for (let stintLength = Math.min(maxRefStintRows, rows.length - index); stintLength >= 1; stintLength -= 1) {
       const stintRows = rows.slice(index, index + stintLength);
-      for (const enforceDivisionEligibility of [true, false]) {
+      for (const enforceRankEligibility of [true, false]) {
         const candidates = teams
-          .filter((team) => teamCanRefStint(team, stintRows, sortedGames, availability, input, enforceDivisionEligibility))
+          .filter((team) => teamCanRefStint(team, stintRows, sortedGames, availability, input, enforceRankEligibility))
           .sort((left, right) => {
             const leftScore = refStintScore({ team: left, rows: stintRows, games: sortedGames, teamById, refRowCounts, input, previousRefTeamId });
             const rightScore = refStintScore({ team: right, rows: stintRows, games: sortedGames, teamById, refRowCounts, input, previousRefTeamId });

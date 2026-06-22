@@ -108,6 +108,12 @@ export const scheduleRules: ScheduleRuleDefinition[] = [
     check: auditCrossCourtAssignmentBuffer
   },
   {
+    id: "ref-division-eligibility",
+    name: "Refs Are Outside Their Own Division",
+    severity: "error",
+    check: auditRefDivisionEligibility
+  },
+  {
     id: "division-daily-blocks",
     name: "Large Divisions Split Into Two Daily Blocks",
     severity: "warning",
@@ -305,6 +311,32 @@ function auditCrossCourtAssignmentBuffer(context: ScheduleRuleContext, rule: Pic
         });
       }
     }
+  }
+  return issues.sort(compareIssues);
+}
+
+function auditRefDivisionEligibility(context: ScheduleRuleContext, rule: Pick<ScheduleRuleDefinition, "id" | "name" | "severity">) {
+  const issues: ScheduleRuleIssue[] = [];
+  for (const game of context.games) {
+    const refTeamId = refTeamIdForGame(game);
+    if (!refTeamId) continue;
+    const refTeam = context.teamsById.get(refTeamId);
+    if (!refTeam || refTeam.division !== game.division) continue;
+    const teamName = formatTeam(refTeam);
+    issues.push({
+      ruleId: rule.id,
+      ruleName: rule.name,
+      severity: rule.severity,
+      team: teamName,
+      startsAt: startsAtForGame(game),
+      message: `${teamName} is assigned to ref its own division`,
+      details: {
+        gameId: game.id ?? null,
+        court: Number(game.court),
+        division: game.division,
+        phase: game.phase
+      }
+    });
   }
   return issues.sort(compareIssues);
 }

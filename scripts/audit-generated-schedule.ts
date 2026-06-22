@@ -45,6 +45,8 @@ type Issue = {
   assignments: string[];
 };
 
+const maxRefCoverageBandMinutes = 165;
+
 main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
@@ -125,7 +127,7 @@ async function main() {
   const availabilityBlockIssues = auditAvailabilityBlocks(assignments, teamById, availabilityByTeam);
   const backToBackCourtSwitchIssues = auditBackToBackCourtSwitches(assignments, teamById);
   const refPlayBufferIssues = auditRefPlayBuffer(assignments, teamById, scheduleDefaults.seedingMinutes);
-  const refRowIssues = auditRefRows(result.games);
+  const refRowIssues = auditRefRows(result.games, teamById);
   const tournamentSegmentIssues = auditTournamentSegments(result.games);
   const severe = issues.filter((issue) => issue.severity >= 90).length;
   const high = issues.filter((issue) => issue.severity >= 70).length;
@@ -222,7 +224,7 @@ function auditRefPlayBuffer(assignmentsByTeam: Map<number, Assignment[]>, teamsB
   return issues.sort();
 }
 
-function auditRefRows(games: GeneratedAuditGame[]) {
+function auditRefRows(games: GeneratedAuditGame[], teamsById: Map<number, Team>) {
   const rows = new Map<string, GeneratedAuditGame[]>();
   for (const game of games.filter((candidate) => candidate.phase !== "unlimited" && candidate.team1Id !== null && candidate.team2Id !== null && candidate.division !== "Buffer")) {
     rows.set(game.startsAt, [...(rows.get(game.startsAt) || []), game]);
@@ -233,6 +235,12 @@ function auditRefRows(games: GeneratedAuditGame[]) {
     const refs = new Set(rowGames.map((game) => game.refTeamId).filter(Boolean));
     if (refs.size === 0) issues.push(`${startsAt}: no ref assigned`);
     if (refs.size > 1) issues.push(`${startsAt}: split refs across courts`);
+    for (const game of rowGames) {
+      const refTeam = game.refTeamId ? teamsById.get(game.refTeamId) : null;
+      if (refTeam?.division === game.division) {
+        issues.push(`${startsAt}: ${refTeam.division} ${refTeam.center_name} ${refTeam.name} refs own division on C${game.court}`);
+      }
+    }
   }
   return issues.sort();
 }
@@ -287,7 +295,7 @@ function auditAssignments(assignmentsByTeam: Map<number, Assignment[]>, teamsByI
       const playSpan = plays.length > 1 ? minutesBetween(plays[0].startsAt, plays[plays.length - 1].startsAt) : 0;
       const maxRun = longestRun(dayItems.map((item) => item.role));
 
-      if (refs.length && !plays.length && refSpan >= 180) {
+      if (refs.length && !plays.length && refSpan > maxRefCoverageBandMinutes) {
         issues.push(issue(95, team, day, `Ref-only day is spread ${fmt(refSpan)} from first to last ref`, dayItems));
       }
       if (refs.length >= 4) {

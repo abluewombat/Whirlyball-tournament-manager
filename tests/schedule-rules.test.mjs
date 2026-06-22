@@ -275,6 +275,26 @@ test("buffer rule allows play and ref after a full one-game buffer", () => {
   assert.equal(ruleById(report, "cross-court-buffer").issueCount, 0);
 });
 
+test("ref division eligibility rule flags refs assigned to their own division", () => {
+  const report = reportFor({
+    games: [{ ...seedingGame(1, "B", "2026-06-23T09:00:00", 1), ref_team_id: 201 }],
+    teams: [{ id: 201, division: "B", center: "Chicago", name: "Same Division Ref" }]
+  });
+
+  const rule = ruleById(report, "ref-division-eligibility");
+  assert.equal(rule.issueCount, 1);
+  assert.equal(rule.issues[0].team, "B Chicago Same Division Ref");
+});
+
+test("ref division eligibility rule allows refs from other divisions", () => {
+  const report = reportFor({
+    games: [{ ...seedingGame(1, "B", "2026-06-23T09:00:00", 1), ref_team_id: 201 }],
+    teams: [{ id: 201, division: "A", center: "Chicago", name: "Cross Division Ref" }]
+  });
+
+  assert.equal(ruleById(report, "ref-division-eligibility").issueCount, 0);
+});
+
 test("division block rule allows one contiguous daily division block below the minimum size", () => {
   const report = reportFor({
     games: [
