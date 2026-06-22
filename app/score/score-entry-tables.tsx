@@ -9,6 +9,7 @@ import {
   submitGameForfeitAction,
   submitGameScoreAction
 } from "@/app/actions";
+import { tournamentDateKey, tournamentDayLabel, tournamentTimeLabel } from "@/lib/time-format";
 
 export type ScoreGame = {
   id: number;
@@ -64,9 +65,10 @@ type ScoreEntryTablesProps = {
   seedingGames: ScoreGame[];
   bracketGames: EditableBracketGame[];
   bracketsReady: boolean;
+  timeZone: string;
 };
 
-export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: ScoreEntryTablesProps) {
+export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady, timeZone }: ScoreEntryTablesProps) {
   const scoreableSeedingGames = useMemo(() => seedingGames.filter(isScoreableGame), [seedingGames]);
   const scoreableBracketGames = useMemo(() => bracketGames.filter((game) => isScoreableGame(game) && game.starts_at && game.court), [bracketGames]);
   const [showAllSeeding, setShowAllSeeding] = useState(false);
@@ -84,12 +86,12 @@ export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: 
   const allSeedingScored = scoreableSeedingGames.length > 0 && unscoredSeedingCount === 0;
   const [seedingOpen, setSeedingOpen] = useState(!bracketsReady || allSeedingScored);
   const [tournamentOpen, setTournamentOpen] = useState(bracketsReady || unscoredBracketCount === 0);
-  const seedingDays = useMemo(() => dayOptions(scoreableSeedingGames), [scoreableSeedingGames]);
+  const seedingDays = useMemo(() => dayOptions(scoreableSeedingGames, timeZone), [scoreableSeedingGames, timeZone]);
   const selectedSeedingDay = seedingDayFilter || defaultDayFilter(seedingDays);
-  const tournamentDays = useMemo(() => dayOptions(scoreableBracketGames), [scoreableBracketGames]);
+  const tournamentDays = useMemo(() => dayOptions(scoreableBracketGames, timeZone), [scoreableBracketGames, timeZone]);
   const selectedTournamentDay = tournamentDayFilter || defaultDayFilter(tournamentDays);
-  const seedingBaseGames = useMemo(() => filterByDay(showAllSeeding ? scoreableSeedingGames : scoreableSeedingGames.filter(isUnscoredScheduleGame), selectedSeedingDay), [scoreableSeedingGames, showAllSeeding, selectedSeedingDay]);
-  const tournamentBaseGames = useMemo(() => filterByDay(showAllTournament ? scoreableBracketGames : scoreableBracketGames.filter(isUnscoredBracketGame), selectedTournamentDay), [scoreableBracketGames, showAllTournament, selectedTournamentDay]);
+  const seedingBaseGames = useMemo(() => filterByDay(showAllSeeding ? scoreableSeedingGames : scoreableSeedingGames.filter(isUnscoredScheduleGame), selectedSeedingDay, timeZone), [scoreableSeedingGames, showAllSeeding, selectedSeedingDay, timeZone]);
+  const tournamentBaseGames = useMemo(() => filterByDay(showAllTournament ? scoreableBracketGames : scoreableBracketGames.filter(isUnscoredBracketGame), selectedTournamentDay, timeZone), [scoreableBracketGames, showAllTournament, selectedTournamentDay, timeZone]);
   const seedingDivisions = useMemo(() => divisionOptions(seedingBaseGames), [seedingBaseGames]);
   const tournamentDivisions = useMemo(() => divisionOptions(tournamentBaseGames), [tournamentBaseGames]);
   const seedingTeams = useMemo(() => teamOptions(seedingBaseGames, seedingDivisionFilter), [seedingBaseGames, seedingDivisionFilter]);
@@ -146,7 +148,7 @@ export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: 
           onTeamChange={setSeedingTeamFilter}
           onCourtChange={setSeedingCourtFilter}
         />
-        <ScheduleScoreGrid games={visibleSeedingGames} emptyText={showAllSeeding ? "No seeding games available for this day." : "No unscored seeding games for this day."} />
+        <ScheduleScoreGrid games={visibleSeedingGames} emptyText={showAllSeeding ? "No seeding games available for this day." : "No unscored seeding games for this day."} timeZone={timeZone} />
       </details>
 
       {scoreableBracketGames.length ? (
@@ -177,7 +179,7 @@ export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady }: 
             onTeamChange={setTournamentTeamFilter}
             onCourtChange={setTournamentCourtFilter}
           />
-          <BracketScheduleScoreGrid games={visibleBracketGames} emptyText={showAllTournament ? "No bracket games available for this day." : "No unscored bracket games for this day."} />
+          <BracketScheduleScoreGrid games={visibleBracketGames} emptyText={showAllTournament ? "No bracket games available for this day." : "No unscored bracket games for this day."} timeZone={timeZone} />
         </details>
       ) : null}
     </>
@@ -332,18 +334,18 @@ type DatedScoreRow = {
   starts_at: string | null;
 };
 
-function filterByDay<T extends DatedScoreRow>(games: T[], dayFilter: string) {
+function filterByDay<T extends DatedScoreRow>(games: T[], dayFilter: string, timeZone: string) {
   if (dayFilter === "all") return games;
-  return games.filter((game) => game.starts_at && dateKey(game.starts_at) === dayFilter);
+  return games.filter((game) => game.starts_at && dateKey(game.starts_at, timeZone) === dayFilter);
 }
 
-function dayOptions(games: DatedScoreRow[]) {
+function dayOptions(games: DatedScoreRow[], timeZone: string) {
   const days = new Map<string, string>();
   for (const game of games) {
     if (!game.starts_at) continue;
-    const key = dateKey(game.starts_at);
+    const key = dateKey(game.starts_at, timeZone);
     if (!key) continue;
-    days.set(key, dayLabel(game.starts_at));
+    days.set(key, dayLabel(game.starts_at, timeZone));
   }
   return [...days.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
@@ -400,14 +402,14 @@ function isScoreableGame(game: FilterableScoreRow) {
   return Boolean(game.team_1 && game.team_2);
 }
 
-function BracketScheduleScoreGrid({ games, emptyText }: { games: EditableBracketGame[]; emptyText: string }) {
+function BracketScheduleScoreGrid({ games, emptyText, timeZone }: { games: EditableBracketGame[]; emptyText: string; timeZone: string }) {
   if (!games.length) return <p className="muted">{emptyText}</p>;
   const scheduledGames = games.filter((game) => game.starts_at && game.court);
   const rows = buildBracketScheduleScoreRows(scheduledGames);
   if (!rows.rows.length) return <p className="muted">{emptyText}</p>;
   return (
     <div className="score-schedule-list">
-      {rows.rows.flatMap((row) => row.games.map((game) => <BracketScoreCard game={game} key={`bracket-${game.id}`} />))}
+      {rows.rows.flatMap((row) => row.games.map((game) => <BracketScoreCard game={game} key={`bracket-${game.id}`} timeZone={timeZone} />))}
     </div>
   );
 }
@@ -424,7 +426,7 @@ function buildBracketScheduleScoreRows(games: EditableBracketGame[]) {
   return { rows: [...rows.values()].filter((row) => row.games.length > 0).sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
 }
 
-function BracketScoreCard({ game }: { game: EditableBracketGame }) {
+function BracketScoreCard({ game, timeZone }: { game: EditableBracketGame; timeZone: string }) {
   const [team1Score, setTeam1Score] = useState(game.team_1_score === null ? "" : String(game.team_1_score));
   const [team2Score, setTeam2Score] = useState(game.team_2_score === null ? "" : String(game.team_2_score));
   const currentWinner = currentWinnerSide(game);
@@ -440,7 +442,7 @@ function BracketScoreCard({ game }: { game: EditableBracketGame }) {
       <div className="score-game-header">
         <div>
           <h3>{bracketGameLabel(game)}</h3>
-          <p className="score-game-meta">{scoreMetaLabel(game, "Tournament")}</p>
+          <p className="score-game-meta">{scoreMetaLabel(game, "Tournament", timeZone)}</p>
         </div>
         <span className={isUnscoredBracketGame(game) ? "pill warn" : "pill ok"}>{isUnscoredBracketGame(game) ? "Needs score" : resultText}</span>
       </div>
@@ -529,24 +531,24 @@ function currentWinnerSide(game: EditableBracketGame) {
   return winnerSide(game.team_1_score, game.team_2_score);
 }
 
-function ScheduleScoreGrid({ games, emptyText }: { games: ScoreGame[]; emptyText: string }) {
+function ScheduleScoreGrid({ games, emptyText, timeZone }: { games: ScoreGame[]; emptyText: string; timeZone: string }) {
   if (!games.length) return <p className="muted">{emptyText}</p>;
   const rows = buildScheduleScoreRows(games);
   if (!rows.rows.length) return <p className="muted">{emptyText}</p>;
   return (
     <div className="score-schedule-list">
-      {rows.rows.flatMap((row) => row.games.map((game) => <ScoreGameCard game={game} key={`seeding-${game.id}`} />))}
+      {rows.rows.flatMap((row) => row.games.map((game) => <ScoreGameCard game={game} key={`seeding-${game.id}`} timeZone={timeZone} />))}
     </div>
   );
 }
 
-function ScoreGameCard({ game }: { game: ScoreGame }) {
+function ScoreGameCard({ game, timeZone }: { game: ScoreGame; timeZone: string }) {
   return (
     <article className={`score-game-card ${isUnscoredScheduleGame(game) ? "" : "muted-game-row"}`.trim()}>
       <div className="score-game-header">
         <div>
           <h3>{game.team_1 && game.team_2 ? `${game.team_1} vs. ${game.team_2}` : game.label || `Court ${game.court}`}</h3>
-          <p className="score-game-meta">{scoreMetaLabel(game, "Seeding")}</p>
+          <p className="score-game-meta">{scoreMetaLabel(game, "Seeding", timeZone)}</p>
         </div>
         <span className={isUnscoredScheduleGame(game) ? "pill warn" : "pill ok"}>{isUnscoredScheduleGame(game) ? "Needs score" : scheduleResultText(game)}</span>
       </div>
@@ -598,9 +600,9 @@ function buildScheduleScoreRows(games: ScoreGame[]) {
   return { rows: [...rows.values()].filter((row) => row.games.length > 0).sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
 }
 
-function scoreMetaLabel(game: { starts_at: string | null; court: number | string | null; division: string }, phase: string) {
+function scoreMetaLabel(game: { starts_at: string | null; court: number | string | null; division: string }, phase: string, timeZone: string) {
   const pieces = [];
-  if (game.starts_at) pieces.push(timeLabel(game.starts_at), dayLabel(game.starts_at));
+  if (game.starts_at) pieces.push(timeLabel(game.starts_at, timeZone), dayLabel(game.starts_at, timeZone));
   pieces.push(`${game.division} ${phase}`);
   if (game.court) pieces.push(`Court ${game.court}`);
   return pieces.join(" - ");
@@ -633,47 +635,16 @@ function todayKey() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-function dateKey(value: string) {
-  const literal = literalDateTimeParts(value);
-  if (literal) return literal.dateKey;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value.slice(0, 10);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+function dateKey(value: string, timeZone: string) {
+  return tournamentDateKey(value, timeZone);
 }
 
-function dayLabel(value: string) {
-  const literal = literalDateTimeParts(value);
-  if (literal) return literal.day;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value.slice(0, 10);
-  return date.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
+function dayLabel(value: string, timeZone: string) {
+  return tournamentDayLabel(value, timeZone, "short");
 }
 
-function timeLabel(value: string) {
-  const literal = literalDateTimeParts(value);
-  if (literal) return literal.time;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value.slice(11, 16);
-  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-}
-
-function literalDateTimeParts(value: string) {
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-  if (!match) return null;
-  const [, year, month, day, hour, minute] = match;
-  const date = new Date(Number(year), Number(month) - 1, Number(day));
-  if (Number.isNaN(date.getTime())) return null;
-  return {
-    dateKey: `${year}-${month}-${day}`,
-    day: date.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" }),
-    time: formatClock(Number(hour), minute)
-  };
-}
-
-function formatClock(hour: number, minute: string) {
-  const suffix = hour >= 12 ? "PM" : "AM";
-  const displayHour = hour % 12 || 12;
-  return `${displayHour}:${minute} ${suffix}`;
+function timeLabel(value: string, timeZone: string) {
+  return tournamentTimeLabel(value, timeZone);
 }
 
 function ScoreTeamInput({

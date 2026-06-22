@@ -1,6 +1,16 @@
 import ExcelJS from "exceljs";
+import { appVersion } from "@/lib/app-version";
 import { hasAdminAccess } from "@/lib/auth";
 import { query } from "@/lib/db";
+import {
+  buildDivisionAverages,
+  buildScheduleQuality,
+  formatCourtBalance,
+  matrixCellValue,
+  maxOpponentRepeat,
+  mostRepeatedOpponent,
+  pairKey
+} from "@/lib/schedule-quality";
 import { buildScheduleRulesReport, type ScheduleRuleAvailabilityBlock, type ScheduleRulesReport } from "@/lib/schedule-rules";
 import { currentTournament } from "@/lib/tournaments";
 
@@ -38,15 +48,6 @@ type TournamentScheduleSettingsRow = {
   schedule_rules_report_json: ScheduleRulesReport | null;
 };
 
-type ScheduleTeamStats = {
-  team: TeamExportRow;
-  seedingGames: number;
-  opponents: Map<number, number>;
-  courts: Map<number, number>;
-  firstSeeding: string | null;
-  lastSeeding: string | null;
-};
-
 const divisionColors: Record<string, string> = {
   A: "FFFF00",
   B: "FFC000",
@@ -71,63 +72,66 @@ const refDivisionColors: Record<string, string> = {
   Unlimited: "FCE4EC"
 };
 
+const teamCodeByName: Record<string, string> = {
+  [normalizeTeamName("Not In The Realm")]: "ATL A",
+  [normalizeTeamName("The Remnants")]: "ATL B",
+  [normalizeTeamName("Lake Effect")]: "CHI A",
+  [normalizeTeamName("Goal-A-Dinga")]: "CHI B1",
+  [normalizeTeamName("Dead Horse")]: "CHI B2",
+  [normalizeTeamName("Mean Whirls")]: "CHI C1",
+  [normalizeTeamName("Maximum Effort")]: "CHI C2",
+  [normalizeTeamName("Squad Goals")]: "CHI C3",
+  [normalizeTeamName("SWATTY BALLZ")]: "CHI D",
+  [normalizeTeamName("WhirlyHausen")]: "CLEV A",
+  [normalizeTeamName("Whirld of Hurt")]: "CLEV C1",
+  [normalizeTeamName("The BWC")]: "CLEV C2",
+  [normalizeTeamName("The BWC (Buckeye Whirly Club)")]: "CLEV C2",
+  [normalizeTeamName("Two Fams & a Weatherman")]: "CLEV C3",
+  [normalizeTeamName("The Goon Squad")]: "CLEV D",
+  [normalizeTeamName("Hey You Guys")]: "MICH A1",
+  [normalizeTeamName("Goal Diggers")]: "MICH A2",
+  [normalizeTeamName("Shots Fired")]: "MICH A3",
+  [normalizeTeamName("MixT Up")]: "MICH C",
+  [normalizeTeamName("Motown Motion")]: "MICH D1",
+  [normalizeTeamName("Designated Drunk Drivers")]: "MICH D2",
+  [normalizeTeamName("Whirly Sirs")]: "MINN B",
+  [normalizeTeamName("Whirly Blue Balls")]: "MINN C",
+  [normalizeTeamName("4 Lefts 1 Wrong")]: "MINN D",
+  [normalizeTeamName("A-Rex")]: "SEA A1",
+  [normalizeTeamName("Brick City")]: "SEA A2",
+  [normalizeTeamName("Goat Herders")]: "SEA A3",
+  [normalizeTeamName("Whirlocks")]: "SEA B1",
+  [normalizeTeamName("Gooey Ducks")]: "SEA B2",
+  [normalizeTeamName("Seattle Sea Devils")]: "SEA C1",
+  [normalizeTeamName("Whirld War C")]: "SEA C2",
+  [normalizeTeamName("Whirled Not Stirred")]: "SEA C3",
+  [normalizeTeamName("Cherry Peckers")]: "SEA C4",
+  [normalizeTeamName("Hollaback Whirl")]: "SEA D",
+  [normalizeTeamName("SouthBound & Down")]: "TEX A1",
+  [normalizeTeamName("Los Guapos")]: "TEX A2",
+  [normalizeTeamName("Team USA")]: "TEX B1",
+  [normalizeTeamName("First Weld Problems")]: "TEX C",
+  [normalizeTeamName("The 30%ers")]: "TEX D1",
+  [normalizeTeamName("I Don't Remember")]: "TEX D2"
+};
+
+const centerCodes: Record<string, string> = {
+  atlanta: "ATL",
+  chicago: "CHI",
+  cleveland: "CLEV",
+  michigan: "MICH",
+  minnesota: "MINN",
+  seattle: "SEA",
+  texas: "TEX"
+};
+
+const defaultTournamentTimeZone = "America/Detroit";
+
 export async function GET() {
   if (!(await hasAdminAccess())) {
     return new Response("Unauthorized", { status: 401 });
   }
   const tournament = await currentTournament();
-  const [scheduleSettings] = await query<TournamentScheduleSettingsRow>(
-    "SELECT schedule_settings_json, schedule_rules_report_json FROM tournament_settings WHERE tournament_id = $1",
-    [tournament.id]
-  );
-
-  const teams = await query<TeamExportRow>(
-    `SELECT teams.id, COALESCE(centers.name, 'Draft') as center, teams.division, teams.name, teams.early_available, teams.deleted_at
-     FROM teams LEFT JOIN centers ON centers.id = teams.center_id
-     WHERE teams.tournament_id = $1
-     ORDER BY teams.division, center, teams.name`,
-    [tournament.id]
-  );
-  const players = await query(
-    `SELECT COALESCE(centers.name, home_centers.name) as center, teams.division, teams.name as team, players.name, players.shirt_size,
-            players.entry_paid, players.entry_amount, players.entry_paid_date, players.entry_payment_method, players.notes
-     FROM players
-     JOIN teams ON teams.id = players.team_id
-     LEFT JOIN centers ON centers.id = teams.center_id
-     LEFT JOIN people ON people.id = players.person_id
-     LEFT JOIN centers home_centers ON home_centers.id = people.center_id
-     WHERE players.tournament_id = $1 AND players.deleted_at IS NULL ORDER BY teams.division, center, team, players.id`,
-    [tournament.id]
-  );
-  const shirts = await query(
-    `SELECT COALESCE(centers.name, home_centers.name) as center, teams.division, teams.name as team, players.name as player,
-            shirt_orders.size, shirt_orders.quantity, shirt_orders.paid, shirt_orders.amount, shirt_orders.paid_date, shirt_orders.payment_method
-     FROM shirt_orders
-     JOIN players ON players.id = shirt_orders.player_id
-     JOIN teams ON teams.id = players.team_id
-     LEFT JOIN centers ON centers.id = teams.center_id
-     LEFT JOIN people ON people.id = players.person_id
-     LEFT JOIN centers home_centers ON home_centers.id = people.center_id
-     WHERE players.tournament_id = $1 AND shirt_orders.deleted_at IS NULL ORDER BY center, team, player`,
-    [tournament.id]
-  );
-  const availabilityBlocks = await query<
-    ScheduleRuleAvailabilityBlock & {
-      center: string;
-      division: string;
-      team: string;
-    }
-  >(
-    `SELECT team_availability_blocks.id, team_availability_blocks.team_id,
-            centers.name as center, teams.division, teams.name as team,
-            team_availability_blocks.starts_at, team_availability_blocks.ends_at, team_availability_blocks.reason
-     FROM team_availability_blocks
-     JOIN teams ON teams.id = team_availability_blocks.team_id
-     JOIN centers ON centers.id = teams.center_id
-     WHERE teams.tournament_id = $1
-     ORDER BY team_availability_blocks.starts_at, center, team`,
-    [tournament.id]
-  );
   const games = await query<GameExportRow>(
     `SELECT games.id, games.phase, games.division, games.court, games.starts_at,
             games.team_1_id, games.team_2_id, games.ref_team_id,
@@ -144,28 +148,14 @@ export async function GET() {
      ORDER BY games.starts_at, games.court`,
     [tournament.id]
   );
-  const rulesReport =
-    scheduleSettings?.schedule_rules_report_json ||
-    buildScheduleRulesReport({
-      games,
-      teams,
-      availabilityBlocks,
-      settings: scheduleSettings?.schedule_settings_json || {}
-    });
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Whirlyball Manager";
   workbook.created = new Date();
 
-  addRulesCheckSheet(workbook, rulesReport);
-  addScheduleGridSheet(workbook, games);
-  addScheduleSummarySheet(workbook, teams, games);
-  addOpponentMatrixSheet(workbook, teams, games);
-  addScheduleDetailSheet(workbook, games);
-  addObjectSheet(workbook, "Teams", teams);
-  addObjectSheet(workbook, "Players", players);
-  addObjectSheet(workbook, "Extra Shirts", shirts);
-  addObjectSheet(workbook, "Time Blockers", availabilityBlocks);
+  const timeZone = tournament.timezone || defaultTournamentTimeZone;
+  addScheduleGridSheet(workbook, games, timeZone);
+  addScheduleDetailSheet(workbook, games, timeZone);
 
   const buffer = await workbook.xlsx.writeBuffer();
   return new Response(new Uint8Array(buffer), {
@@ -255,54 +245,255 @@ function formatRuleDetails(details: Record<string, string | number | null | stri
     .join("; ");
 }
 
-function addScheduleGridSheet(workbook: ExcelJS.Workbook, games: GameExportRow[]) {
-  const sheet = workbook.addWorksheet("Schedule Grid", {
-    views: [{ state: "frozen", ySplit: 3 }]
+type ReferenceScheduleDay = {
+  key: string;
+  label: string;
+  rows: ReferenceScheduleRow[];
+};
+
+type ReferenceScheduleRow = {
+  key: string;
+  startsAt: string;
+  court1: GameExportRow | null;
+  court2: GameExportRow | null;
+};
+
+function addScheduleGridSheet(workbook: ExcelJS.Workbook, games: GameExportRow[], timeZone: string) {
+  const sheet = workbook.addWorksheet("Schedule", {
+    views: [{ showGridLines: false }]
   });
+  sheet.properties.defaultRowHeight = 18;
   sheet.columns = [
-    { header: "Day", key: "day", width: 14 },
-    { header: "Time", key: "time", width: 10 },
-    { header: "Ref Court 1", key: "court1Ref", width: 18 },
-    { header: "Court 1", key: "court1Game", width: 48 },
-    { header: "Court 2", key: "court2Game", width: 48 },
-    { header: "Ref Court 2", key: "court2Ref", width: 18 }
+    { width: 16 },
+    { width: 3 },
+    { width: 8 },
+    { width: 34 },
+    { width: 4 },
+    { width: 5 },
+    { width: 4 },
+    { width: 34 },
+    { width: 8 },
+    { width: 34 },
+    { width: 4 },
+    { width: 5 },
+    { width: 4 },
+    { width: 34 },
+    { width: 16 }
   ];
 
-  sheet.spliceRows(1, 0, ["Whirlyball Schedule"]);
-  sheet.mergeCells("A1:F1");
-  sheet.getCell("A1").font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
-  sheet.getCell("A1").fill = solidFill("202124");
-  sheet.getCell("A1").alignment = { horizontal: "center" };
+  let nextRow = 1;
+  for (const section of buildReferenceScheduleDays(games, timeZone)) {
+    if (nextRow > 1) nextRow += 2;
+    nextRow = addReferenceScheduleDay(sheet, section, nextRow, timeZone);
+  }
+}
 
-  const header = sheet.getRow(2);
-  header.values = ["Day", "Time", "Ref Court 1", "Court 1", "Court 2", "Ref Court 2"];
-  header.font = { bold: true, color: { argb: "FFFFFFFF" } };
-  header.alignment = { horizontal: "center" };
-  header.eachCell((cell) => {
-    cell.fill = solidFill("176B87");
-    cell.border = thinBorder();
+function buildReferenceScheduleDays(games: GameExportRow[], timeZone: string): ReferenceScheduleDay[] {
+  const days = new Map<string, ReferenceScheduleDay>();
+  const sortedGames = [...games].sort((left, right) => {
+    const timeSort = left.starts_at.localeCompare(right.starts_at);
+    if (timeSort !== 0) return timeSort;
+    return left.court - right.court;
   });
 
-  const gridRows = buildScheduleGrid(games);
-  let previousDay = "";
-  for (const row of gridRows) {
-    if (row.day !== previousDay) {
-      addScheduleGridDaySeparator(sheet, row.day);
-      previousDay = row.day;
+  for (const game of sortedGames) {
+    const key = scheduleDateKey(game.starts_at, timeZone);
+    let day = days.get(key);
+    if (!day) {
+      day = {
+        key,
+        label: scheduleDayHeader(game.starts_at, timeZone),
+        rows: []
+      };
+      days.set(key, day);
     }
-    const excelRow = sheet.addRow([row.day, row.time, row.court1Ref, row.court1Game, row.court2Game, row.court2Ref]);
-    excelRow.height = 30;
-    excelRow.eachCell((cell) => {
-      cell.border = thinBorder();
-      cell.alignment = { vertical: "middle", wrapText: true };
-    });
-    colorGameCell(excelRow.getCell(4), row.court1Division);
-    colorGameCell(excelRow.getCell(5), row.court2Division);
-    colorRefCell(excelRow.getCell(3), row.court1RefDivision);
-    colorRefCell(excelRow.getCell(6), row.court2RefDivision);
-    excelRow.getCell(1).font = { bold: true };
-    excelRow.getCell(2).font = { bold: true };
+
+    addGameToReferenceScheduleDay(day, game);
   }
+
+  return [...days.values()]
+    .map((day) => ({
+      ...day,
+      rows: day.rows.sort((left, right) => left.key.localeCompare(right.key))
+    }))
+    .sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function addGameToReferenceScheduleDay(day: ReferenceScheduleDay, game: GameExportRow) {
+  const key = scheduleSlotKey(game.starts_at);
+  const courtKey = game.court === 1 ? "court1" : game.court === 2 ? "court2" : null;
+  if (!courtKey) return;
+
+  let row = day.rows.find((candidate) => candidate.key === key && candidate[courtKey] === null);
+  if (!row) {
+    row = { key, startsAt: game.starts_at, court1: null, court2: null };
+    day.rows.push(row);
+  }
+  row[courtKey] = game;
+}
+
+function addReferenceScheduleDay(sheet: ExcelJS.Worksheet, section: ReferenceScheduleDay, startRow: number, timeZone: string) {
+  let rowNumber = startRow;
+  addMergedScheduleHeader(sheet, rowNumber, 1, 15, "2026 NOVI WHIRLYBALL NATIONAL TOURNAMENT SCHEDULE", 12);
+  rowNumber += 1;
+  addMergedScheduleHeader(sheet, rowNumber, 1, 7, "SCHEDULE EXPORT", 9);
+  addMergedScheduleHeader(sheet, rowNumber, 9, 15, `VERSION ${appVersion}`, 9);
+  rowNumber += 1;
+  addMergedScheduleHeader(sheet, rowNumber, 1, 15, section.label, 14);
+  rowNumber += 1;
+
+  styleScheduleHeaderRow(sheet, rowNumber);
+  sheet.getCell(rowNumber, 1).value = "Ref Name";
+  addMergedScheduleHeader(sheet, rowNumber, 3, 8, "COURT 1", 10);
+  addMergedScheduleHeader(sheet, rowNumber, 9, 14, "COURT 2", 10);
+  sheet.getCell(rowNumber, 15).value = "Ref Name";
+  rowNumber += 1;
+
+  for (const scheduleRow of section.rows) {
+    styleScheduleDataRow(sheet, rowNumber);
+    const court1Game = scheduleRow.court1;
+    const court2Game = scheduleRow.court2;
+    writeReferenceTimeCell(sheet, rowNumber, 3, scheduleRow.startsAt, timeZone);
+    writeReferenceTimeCell(sheet, rowNumber, 9, scheduleRow.startsAt, timeZone);
+
+    if (court1Game) {
+      writeReferenceCourtGame(sheet, rowNumber, 3, court1Game, timeZone);
+      writeReferenceCell(sheet, rowNumber, 1, court1Game.ref_team || "", court1Game.ref_team_division || "", true);
+    }
+    if (court2Game) {
+      writeReferenceCourtGame(sheet, rowNumber, 9, court2Game, timeZone);
+      writeReferenceCell(sheet, rowNumber, 15, court2Game.ref_team || "", court2Game.ref_team_division || "", true);
+    }
+    rowNumber += 1;
+  }
+
+  return rowNumber;
+}
+
+function writeReferenceTimeCell(sheet: ExcelJS.Worksheet, rowNumber: number, timeCol: number, startsAt: string, timeZone: string) {
+  const timeCell = sheet.getCell(rowNumber, timeCol);
+  timeCell.value = formatTime(startsAt, timeZone);
+  timeCell.font = { bold: true };
+  timeCell.alignment = { horizontal: "center", vertical: "middle" };
+  timeCell.border = thinBorder();
+}
+
+function addMergedScheduleHeader(sheet: ExcelJS.Worksheet, rowNumber: number, startCol: number, endCol: number, value: string, size: number) {
+  sheet.mergeCells(`${columnLetter(startCol)}${rowNumber}:${columnLetter(endCol)}${rowNumber}`);
+  const cell = sheet.getCell(rowNumber, startCol);
+  cell.value = value;
+  for (let col = startCol; col <= endCol; col += 1) {
+    const headerCell = sheet.getCell(rowNumber, col);
+    headerCell.fill = solidFill("000000");
+    headerCell.font = { bold: true, size, color: { argb: "FFFFFFFF" } };
+    headerCell.alignment = { horizontal: "center", vertical: "middle" };
+    headerCell.border = {
+      top: { style: "medium", color: { argb: "FFFFFFFF" } },
+      left: { style: "medium", color: { argb: "FFFFFFFF" } },
+      bottom: { style: "medium", color: { argb: "FFFFFFFF" } },
+      right: { style: "medium", color: { argb: "FFFFFFFF" } }
+    };
+  }
+  sheet.getRow(rowNumber).height = size >= 14 ? 22 : 18;
+}
+
+function styleScheduleHeaderRow(sheet: ExcelJS.Worksheet, rowNumber: number) {
+  const row = sheet.getRow(rowNumber);
+  row.height = 18;
+  for (let col = 1; col <= 15; col += 1) {
+    const cell = row.getCell(col);
+    cell.fill = solidFill("000000");
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.border = thinWhiteBorder();
+    cell.alignment = { horizontal: "center", vertical: "middle" };
+  }
+}
+
+function styleScheduleDataRow(sheet: ExcelJS.Worksheet, rowNumber: number) {
+  const row = sheet.getRow(rowNumber);
+  row.height = 18;
+  for (let col = 1; col <= 15; col += 1) {
+    const cell = row.getCell(col);
+    cell.border = thinBorder();
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  }
+}
+
+function writeReferenceCourtGame(sheet: ExcelJS.Worksheet, rowNumber: number, timeCol: number, game: GameExportRow, timeZone: string) {
+  const timeCell = sheet.getCell(rowNumber, timeCol);
+  timeCell.value = formatTime(game.starts_at, timeZone);
+  timeCell.font = { bold: true };
+  timeCell.alignment = { horizontal: "center", vertical: "middle" };
+
+  const firstTeamCol = timeCol + 1;
+  const vsCol = timeCol + 3;
+  const secondTeamCol = timeCol + 5;
+  styleReferenceGameBlock(sheet, rowNumber, firstTeamCol, secondTeamCol, game.division);
+
+  if (game.team_1 && game.team_2) {
+    sheet.getCell(rowNumber, firstTeamCol).value = exportTeamLabel(game.team_1_center, game.division, game.team_1);
+    sheet.getCell(rowNumber, vsCol).value = "vs.";
+    sheet.getCell(rowNumber, secondTeamCol).value = exportTeamLabel(game.team_2_center, game.division, game.team_2);
+  } else {
+    sheet.mergeCells(`${columnLetter(firstTeamCol)}${rowNumber}:${columnLetter(secondTeamCol)}${rowNumber}`);
+    sheet.getCell(rowNumber, firstTeamCol).value = exportGameText(game, false);
+  }
+}
+
+function writeReferenceCell(sheet: ExcelJS.Worksheet, rowNumber: number, col: number, value: string, division: string, refCell: boolean) {
+  const cell = sheet.getCell(rowNumber, col);
+  cell.value = value;
+  if (!value) return;
+  if (refCell) {
+    colorRefCell(cell, division);
+  } else {
+    colorGameCell(cell, division);
+  }
+  cell.border = thinBorder();
+  cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+}
+
+function styleReferenceGameBlock(sheet: ExcelJS.Worksheet, rowNumber: number, startCol: number, endCol: number, division: string) {
+  for (let col = startCol; col <= endCol; col += 1) {
+    const cell = sheet.getCell(rowNumber, col);
+    cell.fill = solidFill(divisionColors[division] || "FFFFFF");
+    cell.font = { bold: true, color: { argb: divisionTextColors[division] || "FF202124" } };
+    cell.border = thinBorder();
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  }
+}
+
+function scheduleDateKey(value: string, timeZone = defaultTournamentTimeZone) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match && !hasExplicitTimeZone(value)) return `${match[1]}-${match[2]}-${match[3]}`;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(0, 10);
+  const parts = dateTimeFormatParts(date, timeZone, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function scheduleSlotKey(value: string) {
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) return date.toISOString();
+  return value;
+}
+
+function scheduleDayHeader(value: string, timeZone = defaultTournamentTimeZone) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match && !hasExplicitTimeZone(value)) {
+    const [, year, month, day] = match;
+    const date = new Date(Number(year), Number(month) - 1, Number(day));
+    if (!Number.isNaN(date.getTime())) {
+      return date.toLocaleDateString("en-US", { weekday: "long" }).toUpperCase();
+    }
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return formatDay(value, timeZone).toUpperCase();
+  return date.toLocaleDateString("en-US", { weekday: "long", timeZone }).toUpperCase();
 }
 
 function addScheduleGridDaySeparator(sheet: ExcelJS.Worksheet, day: string) {
@@ -323,8 +514,8 @@ function addScheduleGridDaySeparator(sheet: ExcelJS.Worksheet, day: string) {
   };
 }
 
-function addScheduleDetailSheet(workbook: ExcelJS.Workbook, games: GameExportRow[]) {
-  const sheet = workbook.addWorksheet("Schedule Detail", {
+function addScheduleDetailSheet(workbook: ExcelJS.Workbook, games: GameExportRow[], timeZone: string) {
+  const sheet = workbook.addWorksheet("Schedule Details", {
     views: [{ state: "frozen", ySplit: 1 }]
   });
   sheet.columns = [
@@ -332,19 +523,26 @@ function addScheduleDetailSheet(workbook: ExcelJS.Workbook, games: GameExportRow
     { header: "Time", key: "time", width: 10 },
     { header: "Court", key: "court", width: 8 },
     { header: "Division", key: "division", width: 10 },
-    { header: "Game", key: "game", width: 52 },
+    { header: "Team 1", key: "team1", width: 36 },
+    { header: "Team 2", key: "team2", width: 36 },
+    { header: "Game", key: "game", width: 72 },
     { header: "Ref", key: "ref", width: 20 }
   ];
   styleHeader(sheet.getRow(1));
   for (const game of games) {
     const row = sheet.addRow({
-      day: formatDay(game.starts_at),
-      time: formatTime(game.starts_at),
+      day: formatDay(game.starts_at, timeZone),
+      time: formatTime(game.starts_at, timeZone),
       court: game.court,
       division: game.division,
+      team1: game.team_1 ? exportTeamLabel(game.team_1_center, game.division, game.team_1) : "",
+      team2: game.team_2 ? exportTeamLabel(game.team_2_center, game.division, game.team_2) : "",
       game: exportGameText(game, false),
       ref: game.ref_team || ""
     });
+    colorGameCell(row.getCell("division"), game.division);
+    colorGameCell(row.getCell("team1"), game.division);
+    colorGameCell(row.getCell("team2"), game.division);
     colorGameCell(row.getCell("game"), game.division);
     colorRefCell(row.getCell("ref"), game.ref_team_division || "");
   }
@@ -512,7 +710,11 @@ function buildScheduleGrid(games: GameExportRow[]) {
 
 function exportGameText(game: GameExportRow, includeDivision: boolean) {
   if (isOpenScheduleSlot(game)) return game.label || "Open schedule slot";
-  if (game.team_1 && game.team_2) return `${includeDivision ? `${game.division}: ` : ""}${game.team_1} vs. ${game.team_2}`;
+  if (game.team_1 && game.team_2) {
+    const team1 = exportTeamLabel(game.team_1_center, game.division, game.team_1);
+    const team2 = exportTeamLabel(game.team_2_center, game.division, game.team_2);
+    return `${includeDivision ? `${game.division}: ` : ""}${team1} vs. ${team2}`;
+  }
   return `${includeDivision ? `${game.division}: ` : ""}${game.label || "Game"}`;
 }
 
@@ -520,57 +722,29 @@ function isOpenScheduleSlot(game: GameExportRow) {
   return game.division === "Open" && game.label === "Open schedule slot" && game.team_1_id === null && game.team_2_id === null && game.ref_team_id === null;
 }
 
-function buildScheduleQuality(teams: TeamExportRow[], games: GameExportRow[]) {
-  const activeTeams = teams.filter((team) => !team.deleted_at).sort(compareTeams);
-  const teamById = new Map(activeTeams.map((team) => [team.id, team]));
-  const statsByTeamId = new Map<number, ScheduleTeamStats>(
-    activeTeams.map((team) => [
-      team.id,
-      {
-        team,
-        seedingGames: 0,
-        opponents: new Map<number, number>(),
-        courts: new Map<number, number>(),
-        firstSeeding: null,
-        lastSeeding: null
-      }
-    ])
-  );
-  const pairCounts = new Map<string, number>();
-
-  for (const game of games) {
-    if (game.phase !== "seeding" || game.team_1_id === null || game.team_2_id === null) continue;
-    const team1Stats = statsByTeamId.get(game.team_1_id);
-    const team2Stats = statsByTeamId.get(game.team_2_id);
-    if (!team1Stats || !team2Stats) continue;
-
-    recordSeedingGame(team1Stats, game.team_2_id, game);
-    recordSeedingGame(team2Stats, game.team_1_id, game);
-    const key = pairKey(game.team_1_id, game.team_2_id);
-    pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
-  }
-
-  return { pairCounts, statsByTeamId, teamById, teams: activeTeams };
+function exportTeamLabel(center: string | null, division: string, name: string) {
+  const code = teamCodeByName[normalizeTeamName(name)] || fallbackTeamCode(center, division);
+  return code ? `${code} - ${name}` : name;
 }
 
-function recordSeedingGame(stats: ScheduleTeamStats, opponentId: number, game: GameExportRow) {
-  stats.seedingGames += 1;
-  stats.opponents.set(opponentId, (stats.opponents.get(opponentId) || 0) + 1);
-  stats.courts.set(game.court, (stats.courts.get(game.court) || 0) + 1);
-  if (!stats.firstSeeding || game.starts_at.localeCompare(stats.firstSeeding) < 0) stats.firstSeeding = game.starts_at;
-  if (!stats.lastSeeding || game.starts_at.localeCompare(stats.lastSeeding) > 0) stats.lastSeeding = game.starts_at;
+function fallbackTeamCode(center: string | null, division: string) {
+  const code = center ? centerCodes[normalizeTeamName(center)] || center.slice(0, 4).toUpperCase() : "";
+  return [code, division].filter(Boolean).join(" ");
 }
 
-function buildDivisionAverages(statsByTeamId: Map<number, ScheduleTeamStats>) {
-  const totals = new Map<string, { games: number; teams: number }>();
-  for (const stats of statsByTeamId.values()) {
-    const current = totals.get(stats.team.division) || { games: 0, teams: 0 };
-    current.games += stats.seedingGames;
-    current.teams += 1;
-    totals.set(stats.team.division, current);
-  }
+function normalizeTeamName(value: string) {
+  return value.replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, " ").trim().toLowerCase();
+}
 
-  return new Map([...totals.entries()].map(([division, total]) => [division, total.teams ? total.games / total.teams : 0]));
+function columnLetter(columnNumber: number) {
+  let column = columnNumber;
+  let result = "";
+  while (column > 0) {
+    const modulo = (column - 1) % 26;
+    result = String.fromCharCode(65 + modulo) + result;
+    column = Math.floor((column - modulo) / 26);
+  }
+  return result;
 }
 
 function colorSummaryCells(row: ExcelJS.Row, seedingGames: number, divisionAverage: number, maxRepeat: number, courtImbalance: number) {
@@ -586,27 +760,6 @@ function colorSummaryCells(row: ExcelJS.Row, seedingGames: number, divisionAvera
   if (courtImbalance > 1) {
     row.getCell("courtBalance").fill = solidFill("FFF2CC");
   }
-}
-
-function maxOpponentRepeat(stats: ScheduleTeamStats) {
-  return Math.max(0, ...stats.opponents.values());
-}
-
-function mostRepeatedOpponent(stats: ScheduleTeamStats, teamById: Map<number, TeamExportRow>) {
-  const maxRepeat = maxOpponentRepeat(stats);
-  if (maxRepeat <= 1) return "";
-  return [...stats.opponents.entries()]
-    .filter(([, count]) => count === maxRepeat)
-    .map(([teamId]) => {
-      const team = teamById.get(teamId);
-      return team ? `${team.center} - ${team.name}` : `Team ${teamId}`;
-    })
-    .join(", ");
-}
-
-function matrixCellValue(rowTeam: TeamExportRow, columnTeam: TeamExportRow, pairCounts: Map<string, number>) {
-  if (rowTeam.id === columnTeam.id || rowTeam.division !== columnTeam.division) return "";
-  return pairCounts.get(pairKey(rowTeam.id, columnTeam.id)) || 0;
 }
 
 function styleMatrixCell(cell: ExcelJS.Cell, rowTeam: TeamExportRow, columnTeam: TeamExportRow, pairCounts: Map<string, number>) {
@@ -631,18 +784,8 @@ function styleMatrixCell(cell: ExcelJS.Cell, rowTeam: TeamExportRow, columnTeam:
   }
 }
 
-function formatDateTime(value: string | null) {
-  return value ? `${formatDay(value)} ${formatTime(value)}` : "";
-}
-
-function formatCourtBalance(court1: number, court2: number) {
-  const difference = court1 - court2;
-  if (difference === 0) return "Even";
-  return `${Math.abs(difference)} more on Court ${difference > 0 ? "1" : "2"}`;
-}
-
-function pairKey(leftTeamId: number, rightTeamId: number) {
-  return [leftTeamId, rightTeamId].sort((left, right) => left - right).join(":");
+function formatDateTime(value: string | null, timeZone = defaultTournamentTimeZone) {
+  return value ? `${formatDay(value, timeZone)} ${formatTime(value, timeZone)}` : "";
 }
 
 function teamLabel(team: TeamExportRow) {
@@ -657,32 +800,24 @@ function matrixTeamKey(team: TeamExportRow) {
   return `team_${team.id}`;
 }
 
-function compareTeams(left: TeamExportRow, right: TeamExportRow) {
-  return divisionRank(left.division) - divisionRank(right.division) || left.center.localeCompare(right.center) || left.name.localeCompare(right.name);
-}
-
-function divisionRank(division: string) {
-  const rank = ["A", "B", "C", "D", "Unlimited"].indexOf(division);
-  return rank === -1 ? 99 : rank;
-}
-
-function formatDay(value: string) {
+function formatDay(value: string, timeZone = defaultTournamentTimeZone) {
   const literal = literalDateTimeParts(value);
   if (literal) return literal.day;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value.slice(0, 10);
-  return date.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
+  return date.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric", timeZone });
 }
 
-function formatTime(value: string) {
+function formatTime(value: string, timeZone = defaultTournamentTimeZone) {
   const literal = literalDateTimeParts(value);
   if (literal) return literal.time;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value.slice(11, 16);
-  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone });
 }
 
 function literalDateTimeParts(value: string) {
+  if (hasExplicitTimeZone(value)) return null;
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
   if (!match) return null;
   const [, year, month, day, hour, minute] = match;
@@ -698,6 +833,19 @@ function formatClock(hour: number, minute: string) {
   const suffix = hour >= 12 ? "PM" : "AM";
   const displayHour = hour % 12 || 12;
   return `${displayHour}:${minute} ${suffix}`;
+}
+
+function hasExplicitTimeZone(value: string) {
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
+}
+
+function dateTimeFormatParts(date: Date, timeZone: string, options: Intl.DateTimeFormatOptions) {
+  return Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone, ...options })
+      .formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value])
+  ) as Record<string, string>;
 }
 
 function formatValue(value: unknown) {
@@ -752,5 +900,14 @@ function thinBorder(): Partial<ExcelJS.Borders> {
     left: { style: "thin", color: { argb: "FFD9DDD6" } },
     bottom: { style: "thin", color: { argb: "FFD9DDD6" } },
     right: { style: "thin", color: { argb: "FFD9DDD6" } }
+  };
+}
+
+function thinWhiteBorder(): Partial<ExcelJS.Borders> {
+  return {
+    top: { style: "thin", color: { argb: "FFFFFFFF" } },
+    left: { style: "thin", color: { argb: "FFFFFFFF" } },
+    bottom: { style: "thin", color: { argb: "FFFFFFFF" } },
+    right: { style: "thin", color: { argb: "FFFFFFFF" } }
   };
 }

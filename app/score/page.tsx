@@ -35,11 +35,11 @@ export default async function ScorePage({
   const activeBracketDivisions = new Set<string>();
   const [streamSlots, courtStreams, currentStreamGames] = await Promise.all([
     query<{ court: number; stream_date: string }>(
-      `SELECT DISTINCT court, TO_CHAR(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') as stream_date
+      `SELECT DISTINCT court, TO_CHAR(starts_at AT TIME ZONE $2, 'YYYY-MM-DD') as stream_date
        FROM games
        WHERE tournament_id = $1
        ORDER BY stream_date, court`,
-      [tournament.id]
+      [tournament.id, tournament.timezone]
     ),
     courtStreamsForTournament(tournament.id),
     query<{
@@ -155,7 +155,7 @@ export default async function ScorePage({
         </div>
       </section>
 
-      <ScoreEntryTables seedingGames={seedingGames} bracketGames={[]} bracketsReady={bracketsReady} />
+        <ScoreEntryTables seedingGames={seedingGames} bracketGames={[]} bracketsReady={bracketsReady} timeZone={tournament.timezone} />
     </main>
   );
 }

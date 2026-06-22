@@ -88,6 +88,8 @@ export async function saveCourtStream(input: {
   const detectedStart = await youtubeActualStart(videoId);
 
   return withTransaction(async (client) => {
+    const tournamentResult = await client.query<{ timezone: string }>("SELECT timezone FROM tournaments WHERE id = $1", [input.tournamentId]);
+    const timeZone = tournamentResult.rows[0]?.timezone || "America/Detroit";
     const streamResult = await client.query<{ id: number }>(
       `INSERT INTO court_streams (
          tournament_id, court, stream_date, youtube_url, youtube_video_id, stream_started_at
@@ -112,8 +114,8 @@ export async function saveCourtStream(input: {
        SET stream_id = $1
        WHERE tournament_id = $2
          AND court = $3
-         AND (starts_at AT TIME ZONE 'UTC')::date = $4::date`,
-      [streamId, input.tournamentId, input.court, input.streamDate]
+         AND (starts_at AT TIME ZONE $4)::date = $5::date`,
+      [streamId, input.tournamentId, input.court, timeZone, input.streamDate]
     );
 
     const liveGame = await client.query(

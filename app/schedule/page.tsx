@@ -2,7 +2,16 @@ import { listTournamentDivisions, query } from "@/lib/db";
 import { LiveRefresh } from "@/app/live-refresh";
 import { currentTournament } from "@/lib/tournaments";
 import { LiveNow } from "@/app/live-now";
+import { ViewTabs } from "@/app/view-tabs";
+import {
+  buildDivisionAverages,
+  buildScheduleQuality,
+  formatCourtBalance,
+  maxOpponentRepeat,
+  mostRepeatedOpponent
+} from "@/lib/schedule-quality";
 import { formatStreamOffset, youtubeReplayOffsetSeconds, youtubeReplayUrl, youtubeWatchUrl } from "@/lib/streams";
+import { tournamentDayLabel, tournamentTimeLabel } from "@/lib/time-format";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +37,14 @@ type PublicScheduleGame = {
   stream_started_at: string | null;
 };
 
+type PublicScheduleTeam = {
+  id: number;
+  center: string;
+  division: string;
+  name: string;
+  deleted_at: string | null;
+};
+
 type ScheduleGridRow = {
   day: string;
   time: string;
@@ -47,6 +64,30 @@ type ScheduleGridRow = {
   court2RefDivision: string;
 };
 
+type ScheduleDetailRow = {
+  division: string;
+  center: string;
+  team: string;
+  seedingGames: number;
+  uniqueOpponents: number;
+  maxRepeat: number;
+  mostRepeatedOpponent: string;
+  court1: number;
+  court2: number;
+  courtImbalance: number;
+  courtBalance: string;
+  firstSeeding: string;
+  lastSeeding: string;
+  seedingGamesWarning: boolean;
+  maxRepeatWarning: boolean;
+  maxRepeatOk: boolean;
+  courtBalanceWarning: boolean;
+};
+
+type ScheduleSearchParams = {
+  view?: string;
+};
+
 const divisionClassNames: Record<string, string> = {
   A: "division-a",
   B: "division-b",
@@ -55,7 +96,12 @@ const divisionClassNames: Record<string, string> = {
   Unlimited: "division-unlimited"
 };
 
-export default async function PublicSchedulePage() {
+export default async function PublicSchedulePage({
+  searchParams
+}: {
+  searchParams: Promise<ScheduleSearchParams>;
+}) {
+  const params = await searchParams;
   const tournament = await currentTournament();
   const divisionRows = await listTournamentDivisions(tournament.id);
   const divisions = divisionRows.map((division) => division.name);
@@ -69,7 +115,7 @@ export default async function PublicSchedulePage() {
             t1.name as team_1, t2.name as team_2,
             tr.name as ref_team, tr.division as ref_team_division, games.label,
             court_streams.youtube_video_id, court_streams.stream_started_at
-     FROM games
+      FROM games
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
      LEFT JOIN teams t2 ON t2.id = games.team_2_id
      LEFT JOIN teams tr ON tr.id = games.ref_team_id
@@ -78,8 +124,73 @@ export default async function PublicSchedulePage() {
      ORDER BY games.starts_at, games.court`,
     [tournament.id]
   );
-  const gridRows = buildScheduleGrid(games, hiddenDivisionLabels);
+  const teams = await query<PublicScheduleTeam>(
+    `SELECT teams.id, COALESCE(centers.name, 'Draft') as center, teams.division, teams.name, teams.deleted_at
+     FROM teams
+     LEFT JOIN centers ON centers.id = teams.center_id
+     WHERE teams.tournament_id = $1
+     ORDER BY teams.division, center, teams.name`,
+    [tournament.id]
+  );
+  const gridRows = buildScheduleGrid(games, hiddenDivisionLabels, tournament.timezone);
+  const detailRows = buildScheduleDetailRows(teams, games, tournament.timezone);
   const lastUpdated = games.length ? new Date().toLocaleString() : null;
+  const scheduleGrid = gridRows.length ? (
+    <section className="section schedule-grid-section">
+      {hiddenDivisionLabels.size === 0 ? <div className="schedule-legend" aria-label="Division color legend">
+        {divisions.map((division) => (
+          <span className={`legend-chip ${divisionClassNames[division]}`} key={division}>
+            {division}
+          </span>
+        ))}
+      </div> : null}
+      <div className="schedule-grid-wrap">
+        <table className="schedule-grid-table">
+          <thead>
+            <tr>
+              <th>Day</th>
+              <th>Time</th>
+              <th>Ref Court 1</th>
+              <th>Court 1</th>
+              <th>Court 2</th>
+              <th>Ref Court 2</th>
+            </tr>
+          </thead>
+          <tbody>
+            {gridRows.map((row) => (
+              <tr key={`${row.day}-${row.time}`}>
+                <td className="schedule-day">{row.day}</td>
+                <td className="schedule-time">{row.time}</td>
+                <td className={refCellClass(row.court1RefDivision)}>{row.court1Ref}</td>
+                <td className={gameCellClass(row.court1Division, row.court1Scored)}>
+                  {row.court1Game}
+                  {row.court1StreamUrl ? (
+                    <a className="schedule-stream-link" href={row.court1StreamUrl} target="_blank" rel="noreferrer">
+                      {row.court1StreamLabel}
+                    </a>
+                  ) : null}
+                </td>
+                <td className={gameCellClass(row.court2Division, row.court2Scored)}>
+                  {row.court2Game}
+                  {row.court2StreamUrl ? (
+                    <a className="schedule-stream-link" href={row.court2StreamUrl} target="_blank" rel="noreferrer">
+                      {row.court2StreamLabel}
+                    </a>
+                  ) : null}
+                </td>
+                <td className={refCellClass(row.court2RefDivision)}>{row.court2Ref}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  ) : (
+    <section className="section card">
+      <h2>No Public Schedule Yet</h2>
+      <p className="muted">Once an admin generates the tournament schedule, it will show here automatically.</p>
+    </section>
+  );
 
   return (
     <main className="content schedule-page">
@@ -95,75 +206,92 @@ export default async function PublicSchedulePage() {
 
       <LiveNow tournament={tournament} />
 
-      {gridRows.length ? (
-        <section className="section schedule-grid-section">
-          {hiddenDivisionLabels.size === 0 ? <div className="schedule-legend" aria-label="Division color legend">
-            {divisions.map((division) => (
-              <span className={`legend-chip ${divisionClassNames[division]}`} key={division}>
-                {division}
-              </span>
-            ))}
-          </div> : null}
-          <div className="schedule-grid-wrap">
-            <table className="schedule-grid-table">
-              <thead>
-                <tr>
-                  <th>Day</th>
-                  <th>Time</th>
-                  <th>Ref Court 1</th>
-                  <th>Court 1</th>
-                  <th>Court 2</th>
-                  <th>Ref Court 2</th>
-                </tr>
-              </thead>
-              <tbody>
-                {gridRows.map((row) => (
-                  <tr key={`${row.day}-${row.time}`}>
-                    <td className="schedule-day">{row.day}</td>
-                    <td className="schedule-time">{row.time}</td>
-                    <td className={refCellClass(row.court1RefDivision)}>{row.court1Ref}</td>
-                    <td className={gameCellClass(row.court1Division, row.court1Scored)}>
-                      {row.court1Game}
-                      {row.court1StreamUrl ? (
-                        <a className="schedule-stream-link" href={row.court1StreamUrl} target="_blank" rel="noreferrer">
-                          {row.court1StreamLabel}
-                        </a>
-                      ) : null}
-                    </td>
-                    <td className={gameCellClass(row.court2Division, row.court2Scored)}>
-                      {row.court2Game}
-                      {row.court2StreamUrl ? (
-                        <a className="schedule-stream-link" href={row.court2StreamUrl} target="_blank" rel="noreferrer">
-                          {row.court2StreamLabel}
-                        </a>
-                      ) : null}
-                    </td>
-                    <td className={refCellClass(row.court2RefDivision)}>{row.court2Ref}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      ) : (
-        <section className="section card">
-          <h2>No Public Schedule Yet</h2>
-          <p className="muted">Once an admin generates the tournament schedule, it will show here automatically.</p>
-        </section>
-      )}
+      <ViewTabs
+        ariaLabel="Public schedule views"
+        initialView={params.view}
+        tabs={[
+          { id: "schedule", label: "Schedule", content: scheduleGrid },
+          {
+            id: "details",
+            label: "Schedule Details",
+            badge: detailRows.length,
+            content: <ScheduleDetails rows={detailRows} />
+          }
+        ]}
+      />
     </main>
   );
 }
 
-function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = new Set<string>()) {
+function ScheduleDetails({ rows }: { rows: ScheduleDetailRow[] }) {
+  if (!rows.length) {
+    return (
+      <section className="section card">
+        <h2>No Schedule Details Yet</h2>
+        <p className="muted">Once games are scheduled, this tab will show per-team game totals, opponent spread, and court balance.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="section schedule-detail-section">
+      <div className="section-heading">
+        <div>
+          <h2>Schedule Details</h2>
+          <p className="muted">Same breakdown as the export summary: game totals, unique opponents, repeat opponents, court balance, and first/last seeding game.</p>
+        </div>
+      </div>
+      <div className="table-wrap schedule-detail-wrap">
+        <table className="schedule-detail-table">
+          <thead>
+            <tr>
+              <th>Division</th>
+              <th>Center</th>
+              <th>Team</th>
+              <th>Seeding Games</th>
+              <th>Unique Opponents</th>
+              <th>Max Repeat</th>
+              <th>Most Repeated Opponent</th>
+              <th>Court 1</th>
+              <th>Court 2</th>
+              <th>Court Balance</th>
+              <th>First Seeding</th>
+              <th>Last Seeding</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={`${row.division}-${row.center}-${row.team}`}>
+                <td className={`schedule-detail-division ${divisionClassNames[row.division] || ""}`}>{row.division}</td>
+                <td>{row.center}</td>
+                <td>{row.team}</td>
+                <td className={row.seedingGamesWarning ? "schedule-detail-warn" : ""}>{row.seedingGames}</td>
+                <td>{row.uniqueOpponents}</td>
+                <td className={row.maxRepeatWarning ? "schedule-detail-danger" : row.maxRepeatOk ? "schedule-detail-ok" : ""}>{row.maxRepeat}</td>
+                <td className={row.maxRepeatWarning ? "schedule-detail-danger" : ""}>{row.mostRepeatedOpponent}</td>
+                <td>{row.court1}</td>
+                <td>{row.court2}</td>
+                <td className={row.courtBalanceWarning ? "schedule-detail-warn" : ""}>{row.courtBalance}</td>
+                <td>{row.firstSeeding}</td>
+                <td>{row.lastSeeding}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = new Set<string>(), timeZone: string) {
   const rows = new Map<string, ScheduleGridRow>();
 
   for (const game of games) {
     const row =
       rows.get(game.starts_at) ||
       {
-        day: formatDay(game.starts_at),
-        time: formatTime(game.starts_at),
+        day: formatDay(game.starts_at, timeZone),
+        time: formatTime(game.starts_at, timeZone),
         court1Ref: "",
         court1RefDivision: "",
         court1Game: "",
@@ -206,6 +334,41 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
   }
 
   return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row);
+}
+
+function buildScheduleDetailRows(teams: PublicScheduleTeam[], games: PublicScheduleGame[], timeZone: string): ScheduleDetailRow[] {
+  const { statsByTeamId, teams: activeTeams, teamById } = buildScheduleQuality(teams, games);
+  const divisionAverages = buildDivisionAverages(statsByTeamId);
+
+  return activeTeams.map((team) => {
+    const stats = statsByTeamId.get(team.id);
+    const court1 = stats?.courts.get(1) || 0;
+    const court2 = stats?.courts.get(2) || 0;
+    const seedingGames = stats?.seedingGames || 0;
+    const maxRepeat = stats ? maxOpponentRepeat(stats) : 0;
+    const divisionAverage = divisionAverages.get(team.division) || 0;
+    const courtImbalance = Math.abs(court1 - court2);
+
+    return {
+      division: team.division,
+      center: team.center,
+      team: team.name,
+      seedingGames,
+      uniqueOpponents: stats?.opponents.size || 0,
+      maxRepeat,
+      mostRepeatedOpponent: stats ? mostRepeatedOpponent(stats, teamById) : "",
+      court1,
+      court2,
+      courtImbalance,
+      courtBalance: formatCourtBalance(court1, court2),
+      firstSeeding: formatDateTime(stats?.firstSeeding || null, timeZone),
+      lastSeeding: formatDateTime(stats?.lastSeeding || null, timeZone),
+      seedingGamesWarning: Math.abs(seedingGames - divisionAverage) > 1,
+      maxRepeatWarning: maxRepeat > 2,
+      maxRepeatOk: maxRepeat === 2,
+      courtBalanceWarning: courtImbalance > 1
+    };
+  });
 }
 
 function scheduleGameText(game: PublicScheduleGame, hiddenDivisionLabels: Set<string>, resultText: string) {
@@ -252,36 +415,14 @@ function refCellClass(division: string) {
   return `schedule-ref-cell ${divisionClassNames[division] || ""}`.trim();
 }
 
-function formatDay(value: string) {
-  const literal = literalDateTimeParts(value);
-  if (literal) return literal.day;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value.slice(0, 10);
-  return date.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
+function formatDay(value: string, timeZone: string) {
+  return tournamentDayLabel(value, timeZone, "short");
 }
 
-function formatTime(value: string) {
-  const literal = literalDateTimeParts(value);
-  if (literal) return literal.time;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value.slice(11, 16);
-  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+function formatTime(value: string, timeZone: string) {
+  return tournamentTimeLabel(value, timeZone);
 }
 
-function literalDateTimeParts(value: string) {
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-  if (!match) return null;
-  const [, year, month, day, hour, minute] = match;
-  const date = new Date(Number(year), Number(month) - 1, Number(day));
-  if (Number.isNaN(date.getTime())) return null;
-  return {
-    day: date.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" }),
-    time: formatClock(Number(hour), minute)
-  };
-}
-
-function formatClock(hour: number, minute: string) {
-  const suffix = hour >= 12 ? "PM" : "AM";
-  const displayHour = hour % 12 || 12;
-  return `${displayHour}:${minute} ${suffix}`;
+function formatDateTime(value: string | null, timeZone: string) {
+  return value ? `${formatDay(value, timeZone)} ${formatTime(value, timeZone)}` : "";
 }

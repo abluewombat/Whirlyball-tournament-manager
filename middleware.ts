@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const sections = new Set(["schedule", "standings", "brackets", "register"]);
+const sections = new Set(["schedule", "standings", "brackets", "register", "players"]);
 
 export function middleware(request: NextRequest) {
   const match = request.nextUrl.pathname.match(/^\/tournaments\/([^/]+)(?:\/(.*))?\/?$/);

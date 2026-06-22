@@ -14,6 +14,8 @@ type PublicTeamsListProps = {
 export function PublicTeamsList({ divisions, players, teams, basePath = "", hideDivisionLabels = false }: PublicTeamsListProps) {
   const [divisionFilter, setDivisionFilter] = useState("all");
   const [divisionSort, setDivisionSort] = useState<"ascending" | "descending">("ascending");
+  const [teamSearch, setTeamSearch] = useState("");
+  const normalizedTeamSearch = normalizeSearch(teamSearch);
   const playersByTeam = useMemo(() => {
     const map = new Map<number, PlayerRow[]>();
     for (const player of players) {
@@ -24,12 +26,31 @@ export function PublicTeamsList({ divisions, players, teams, basePath = "", hide
   }, [players]);
   const visibleDivisions = useMemo(() => {
     const ordered = divisionSort === "ascending" ? [...divisions] : [...divisions].reverse();
-    return divisionFilter === "all" ? ordered : ordered.filter((division) => division === divisionFilter);
-  }, [divisionFilter, divisionSort, divisions]);
+    const filteredByDivision = divisionFilter === "all" ? ordered : ordered.filter((division) => division === divisionFilter);
+    if (!normalizedTeamSearch) return filteredByDivision;
+    return filteredByDivision.filter((division) =>
+      teams.some((team) => team.division === division && teamMatchesSearch(team, playersByTeam.get(team.id) || [], normalizedTeamSearch))
+    );
+  }, [divisionFilter, divisionSort, divisions, normalizedTeamSearch, playersByTeam, teams]);
+  const totalVisibleTeams = useMemo(
+    () => teams.filter((team) => visibleDivisions.includes(team.division) && teamMatchesSearch(team, playersByTeam.get(team.id) || [], normalizedTeamSearch)).length,
+    [normalizedTeamSearch, playersByTeam, teams, visibleDivisions]
+  );
 
   return (
     <>
-      {!hideDivisionLabels ? <div className="score-filter-grid public-team-controls" aria-label="Team list sorting">
+      <div className="score-filter-grid public-team-controls" aria-label="Team list sorting and search">
+        <label>
+          Search teams
+          <input
+            type="search"
+            value={teamSearch}
+            onChange={(event) => setTeamSearch(event.currentTarget.value)}
+            placeholder="Team, player, center, division"
+          />
+        </label>
+        {!hideDivisionLabels ? (
+          <>
         <label>
           Division
           <select value={divisionFilter} onChange={(event) => setDivisionFilter(event.currentTarget.value)}>
@@ -48,10 +69,17 @@ export function PublicTeamsList({ divisions, players, teams, basePath = "", hide
             <option value="descending">Reverse order</option>
           </select>
         </label>
-      </div> : null}
+          </>
+        ) : null}
+      </div>
+
+      {normalizedTeamSearch ? <p className="muted">Showing {totalVisibleTeams} matching team{totalVisibleTeams === 1 ? "" : "s"}.</p> : null}
+      {normalizedTeamSearch && totalVisibleTeams === 0 ? <p className="muted">No teams match that search.</p> : null}
 
       {visibleDivisions.map((division) => {
-        const divisionTeams = teams.filter((team) => team.division === division);
+        const divisionTeams = teams.filter(
+          (team) => team.division === division && teamMatchesSearch(team, playersByTeam.get(team.id) || [], normalizedTeamSearch)
+        );
         return (
           <section className="section" key={division}>
             {!hideDivisionLabels ? <h2>{division} Division</h2> : null}
@@ -79,4 +107,13 @@ export function PublicTeamsList({ divisions, players, teams, basePath = "", hide
       })}
     </>
   );
+}
+
+function teamMatchesSearch(team: TeamRow, players: PlayerRow[], normalizedSearch: string) {
+  if (!normalizedSearch) return true;
+  return normalizeSearch([team.name, team.center_name, team.division, ...players.map((player) => player.name)].join(" ")).includes(normalizedSearch);
+}
+
+function normalizeSearch(value: string) {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
 }

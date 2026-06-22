@@ -2,14 +2,24 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-test("export route includes Rules Check as the first workbook sheet", async () => {
+test("export route temporarily emits only schedule and schedule details sheets", async () => {
   const route = await readFile(new URL("../app/api/export/route.ts", import.meta.url), "utf8");
-  const rulesSheetDefinition = route.indexOf('workbook.addWorksheet("Rules Check"');
-  const rulesSheetCall = route.indexOf("addRulesCheckSheet(workbook, rulesReport);");
-  const firstScheduleSheetCall = route.indexOf("addScheduleGridSheet(workbook, games);");
+  const scheduleSheetCall = route.indexOf("addScheduleGridSheet(workbook, games, timeZone);");
+  const detailsSheetCall = route.indexOf("addScheduleDetailSheet(workbook, games, timeZone);");
 
-  assert.notEqual(rulesSheetDefinition, -1);
-  assert.notEqual(rulesSheetCall, -1);
-  assert.notEqual(firstScheduleSheetCall, -1);
-  assert.ok(rulesSheetCall < firstScheduleSheetCall);
+  assert.notEqual(scheduleSheetCall, -1);
+  assert.notEqual(detailsSheetCall, -1);
+  assert.ok(scheduleSheetCall < detailsSheetCall);
+  assert.equal(route.includes("addRulesCheckSheet(workbook, rulesReport);"), false);
+  assert.equal(route.includes("addScheduleSummarySheet(workbook, teams, games);"), false);
+  assert.equal(route.includes("addOpponentMatrixSheet(workbook, teams, games);"), false);
+  assert.equal(route.includes('addObjectSheet(workbook, "Teams", teams);'), false);
+});
+
+test("export route does not treat UTC database timestamps as literal local times", async () => {
+  const route = await readFile(new URL("../app/api/export/route.ts", import.meta.url), "utf8");
+
+  assert.match(route, /function hasExplicitTimeZone/);
+  assert.match(route, /if \(hasExplicitTimeZone\(value\)\) return null;/);
+  assert.match(route, /timeZone = tournament\.timezone \|\| defaultTournamentTimeZone/);
 });

@@ -1,10 +1,11 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { listTournamentDivisions, query } from "@/lib/db";
-import { getStandings } from "@/lib/standings";
+import { getStandings, type StandingRow } from "@/lib/standings";
 import { LiveRefresh } from "@/app/live-refresh";
 import { currentTournament, tournamentPath } from "@/lib/tournaments";
 import { formatStreamOffset, youtubeReplayOffsetSeconds, youtubeReplayUrl } from "@/lib/streams";
+import { tournamentDateKey, tournamentTimeLabel, tournamentWeekdayLabel } from "@/lib/time-format";
 
 export const dynamic = "force-dynamic";
 
@@ -78,6 +79,32 @@ type OpponentReport = {
   nextMeeting: string;
 };
 
+type SeedRoadMap = {
+  currentSeed: number;
+  currentPoints: number;
+  remainingGames: number;
+  maxPoints: number;
+  bestSeed: number;
+  worstSeed: number;
+  nextSeedTarget: {
+    seed: number;
+    team: string;
+    center: string;
+    points: number;
+    remainingGames: number;
+    maxPoints: number;
+    scenarios: SeedPassScenario[];
+  } | null;
+  atRiskTeams: string[];
+  remainingGameLabels: string[];
+};
+
+type SeedPassScenario = {
+  label: string;
+  finalPoints: number;
+  summary: string;
+};
+
 const divisionClassNames: Record<string, string> = {
   A: "division-a",
   B: "division-b",
@@ -90,6 +117,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   const teamId = Number(id);
   const tournament = await currentTournament();
+  const timeZone = tournament.timezone;
   const divisionRows = await listTournamentDivisions(tournament.id);
   const [team] = await query<Team>(
     `SELECT teams.id, teams.tournament_id, teams.name, teams.division, COALESCE(centers.name, 'Draft') as center
@@ -140,8 +168,9 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
   const teamStandings = standings.filter((row) => row.division === team.division);
   const teamStanding = teamStandings.find((row) => row.team_id === team.id);
   const seed = teamStanding ? teamStandings.findIndex((row) => row.team_id === team.id) + 1 : null;
-  const opponentReports = buildOpponentReports(team.id, divisionTeams, divisionGames);
-  const scheduleGroups = groupGamesByDay(games);
+  const opponentReports = buildOpponentReports(team.id, divisionTeams, divisionGames, timeZone);
+  const seedRoadMap = buildSeedRoadMap(team.id, teamStandings, divisionGames, divisionTeams, timeZone);
+  const scheduleGroups = groupGamesByDay(games, timeZone);
   const nextGames = games.filter((game) => isPlaying(game, team.id) && !isScored(game)).slice(0, 3);
   const noMeetingOpponents = opponentReports.filter((row) => row.scheduledGames === 0).map((row) => row.team);
   const leader = teamStandings[0];
@@ -160,6 +189,54 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
           </div>
           <img alt={`${team.name} QR code`} className="qr-code" src={qrUrl} />
         </div>
+      </section>
+
+      <section className="section card">
+        <h2>Games and Reffing</h2>
+        {scheduleGroups.length ? (
+          scheduleGroups.map((group) => (
+            <div className="team-day-group" key={group.key}>
+              <h3 className="team-day-header">{group.day}</h3>
+              <div className="table-wrap">
+                <table className="team-schedule-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Role</th>
+                      <th>Court</th>
+                      <th>Assignment</th>
+                      <th>Score</th>
+                      <th>Video</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.games.map((game) => {
+                      const playing = isPlaying(game, team.id);
+                      return (
+                        <tr key={game.id} className={isScored(game) ? "muted-game-row" : ""}>
+                          <td>{formatTime(game.starts_at, timeZone)}</td>
+                          <td>
+                            <span className={rolePillClass(playing, game.division)}>{playing ? "Playing" : "Reffing"}</span>
+                          </td>
+                          <td>{game.court}</td>
+                          <td>
+                            <strong>{game.phase === "seeding" ? "Seeding" : game.phase === "unlimited" ? "Unlimited" : "Tournament"}</strong>
+                            <div>{game.team_1 && game.team_2 ? `${game.team_1} vs. ${game.team_2}` : `${game.division}: ${game.label || "Game"}`}</div>
+                            {playing ? <div className="muted">Opponent: {opponentLabel(game, team.id)}</div> : null}
+                          </td>
+                          <td>{scoreLabel(game, team.id)}</td>
+                          <td>{replayLink(game)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))
+        ) : (
+          <p className="muted">No games or reffing assignments are scheduled for this team yet.</p>
+        )}
       </section>
 
       <section className="section card">
@@ -191,7 +268,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
           </div>
         </div>
         <div className="team-note-list">
-          {nextGames.length ? <p><strong>Upcoming:</strong> {nextGames.map((game) => `${opponentLabel(game, team.id)} ${formatWeekdayTime(game.starts_at)}`).join(" | ")}</p> : null}
+          {nextGames.length ? <p><strong>Upcoming:</strong> {nextGames.map((game) => `${opponentLabel(game, team.id)} ${formatWeekdayTime(game.starts_at, timeZone)}`).join(" | ")}</p> : null}
           {noMeetingOpponents.length ? <p><strong>No scheduled meeting yet:</strong> {noMeetingOpponents.join(", ")}</p> : null}
         </div>
       </section>
@@ -279,57 +356,228 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
       </section>
 
       <section className="section card">
-        <h2>Games and Reffing</h2>
-        {scheduleGroups.length ? (
-          scheduleGroups.map((group) => (
-            <div className="team-day-group" key={group.key}>
-              <h3 className="team-day-header">{group.day}</h3>
+        <h2>Seeding Road Map</h2>
+        {seedRoadMap ? (
+          <>
+            <div className="team-insight-grid">
+              <div className="team-insight">
+                <span>Current Seed</span>
+                <strong>#{seedRoadMap.currentSeed}</strong>
+              </div>
+              <div className="team-insight">
+                <span>Best Possible</span>
+                <strong>#{seedRoadMap.bestSeed}</strong>
+              </div>
+              <div className="team-insight">
+                <span>Worst Possible</span>
+                <strong>#{seedRoadMap.worstSeed}</strong>
+              </div>
+              <div className="team-insight">
+                <span>Current Points</span>
+                <strong>{seedRoadMap.currentPoints}</strong>
+              </div>
+              <div className="team-insight">
+                <span>Remaining Seeding Games</span>
+                <strong>{seedRoadMap.remainingGames}</strong>
+              </div>
+              <div className="team-insight">
+                <span>Max Finish</span>
+                <strong>{seedRoadMap.maxPoints} pts</strong>
+              </div>
+            </div>
+
+            <div className="team-note-list">
+              {seedRoadMap.nextSeedTarget ? (
+                <p>
+                  <strong>Next seed to catch:</strong> #{seedRoadMap.nextSeedTarget.seed} {seedRoadMap.nextSeedTarget.center} - {seedRoadMap.nextSeedTarget.team}
+                  {" "}({seedRoadMap.nextSeedTarget.points} pts, {seedRoadMap.nextSeedTarget.remainingGames} left, max {seedRoadMap.nextSeedTarget.maxPoints}).
+                </p>
+              ) : (
+                <p><strong>Next seed to catch:</strong> None. This team is currently first in the division.</p>
+              )}
+              {seedRoadMap.remainingGameLabels.length ? <p><strong>Your remaining games:</strong> {seedRoadMap.remainingGameLabels.join(" | ")}</p> : null}
+              {seedRoadMap.atRiskTeams.length ? <p><strong>Teams that can still catch you on points:</strong> {seedRoadMap.atRiskTeams.join(", ")}</p> : null}
+              <p className="muted">
+                This is the quick version: it models wins, ties, and losses using standings points. If teams finish tied on points, the current tiebreakers are wins,
+                point differential, points against, then coin.
+              </p>
+            </div>
+
+            {seedRoadMap.nextSeedTarget ? (
               <div className="table-wrap">
-                <table className="team-schedule-table">
+                <table className="team-analytics-table">
                   <thead>
                     <tr>
-                      <th>Time</th>
-                      <th>Role</th>
-                      <th>Court</th>
-                      <th>Assignment</th>
-                      <th>Score</th>
-                      <th>Video</th>
+                      <th>Your Path</th>
+                      <th>Your Final Points</th>
+                      <th>What Has To Happen</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {group.games.map((game) => {
-                      const playing = isPlaying(game, team.id);
-                      return (
-                        <tr key={game.id} className={isScored(game) ? "muted-game-row" : ""}>
-                          <td>{formatTime(game.starts_at)}</td>
-                          <td>
-                            <span className={rolePillClass(playing, game.division)}>{playing ? "Playing" : "Reffing"}</span>
-                          </td>
-                          <td>{game.court}</td>
-                          <td>
-                            <strong>{game.phase === "seeding" ? "Seeding" : game.phase === "unlimited" ? "Unlimited" : "Tournament"}</strong>
-                            <div>{game.team_1 && game.team_2 ? `${game.team_1} vs. ${game.team_2}` : `${game.division}: ${game.label || "Game"}`}</div>
-                            {playing ? <div className="muted">Opponent: {opponentLabel(game, team.id)}</div> : null}
-                          </td>
-                          <td>{scoreLabel(game, team.id)}</td>
-                          <td>{replayLink(game)}</td>
-                        </tr>
-                      );
-                    })}
+                    {seedRoadMap.nextSeedTarget.scenarios.map((scenario) => (
+                      <tr key={scenario.label}>
+                        <td>{scenario.label}</td>
+                        <td>{scenario.finalPoints}</td>
+                        <td>{scenario.summary}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
-            </div>
-          ))
+            ) : null}
+          </>
         ) : (
-          <p className="muted">No games or reffing assignments are scheduled for this team yet.</p>
+          <p className="muted">Seed scenarios will appear once this team has standings data.</p>
         )}
       </section>
     </main>
   );
 }
 
-function buildOpponentReports(teamId: number, teams: DivisionTeam[], games: DivisionGame[]): OpponentReport[] {
+function buildSeedRoadMap(teamId: number, standings: StandingRow[], games: DivisionGame[], teams: DivisionTeam[], timeZone: string): SeedRoadMap | null {
+  const teamStanding = standings.find((row) => row.team_id === teamId);
+  if (!teamStanding) return null;
+
+  const currentSeed = standings.findIndex((row) => row.team_id === teamId) + 1;
+  const remainingGames = games.filter((game) => game.phase === "seeding" && !isDivisionGameScored(game));
+  const remainingByTeam = countRemainingGamesByTeam(remainingGames);
+  const teamNameById = new Map(teams.map((team) => [team.id, `${team.center} - ${team.name}`]));
+  const targetRemaining = remainingByTeam.get(teamId) || 0;
+  const targetMaxRow = {
+    ...teamStanding,
+    standing_points: teamStanding.standing_points + targetRemaining * 2,
+    wins: teamStanding.wins + targetRemaining,
+    games_played: teamStanding.games_played + targetRemaining
+  };
+  const targetMinRow = {
+    ...teamStanding,
+    losses: teamStanding.losses + targetRemaining,
+    games_played: teamStanding.games_played + targetRemaining
+  };
+  const bestSeed = 1 + standings.filter((row) => row.team_id !== teamId && compareSeedRows(row, targetMaxRow) < 0).length;
+  const worstSeed =
+    1 +
+    standings.filter((row) => {
+      if (row.team_id === teamId) return false;
+      const remaining = remainingByTeam.get(row.team_id) || 0;
+      const opponentMaxRow = {
+        ...row,
+        standing_points: row.standing_points + remaining * 2,
+        wins: row.wins + remaining,
+        games_played: row.games_played + remaining
+      };
+      return compareSeedRows(opponentMaxRow, targetMinRow) < 0;
+    }).length;
+  const nextSeedTarget = currentSeed > 1 ? standings[currentSeed - 2] : null;
+  const targetRemainingGames = remainingGames.filter((game) => game.team_1_id === teamId || game.team_2_id === teamId);
+  const atRiskTeams = standings
+    .slice(currentSeed)
+    .filter((row) => row.standing_points + (remainingByTeam.get(row.team_id) || 0) * 2 >= teamStanding.standing_points)
+    .slice(0, 5)
+    .map((row) => `${row.center} - ${row.team} (max ${row.standing_points + (remainingByTeam.get(row.team_id) || 0) * 2})`);
+
+  return {
+    currentSeed,
+    currentPoints: teamStanding.standing_points,
+    remainingGames: targetRemaining,
+    maxPoints: targetMaxRow.standing_points,
+    bestSeed,
+    worstSeed,
+    nextSeedTarget: nextSeedTarget
+      ? {
+          seed: currentSeed - 1,
+          team: nextSeedTarget.team,
+          center: nextSeedTarget.center,
+          points: nextSeedTarget.standing_points,
+          remainingGames: remainingByTeam.get(nextSeedTarget.team_id) || 0,
+          maxPoints: nextSeedTarget.standing_points + (remainingByTeam.get(nextSeedTarget.team_id) || 0) * 2,
+          scenarios: buildPassScenarios(
+            targetRemaining,
+            teamStanding.standing_points,
+            nextSeedTarget.team,
+            nextSeedTarget.standing_points,
+            remainingByTeam.get(nextSeedTarget.team_id) || 0
+          )
+        }
+      : null,
+    atRiskTeams,
+    remainingGameLabels: targetRemainingGames
+      .slice(0, 6)
+      .map((game) => `${teamNameById.get(opponentId(game, teamId)) || "Opponent"} ${formatWeekdayTime(game.starts_at, timeZone)}`)
+  };
+}
+
+function countRemainingGamesByTeam(games: DivisionGame[]) {
+  const counts = new Map<number, number>();
+  for (const game of games) {
+    counts.set(game.team_1_id, (counts.get(game.team_1_id) || 0) + 1);
+    counts.set(game.team_2_id, (counts.get(game.team_2_id) || 0) + 1);
+  }
+  return counts;
+}
+
+function buildPassScenarios(targetRemaining: number, targetCurrentPoints: number, nextTeamName: string, nextCurrentPoints: number, nextRemaining: number): SeedPassScenario[] {
+  if (targetRemaining === 0) {
+    return [
+      {
+        label: "No games left",
+        finalPoints: targetCurrentPoints,
+        summary:
+          targetCurrentPoints > nextCurrentPoints
+            ? `You are already ahead of ${nextTeamName} on points.`
+            : `You cannot pass ${nextTeamName} on standings points without a score correction or tiebreaker change.`
+      }
+    ];
+  }
+
+  const outcomes = [
+    { label: "Win out", earned: targetRemaining * 2 },
+    { label: "One tie, rest wins", earned: Math.max(0, (targetRemaining - 1) * 2 + 1) },
+    { label: "One loss, rest wins", earned: Math.max(0, (targetRemaining - 1) * 2) }
+  ];
+  const seen = new Set<number>();
+  return outcomes
+    .filter((outcome) => {
+      if (seen.has(outcome.earned)) return false;
+      seen.add(outcome.earned);
+      return true;
+    })
+    .map((outcome) => {
+      const finalPoints = targetCurrentPoints + outcome.earned;
+      return {
+        label: outcome.label,
+        finalPoints,
+        summary: passScenarioSummary(finalPoints, nextTeamName, nextCurrentPoints, nextRemaining)
+      };
+    });
+}
+
+function passScenarioSummary(finalPoints: number, nextTeamName: string, nextCurrentPoints: number, nextRemaining: number) {
+  const nextAvailablePoints = nextRemaining * 2;
+  const nextMaxPointsForOutrightPass = finalPoints - 1;
+  const nextAllowedFuturePoints = nextMaxPointsForOutrightPass - nextCurrentPoints;
+  if (nextAllowedFuturePoints >= nextAvailablePoints) return `Passes ${nextTeamName} outright on points even if they win out.`;
+  if (finalPoints === nextCurrentPoints) return `Ties ${nextTeamName}'s current points. Any points from them force tiebreakers or keep them ahead.`;
+  if (nextAllowedFuturePoints >= 0) {
+    return `${nextTeamName} must earn ${nextAllowedFuturePoints} or fewer of their ${nextAvailablePoints} remaining points for an outright pass.`;
+  }
+  return `Does not catch ${nextTeamName} on points. You would need tiebreakers or score-margin help.`;
+}
+
+function compareSeedRows(left: StandingRow, right: StandingRow) {
+  if (left.standing_points !== right.standing_points) return right.standing_points - left.standing_points;
+  if (left.wins !== right.wins) return right.wins - left.wins;
+  if (left.point_diff !== right.point_diff) return right.point_diff - left.point_diff;
+  if (left.points_against !== right.points_against) return left.points_against - right.points_against;
+  if (left.coin !== right.coin) return right.coin - left.coin;
+  return left.team.localeCompare(right.team);
+}
+
+function opponentId(game: DivisionGame, teamId: number) {
+  return game.team_1_id === teamId ? game.team_2_id : game.team_1_id;
+}
+
+function buildOpponentReports(teamId: number, teams: DivisionTeam[], games: DivisionGame[], timeZone: string): OpponentReport[] {
   return teams
     .filter((opponent) => opponent.id !== teamId)
     .map((opponent) => {
@@ -376,16 +624,16 @@ function buildOpponentReports(teamId: number, teams: DivisionTeam[], games: Divi
         pointsFor: totals.pointsFor,
         pointsAgainst: totals.pointsAgainst,
         pointDiff: totals.pointsFor - totals.pointsAgainst,
-        nextMeeting: next ? formatWeekdayTime(next.starts_at) : ""
+        nextMeeting: next ? formatWeekdayTime(next.starts_at, timeZone) : ""
       };
     });
 }
 
-function groupGamesByDay(games: TeamGame[]) {
+function groupGamesByDay(games: TeamGame[], timeZone: string) {
   const groups = new Map<string, { key: string; day: string; games: TeamGame[] }>();
   for (const game of games) {
-    const key = dateKey(game.starts_at);
-    const group = groups.get(key) || { key, day: formatWeekday(game.starts_at), games: [] };
+    const key = dateKey(game.starts_at, timeZone);
+    const group = groups.get(key) || { key, day: formatWeekday(game.starts_at, timeZone), games: [] };
     group.games.push(game);
     groups.set(key, group);
   }
@@ -463,47 +711,18 @@ function formatDiff(value: number, digits = 0) {
   return value > 0 ? `+${rounded}` : rounded;
 }
 
-function formatWeekdayTime(value: string) {
-  return `${formatWeekday(value)} ${formatTime(value)}`;
+function formatWeekdayTime(value: string, timeZone: string) {
+  return `${formatWeekday(value, timeZone)} ${formatTime(value, timeZone)}`;
 }
 
-function dateKey(value: string) {
-  const literal = literalDateTimeParts(value);
-  if (literal) return literal.dateKey;
-  return value.slice(0, 10);
+function dateKey(value: string, timeZone: string) {
+  return tournamentDateKey(value, timeZone);
 }
 
-function formatWeekday(value: string) {
-  const literal = literalDateTimeParts(value);
-  if (literal) return literal.weekday;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value.slice(0, 10);
-  return date.toLocaleDateString("en-US", { weekday: "long" });
+function formatWeekday(value: string, timeZone: string) {
+  return tournamentWeekdayLabel(value, timeZone);
 }
 
-function formatTime(value: string) {
-  const literal = literalDateTimeParts(value);
-  if (literal) return literal.time;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value.slice(11, 16);
-  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-}
-
-function literalDateTimeParts(value: string) {
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-  if (!match) return null;
-  const [, year, month, day, hour, minute] = match;
-  const date = new Date(Number(year), Number(month) - 1, Number(day));
-  if (Number.isNaN(date.getTime())) return null;
-  return {
-    dateKey: `${year}-${month}-${day}`,
-    weekday: date.toLocaleDateString("en-US", { weekday: "long" }),
-    time: formatClock(Number(hour), minute)
-  };
-}
-
-function formatClock(hour: number, minute: string) {
-  const suffix = hour >= 12 ? "PM" : "AM";
-  const displayHour = hour % 12 || 12;
-  return `${displayHour}:${minute} ${suffix}`;
+function formatTime(value: string, timeZone: string) {
+  return tournamentTimeLabel(value, timeZone);
 }

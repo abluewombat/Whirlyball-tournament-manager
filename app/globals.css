@@ -719,6 +719,21 @@ th {
   margin-top: 0;
 }
 
+.player-directory-table {
+  min-width: 780px;
+}
+
+.clickable-row {
+  cursor: pointer;
+}
+
+.clickable-row:hover,
+.clickable-row:focus {
+  background: #1e2a35;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .stack {
   display: grid;
   gap: 14px;
@@ -782,6 +797,54 @@ th {
   min-width: 980px;
 }
 
+.schedule-detail-section {
+  display: grid;
+  gap: 12px;
+}
+
+.schedule-detail-wrap {
+  border: 1px solid var(--line);
+}
+
+.schedule-detail-table {
+  min-width: 1180px;
+}
+
+.schedule-detail-table th {
+  background: #176b87;
+  color: white;
+}
+
+.schedule-detail-table td,
+.schedule-detail-table th {
+  border: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.schedule-detail-division {
+  color: #202124;
+  font-weight: 800;
+  text-align: center;
+}
+
+.schedule-detail-warn {
+  background: #fff2cc;
+  color: #202124;
+  font-weight: 800;
+}
+
+.schedule-detail-danger {
+  background: #f8cbad;
+  color: #202124;
+  font-weight: 800;
+}
+
+.schedule-detail-ok {
+  background: #e2f0d9;
+  color: #202124;
+  font-weight: 800;
+}
+
 .schedule-grid-table th {
   background: #176b87;
   color: white;
@@ -817,31 +880,36 @@ th {
 }
 
 .schedule-game-cell.division-a,
-.legend-chip.division-a {
+.legend-chip.division-a,
+.schedule-detail-division.division-a {
   background: #ffff00;
   color: #202124;
 }
 
 .schedule-game-cell.division-b,
-.legend-chip.division-b {
+.legend-chip.division-b,
+.schedule-detail-division.division-b {
   background: #ffc000;
   color: #202124;
 }
 
 .schedule-game-cell.division-c,
-.legend-chip.division-c {
+.legend-chip.division-c,
+.schedule-detail-division.division-c {
   background: #00b0f0;
   color: #202124;
 }
 
 .schedule-game-cell.division-d,
-.legend-chip.division-d {
+.legend-chip.division-d,
+.schedule-detail-division.division-d {
   background: #92d050;
   color: #202124;
 }
 
 .schedule-game-cell.division-unlimited,
-.legend-chip.division-unlimited {
+.legend-chip.division-unlimited,
+.schedule-detail-division.division-unlimited {
   background: #f4cccc;
   color: #202124;
 }
