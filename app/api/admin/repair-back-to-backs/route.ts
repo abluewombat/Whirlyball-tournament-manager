@@ -222,7 +222,7 @@ function buildCandidatePairs(games: DbGame[], timeZone: string) {
     for (const right of movable) {
       if (left.id >= right.id) continue;
       if (left.starts_at === right.starts_at) add(left, right);
-      else if (left.division === right.division && dayKey(left.starts_at, timeZone) === dayKey(right.starts_at, timeZone)) add(left, right);
+      else if (dayKey(left.starts_at, timeZone) === dayKey(right.starts_at, timeZone)) add(left, right);
     }
   }
 
