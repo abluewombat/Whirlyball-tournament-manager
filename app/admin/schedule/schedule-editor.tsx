@@ -57,9 +57,9 @@ export function ScheduleEditor({ games }: { games: AdminScheduleGame[] }) {
     setDraggedGameId(null);
     setMessage("Saving schedule change...");
     startTransition(async () => {
-      await moveScheduleGameAction({ gameId, startsAt, court });
-      setMessage("Schedule updated.");
-      router.refresh();
+      const result = await moveScheduleGameAction({ gameId, startsAt, court });
+      setMessage(result?.message || "Schedule updated.");
+      if (result?.ok !== false) router.refresh();
     });
   }
 

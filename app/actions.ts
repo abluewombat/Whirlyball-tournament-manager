@@ -16,7 +16,7 @@ import {
 } from "@/lib/auth";
 import { hashSecret } from "@/lib/security";
 import { generateSchedule } from "@/lib/schedule";
-import { buildScheduleRulesReport, type ScheduleRuleAvailabilityBlock, type ScheduleRuleTeam } from "@/lib/schedule-rules";
+import { buildScheduleRulesReport, type ScheduleRuleAvailabilityBlock, type ScheduleRuleGame, type ScheduleRuleTeam } from "@/lib/schedule-rules";
 import { scheduleDefaults } from "@/lib/schedule-defaults";
 import {
   activeBracketExistsForDivision,
@@ -595,12 +595,56 @@ export async function clearAllScoresAction(formData: FormData) {
   redirect(`/admin/dashboard?view=schedule&tournament=${tournament.slug}&scores_cleared=${cleared}`);
 }
 
+async function loadScheduleRuleInput(tournamentId: number) {
+  const [games, teams, availabilityBlocks, settingsRows] = await Promise.all([
+    query<ScheduleRuleGame>(
+      `SELECT id, tournament_id, phase, division, court, starts_at,
+              team_1_id, team_2_id, ref_team_id, label
+       FROM games
+       WHERE tournament_id = $1
+       ORDER BY starts_at, court, id`,
+      [tournamentId]
+    ),
+    query<ScheduleRuleTeam>(
+      `SELECT teams.id, teams.division, teams.name, teams.early_available, COALESCE(centers.name, 'Draft') as center
+       FROM teams LEFT JOIN centers ON centers.id = teams.center_id
+       WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL
+       ORDER BY teams.division, center, teams.name`,
+      [tournamentId]
+    ),
+    query<ScheduleRuleAvailabilityBlock>(
+      `SELECT team_availability_blocks.id, team_availability_blocks.team_id,
+              team_availability_blocks.starts_at, team_availability_blocks.ends_at,
+              team_availability_blocks.reason
+       FROM team_availability_blocks
+       JOIN teams ON teams.id = team_availability_blocks.team_id
+       WHERE teams.tournament_id = $1 AND teams.deleted_at IS NULL
+       ORDER BY team_availability_blocks.starts_at, team_availability_blocks.id`,
+      [tournamentId]
+    ),
+    query<{ schedule_settings_json: Record<string, unknown> | null }>("SELECT schedule_settings_json FROM tournament_settings WHERE tournament_id = $1", [tournamentId])
+  ]);
+
+  return {
+    games,
+    teams,
+    availabilityBlocks,
+    settings: settingsRows[0]?.schedule_settings_json || {}
+  };
+}
+
+function crossCourtIssueCount(report: ReturnType<typeof buildScheduleRulesReport>) {
+  return report.rules.find((rule) => rule.id === "cross-court-buffer")?.issueCount || 0;
+}
+
 export async function moveScheduleGameAction(input: { gameId: number; startsAt: string; court: number }) {
   await requireAdmin();
   const gameId = Number(input.gameId);
   const targetCourt = Number(input.court);
   const targetStartsAt = String(input.startsAt || "");
-  if (!Number.isInteger(gameId) || gameId <= 0 || !targetStartsAt || !Number.isInteger(targetCourt) || targetCourt < 1) return;
+  if (!Number.isInteger(gameId) || gameId <= 0 || !targetStartsAt || !Number.isInteger(targetCourt) || targetCourt < 1) {
+    return { ok: false, message: "Invalid schedule move." };
+  }
 
   const [source] = await query<{
     id: number;
@@ -619,11 +663,13 @@ export async function moveScheduleGameAction(input: { gameId: number; startsAt: 
      WHERE id = $1`,
     [gameId]
   );
-  if (!source) return;
-  if (!(await ensureTournamentEditable(source.tournament_id))) return;
-  if (source.team_1_score !== null || source.team_2_score !== null || source.result_type === "forfeit") return;
-  if (source.stream_id !== null || source.actual_started_at !== null) return;
-  if (source.starts_at === targetStartsAt && source.court === targetCourt) return;
+  if (!source) return { ok: false, message: "Game not found." };
+  if (!(await ensureTournamentEditable(source.tournament_id))) return { ok: false, message: "Tournament is locked." };
+  if (source.team_1_score !== null || source.team_2_score !== null || source.result_type === "forfeit") {
+    return { ok: false, message: "Scored games are locked." };
+  }
+  if (source.stream_id !== null || source.actual_started_at !== null) return { ok: false, message: "Live/streamed games are locked." };
+  if (source.starts_at === targetStartsAt && source.court === targetCourt) return { ok: true, message: "No schedule change needed." };
 
   const [target] = await query<{
     id: number;
@@ -640,8 +686,29 @@ export async function moveScheduleGameAction(input: { gameId: number; startsAt: 
      LIMIT 1`,
     [source.tournament_id, targetStartsAt, targetCourt, gameId]
   );
-  if (target && (target.team_1_score !== null || target.team_2_score !== null || target.result_type === "forfeit")) return;
-  if (target && (target.stream_id !== null || target.actual_started_at !== null)) return;
+  if (target && (target.team_1_score !== null || target.team_2_score !== null || target.result_type === "forfeit")) {
+    return { ok: false, message: "Target scored game is locked." };
+  }
+  if (target && (target.stream_id !== null || target.actual_started_at !== null)) return { ok: false, message: "Target live/streamed game is locked." };
+
+  const scheduleRuleInput = await loadScheduleRuleInput(source.tournament_id);
+  const beforeReport = buildScheduleRulesReport(scheduleRuleInput);
+  const beforeCrossCourtIssues = crossCourtIssueCount(beforeReport);
+  const simulatedGames = scheduleRuleInput.games.map((game) => {
+    if (game.id === source.id) return { ...game, starts_at: targetStartsAt, court: targetCourt };
+    if (target && game.id === target.id) return { ...game, starts_at: source.starts_at, court: source.court };
+    return game;
+  });
+  const afterReport = buildScheduleRulesReport({ ...scheduleRuleInput, games: simulatedGames });
+  const afterCrossCourtIssues = crossCourtIssueCount(afterReport);
+  if (afterCrossCourtIssues > beforeCrossCourtIssues) {
+    return {
+      ok: false,
+      message: `Move rejected: it would add ${afterCrossCourtIssues - beforeCrossCourtIssues} cross-court back-to-back conflict${
+        afterCrossCourtIssues - beforeCrossCourtIssues === 1 ? "" : "s"
+      }.`
+    };
+  }
 
   await withTransaction(async (client) => {
     if (target) {
@@ -650,9 +717,21 @@ export async function moveScheduleGameAction(input: { gameId: number; startsAt: 
     await client.query("UPDATE games SET starts_at = $1, court = $2 WHERE id = $3", [targetStartsAt, targetCourt, gameId]);
   });
 
+  await exec("UPDATE tournament_settings SET schedule_rules_report_json = $1::jsonb, updated_at = NOW() WHERE tournament_id = $2", [
+    JSON.stringify(afterReport),
+    source.tournament_id
+  ]);
+
   revalidatePath("/admin/schedule");
   revalidatePath("/admin/dashboard");
   revalidatePath("/schedule");
+  return {
+    ok: true,
+    message:
+      afterCrossCourtIssues < beforeCrossCourtIssues
+        ? `Schedule updated. Cross-court conflicts reduced from ${beforeCrossCourtIssues} to ${afterCrossCourtIssues}.`
+        : "Schedule updated."
+  };
 }
 
 export async function insertScheduleBufferAction(formData: FormData) {
