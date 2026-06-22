@@ -86,7 +86,9 @@ const teamDefinitions: Record<string, { division: string; names: string[] }> = {
 };
 
 export async function POST(request: Request) {
-  if (!process.env.TEMP_SEED_TOKEN || request.headers.get("x-seed-token") !== process.env.TEMP_SEED_TOKEN) {
+  const seedTokenMatches = Boolean(process.env.TEMP_SEED_TOKEN && request.headers.get("x-seed-token") === process.env.TEMP_SEED_TOKEN);
+  const adminPasswordMatches = Boolean(process.env.ADMIN_PASSWORD && request.headers.get("x-admin-password") === process.env.ADMIN_PASSWORD);
+  if (!seedTokenMatches && !adminPasswordMatches) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
