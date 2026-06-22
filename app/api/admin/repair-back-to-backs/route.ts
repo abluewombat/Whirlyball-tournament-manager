@@ -152,25 +152,28 @@ async function loadContext() {
 
 function buildRepairPlan(context: Awaited<ReturnType<typeof loadContext>>) {
   let games = cloneGames(context.games);
-  let currentIssues = crossCourtRule(reportFor(games, context)).issueCount;
+  let issues = bufferIssuesFor(games, context.settings);
+  let currentIssues = issues.length;
   let iterations = 0;
   const candidatePairs = buildCandidatePairs(games, context.tournament.timezone);
 
   while (currentIssues > 0 && iterations < maxIterations) {
     let best: { leftId: number; rightId: number; issues: number; games: DbGame[] } | null = null;
-    for (const [leftId, rightId] of candidatePairs) {
+    const scopedPairs = candidatePairsForIssues(candidatePairs, issues, games);
+    for (const [leftId, rightId] of scopedPairs.length ? scopedPairs : candidatePairs) {
       const swapped = swapPayloads(games, leftId, rightId);
       if (!swapped) continue;
       if (hasSameTeamSameSlot(swapped)) continue;
-      const issues = crossCourtRule(reportFor(swapped, context)).issueCount;
-      if (issues < currentIssues && (!best || issues < best.issues)) {
-        best = { leftId, rightId, issues, games: swapped };
-        if (issues === 0) break;
+      const nextIssues = bufferIssuesFor(swapped, context.settings).length;
+      if (nextIssues < currentIssues && (!best || nextIssues < best.issues)) {
+        best = { leftId, rightId, issues: nextIssues, games: swapped };
+        if (nextIssues === 0) break;
       }
     }
     if (!best) break;
     games = best.games;
-    currentIssues = best.issues;
+    issues = bufferIssuesFor(games, context.settings);
+    currentIssues = issues.length;
     iterations += 1;
   }
 
@@ -191,6 +194,16 @@ function buildRepairPlan(context: Awaited<ReturnType<typeof loadContext>>) {
     });
 
   return { games, iterations, changedSlots: changes.length, changes };
+}
+
+function candidatePairsForIssues(candidatePairs: Array<[number, number]>, issues: BufferIssue[], games: DbGame[]) {
+  const movableIds = new Set(games.filter(isMovable).map((game) => game.id));
+  const involved = new Set<number>();
+  for (const issue of issues) {
+    if (issue.leftGameId && movableIds.has(issue.leftGameId)) involved.add(issue.leftGameId);
+    if (issue.rightGameId && movableIds.has(issue.rightGameId)) involved.add(issue.rightGameId);
+  }
+  return candidatePairs.filter(([leftId, rightId]) => involved.has(leftId) || involved.has(rightId));
 }
 
 function buildCandidatePairs(games: DbGame[], timeZone: string) {
@@ -227,6 +240,100 @@ function reportFor(games: DbGame[], context: Awaited<ReturnType<typeof loadConte
 
 function crossCourtRule(report: ReturnType<typeof buildScheduleRulesReport>) {
   return report.rules.find((rule) => rule.id === "cross-court-buffer") || { issueCount: 0, issues: [] };
+}
+
+type BufferAssignment = {
+  teamId: number;
+  gameId: number | null;
+  role: "play" | "ref";
+  startsAt: string;
+  startMs: number;
+  durationMinutes: number;
+  court: number;
+};
+
+type BufferIssue = {
+  teamId: number;
+  reason: string;
+  leftGameId: number | null;
+  rightGameId: number | null;
+};
+
+function bufferIssuesFor(games: DbGame[], settings: Record<string, unknown> | null | undefined) {
+  const assignmentsByTeam = new Map<number, BufferAssignment[]>();
+  for (const game of games) {
+    const startMs = Date.parse(game.starts_at);
+    if (!Number.isFinite(startMs)) continue;
+    const durationMinutes = gameDurationMinutes(game, settings);
+    for (const teamId of [game.team_1_id, game.team_2_id]) {
+      if (!teamId) continue;
+      addAssignment(assignmentsByTeam, teamId, {
+        teamId,
+        gameId: game.id,
+        role: "play",
+        startsAt: game.starts_at,
+        startMs,
+        durationMinutes,
+        court: Number(game.court)
+      });
+    }
+    if (game.ref_team_id) {
+      addAssignment(assignmentsByTeam, game.ref_team_id, {
+        teamId: game.ref_team_id,
+        gameId: game.id,
+        role: "ref",
+        startsAt: game.starts_at,
+        startMs,
+        durationMinutes,
+        court: Number(game.court)
+      });
+    }
+  }
+
+  const issues: BufferIssue[] = [];
+  for (const [teamId, assignments] of assignmentsByTeam.entries()) {
+    const sorted = assignments.sort((left, right) => left.startMs - right.startMs || left.court - right.court || left.role.localeCompare(right.role));
+    for (let leftIndex = 0; leftIndex < sorted.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < sorted.length; rightIndex += 1) {
+        const left = sorted[leftIndex];
+        const right = sorted[rightIndex];
+        if (right.startMs - (left.startMs + left.durationMinutes * 60_000) >= Math.max(left.durationMinutes, right.durationMinutes) * 60_000) break;
+        const reason = bufferConflictReason(left, right);
+        if (reason) issues.push({ teamId, reason, leftGameId: left.gameId, rightGameId: right.gameId });
+      }
+    }
+  }
+  return issues;
+}
+
+function addAssignment(assignmentsByTeam: Map<number, BufferAssignment[]>, teamId: number, assignment: BufferAssignment) {
+  assignmentsByTeam.set(teamId, [...(assignmentsByTeam.get(teamId) || []), assignment]);
+}
+
+function bufferConflictReason(left: BufferAssignment, right: BufferAssignment) {
+  if (left.role === "ref" && right.role === "ref") return null;
+  const leftEnd = left.startMs + left.durationMinutes * 60_000;
+  const rightEnd = right.startMs + right.durationMinutes * 60_000;
+  const overlap = left.startMs < rightEnd && right.startMs < leftEnd;
+  const gap = overlap ? 0 : Math.max(0, right.startMs - leftEnd, left.startMs - rightEnd) / 60_000;
+  const requiredBufferMinutes = Math.max(left.durationMinutes, right.durationMinutes);
+
+  if (left.role !== right.role) {
+    if (overlap) return "play/ref assignment overlap";
+    if (gap < requiredBufferMinutes) return "play/ref assignment without a one-game buffer";
+    return null;
+  }
+  if (left.role === "play" && right.role === "play") {
+    if (overlap) return "play assignment overlap";
+    if (left.court !== right.court && gap < requiredBufferMinutes) return "cross-court play assignment without a one-game buffer";
+  }
+  return null;
+}
+
+function gameDurationMinutes(game: DbGame, settings: Record<string, unknown> | null | undefined) {
+  if (game.phase === "unlimited") return Number(settings?.unlimitedMinutes || 40);
+  if (game.phase === "tournament") return Number(settings?.tournamentMinutes || settings?.tournament_minutes || 40);
+  return Number(settings?.seedingMinutes || settings?.seeding_minutes || 20);
 }
 
 function swapPayloads(games: DbGame[], leftId: number, rightId: number) {
