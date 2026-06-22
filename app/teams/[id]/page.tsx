@@ -1,4 +1,3 @@
-import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { listTournamentDivisions, query } from "@/lib/db";
 import { getStandings, type StandingRow } from "@/lib/standings";
@@ -174,8 +173,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
   const nextGames = games.filter((game) => isPlaying(game, team.id) && !isScored(game)).slice(0, 3);
   const noMeetingOpponents = opponentReports.filter((row) => row.scheduledGames === 0).map((row) => row.team);
   const leader = teamStandings[0];
-  const host = (await headers()).get("host") || "whirlyball-manager.vercel.app";
-  const url = `https://${host}${tournamentPath(tournament) === "/" ? "" : tournamentPath(tournament)}/teams/${team.id}`;
+  const url = `https://whirlyball2026.com${tournamentPath(tournament) === "/" ? "" : tournamentPath(tournament)}/teams/${team.id}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(url)}`;
 
   return (
