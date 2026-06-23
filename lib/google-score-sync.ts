@@ -390,11 +390,12 @@ async function readGoogleSheetRows(spreadsheetId: string, options: { sheetIndex?
 
 async function resolveGoogleSheetName(spreadsheetId: string, options: { sheetIndex?: string; sheetName?: string }) {
   const trimmedIndex = options.sheetIndex?.trim();
+  if ((trimmedIndex === undefined || trimmedIndex === "") && options.sheetName?.trim()) return options.sheetName.trim();
+
   const requestedIndex = trimmedIndex === undefined || trimmedIndex === "" ? defaultSheetIndex : Number(trimmedIndex);
   if (Number.isInteger(requestedIndex) && requestedIndex >= 0) {
     return readGoogleSheetNameByIndex(spreadsheetId, requestedIndex);
   }
-  if (options.sheetName?.trim()) return options.sheetName.trim();
   throw new Error(`GOOGLE_SCORES_SHEET_INDEX must be a non-negative integer when set. Received: ${options.sheetIndex}`);
 }
 
@@ -460,17 +461,18 @@ async function readGoogleDriveWorkbookRows(spreadsheetId: string, options: { she
 
 function selectWorkbookSheetName(sheetNames: string[], options: { sheetIndex?: string; sheetName?: string }) {
   const trimmedIndex = options.sheetIndex?.trim();
+  if ((trimmedIndex === undefined || trimmedIndex === "") && options.sheetName?.trim()) {
+    const requestedName = options.sheetName.trim();
+    const sheetName = sheetNames.find((candidate) => candidate === requestedName);
+    if (sheetName) return sheetName;
+    throw new Error(`Workbook sheet "${requestedName}" was not found.`);
+  }
+
   const requestedIndex = trimmedIndex === undefined || trimmedIndex === "" ? defaultSheetIndex : Number(trimmedIndex);
   if (Number.isInteger(requestedIndex) && requestedIndex >= 0) {
     const sheetName = sheetNames[requestedIndex];
     if (!sheetName) throw new Error(`Workbook sheet index ${requestedIndex} was not found.`);
     return sheetName;
-  }
-  if (options.sheetName?.trim()) {
-    const requestedName = options.sheetName.trim();
-    const sheetName = sheetNames.find((candidate) => candidate === requestedName);
-    if (sheetName) return sheetName;
-    throw new Error(`Workbook sheet "${requestedName}" was not found.`);
   }
   throw new Error(`GOOGLE_SCORES_SHEET_INDEX must be a non-negative integer when set. Received: ${options.sheetIndex}`);
 }

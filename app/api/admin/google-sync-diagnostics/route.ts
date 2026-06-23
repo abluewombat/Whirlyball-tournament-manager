@@ -18,6 +18,7 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     ok: true,
+    generatedAt: new Date().toISOString(),
     tournament: {
       id: tournament.id,
       name: tournament.name,
@@ -44,7 +45,8 @@ export async function GET(request: NextRequest) {
     syncState: {
       paused: Boolean(pause),
       pause,
-      latestStatus: status
+      latestStatus: status,
+      latestStatusAgeSeconds: status ? Math.max(0, Math.floor((Date.now() - Date.parse(status.synced_at)) / 1000)) : null
     }
   });
 }
