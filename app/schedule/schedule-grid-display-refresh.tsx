@@ -61,8 +61,6 @@ export function ScheduleGridDisplayRefresh({ seconds = 15 }: { seconds?: number 
         if (frames < 12) window.requestAnimationFrame(restoreForSeveralFrames);
       };
       window.requestAnimationFrame(restoreForSeveralFrames);
-      window.setTimeout(restoreScroll, 750);
-      window.setTimeout(restoreScroll, 1500);
     }
 
     const intervalId = window.setInterval(refreshWithoutMovingDisplay, seconds * 1000);
