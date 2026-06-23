@@ -21,23 +21,33 @@ async function runSync(request: NextRequest) {
 
   const tournament = await currentTournament(process.env.GOOGLE_SCORES_TOURNAMENT || null);
   try {
+    if (process.env.GOOGLE_SCORES_SYNC_ENABLED === "false") {
+      await recordGoogleSheetSyncStatus({
+        tournamentId: tournament.id,
+        status: "success",
+        summary: "Google Sheet sync paused",
+        changedCount: 0,
+        detail: { paused: true }
+      });
+      revalidatePath("/schedule");
+      return NextResponse.json({ ok: true, tournament: tournament.slug, paused: true });
+    }
+
     const scheduleSync = scheduleSyncEnabled(request)
       ? await syncGoogleSheetSchedule(tournament.id)
       : disabledScheduleSummary();
     const summary = await syncGoogleSheetScores(tournament.id);
     const changedCount = googleSheetChangedCount(scheduleSync, summary);
-    if (changedCount > 0) {
-      await recordGoogleSheetSyncStatus({
-        tournamentId: tournament.id,
-        status: "success",
-        summary: googleSheetSyncSummaryText(scheduleSync, summary),
-        changedCount,
-        detail: {
-          scheduleSync,
-          scoreSync: summary
-        }
-      });
-    }
+    await recordGoogleSheetSyncStatus({
+      tournamentId: tournament.id,
+      status: "success",
+      summary: googleSheetSyncSummaryText(scheduleSync, summary),
+      changedCount,
+      detail: {
+        scheduleSync,
+        scoreSync: summary
+      }
+    });
     revalidatePath("/");
     revalidatePath("/score");
     revalidatePath("/schedule");
