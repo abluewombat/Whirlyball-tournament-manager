@@ -1,9 +1,9 @@
 import { listTournamentDivisions, query } from "@/lib/db";
-import { LiveRefresh } from "@/app/live-refresh";
 import { currentTournament } from "@/lib/tournaments";
 import { LiveNow } from "@/app/live-now";
 import { ViewTabs } from "@/app/view-tabs";
 import { readGoogleSheetSyncStatus, type SyncStatus } from "@/lib/sync-status";
+import { ScheduleGridDisplayRefresh } from "@/app/schedule/schedule-grid-display-refresh";
 import {
   buildDivisionAverages,
   buildScheduleQuality,
@@ -211,7 +211,7 @@ export default async function PublicSchedulePage({
 
   return (
     <main className="content schedule-page">
-      <LiveRefresh seconds={30} />
+      <ScheduleGridDisplayRefresh seconds={15} />
       <div className="section-heading">
         <div>
           <h1>Public Schedule</h1>
