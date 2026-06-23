@@ -390,7 +390,15 @@ async function readGoogleSheetRows(spreadsheetId: string, options: { sheetIndex?
 
 async function resolveGoogleSheetName(spreadsheetId: string, options: { sheetIndex?: string; sheetName?: string }) {
   const trimmedIndex = options.sheetIndex?.trim();
-  if ((trimmedIndex === undefined || trimmedIndex === "") && options.sheetName?.trim()) return options.sheetName.trim();
+  const hasExplicitIndex = trimmedIndex !== undefined && trimmedIndex !== "";
+  if (!hasExplicitIndex && options.sheetName?.trim()) {
+    const requestedName = options.sheetName.trim();
+    const sheetNames = await readGoogleSheetNames(spreadsheetId);
+    if (sheetNames.includes(requestedName)) return requestedName;
+    const fallbackName = sheetNames[defaultSheetIndex];
+    if (fallbackName) return fallbackName;
+    throw new Error(`Google Sheet tab "${requestedName}" was not found and no fallback tab exists.`);
+  }
 
   const requestedIndex = trimmedIndex === undefined || trimmedIndex === "" ? defaultSheetIndex : Number(trimmedIndex);
   if (Number.isInteger(requestedIndex) && requestedIndex >= 0) {
@@ -400,6 +408,13 @@ async function resolveGoogleSheetName(spreadsheetId: string, options: { sheetInd
 }
 
 async function readGoogleSheetNameByIndex(spreadsheetId: string, sheetIndex: number) {
+  const sheets = await readGoogleSheetNames(spreadsheetId);
+  const selected = sheets[sheetIndex];
+  if (!selected) throw new Error(`Google Sheet tab index ${sheetIndex} was not found.`);
+  return selected;
+}
+
+async function readGoogleSheetNames(spreadsheetId: string) {
   const client = googleJwtClient();
   const accessToken = await client.getAccessToken();
   const token = typeof accessToken === "string" ? accessToken : accessToken?.token;
@@ -422,9 +437,7 @@ async function readGoogleSheetNameByIndex(spreadsheetId: string, sheetIndex: num
     .map((sheet) => sheet.properties)
     .filter((sheet): sheet is { title: string; index: number } => typeof sheet?.title === "string" && typeof sheet.index === "number")
     .sort((left, right) => left.index - right.index);
-  const selected = sheets.find((sheet) => sheet.index === sheetIndex) || sheets[sheetIndex];
-  if (!selected) throw new Error(`Google Sheet tab index ${sheetIndex} was not found.`);
-  return selected.title;
+  return sheets.map((sheet) => sheet.title);
 }
 
 async function readGoogleDriveWorkbookRows(spreadsheetId: string, options: { sheetIndex?: string; sheetName?: string; range: string }): Promise<GoogleSheetRows> {
@@ -461,11 +474,14 @@ async function readGoogleDriveWorkbookRows(spreadsheetId: string, options: { she
 
 function selectWorkbookSheetName(sheetNames: string[], options: { sheetIndex?: string; sheetName?: string }) {
   const trimmedIndex = options.sheetIndex?.trim();
-  if ((trimmedIndex === undefined || trimmedIndex === "") && options.sheetName?.trim()) {
+  const hasExplicitIndex = trimmedIndex !== undefined && trimmedIndex !== "";
+  if (!hasExplicitIndex && options.sheetName?.trim()) {
     const requestedName = options.sheetName.trim();
     const sheetName = sheetNames.find((candidate) => candidate === requestedName);
     if (sheetName) return sheetName;
-    throw new Error(`Workbook sheet "${requestedName}" was not found.`);
+    const fallbackName = sheetNames[defaultSheetIndex];
+    if (fallbackName) return fallbackName;
+    throw new Error(`Workbook sheet "${requestedName}" was not found and no fallback tab exists.`);
   }
 
   const requestedIndex = trimmedIndex === undefined || trimmedIndex === "" ? defaultSheetIndex : Number(trimmedIndex);
