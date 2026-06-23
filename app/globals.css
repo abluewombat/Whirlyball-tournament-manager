@@ -850,9 +850,7 @@ th {
 
 .schedule-grid-wrap {
   border: 1px solid var(--line);
-  max-height: calc(100vh - var(--schedule-sync-sticky-height) - 24px);
-  overflow: auto;
-  scrollbar-gutter: stable;
+  overflow: visible;
 }
 
 .schedule-grid-table {
@@ -921,7 +919,7 @@ th {
   background: #176b87;
   color: white;
   position: sticky;
-  top: 0;
+  top: var(--schedule-sync-sticky-height);
   z-index: 7;
 }
 
