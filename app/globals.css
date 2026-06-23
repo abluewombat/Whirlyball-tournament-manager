@@ -806,6 +806,7 @@ th {
 }
 
 .schedule-page {
+  --schedule-sync-sticky-height: 44px;
   max-width: 1440px;
 }
 
@@ -820,7 +821,7 @@ th {
   display: flex;
   justify-content: flex-end;
   margin: 0 -20px 14px;
-  min-height: 44px;
+  min-height: var(--schedule-sync-sticky-height);
   padding: 6px 20px 8px;
   position: sticky;
   top: 0;
@@ -849,7 +850,9 @@ th {
 
 .schedule-grid-wrap {
   border: 1px solid var(--line);
-  overflow-x: auto;
+  max-height: calc(100vh - var(--schedule-sync-sticky-height) - 24px);
+  overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .schedule-grid-table {
@@ -919,7 +922,7 @@ th {
   color: white;
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 7;
 }
 
 .schedule-grid-table td,
