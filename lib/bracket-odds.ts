@@ -358,12 +358,43 @@ function slotCannotReceiveTeam(
 ) {
   const sources = incomingBySlot.get(slotKey(gameKey, slot)) || [];
   if (sources.length === 0) return true;
-  return sources.every((source) => {
-    const sourceGame = byKey.get(source.sourceGameKey);
-    if (!sourceGame) return true;
-    if (source.result === "winner") return sourceGame.winner_team_id !== null;
-    return sourceGame.winner_team_id !== null || sourceGame.loser_team_id !== null;
-  });
+  return sources.every((source) => sourceCannotProduce(source, byKey, incomingBySlot, new Set<string>()));
+}
+
+function sourceCannotProduce(
+  source: IncomingSource,
+  byKey: Map<string, SimGame>,
+  incomingBySlot: Map<string, IncomingSource[]>,
+  seen: Set<string>
+): boolean {
+  const sourceGame = byKey.get(source.sourceGameKey);
+  if (!sourceGame) return true;
+
+  if (source.result === "winner" && sourceGame.winner_team_id !== null) return false;
+  if (source.result === "loser") {
+    if (sourceGame.loser_team_id !== null) return false;
+    if (sourceGame.winner_team_id !== null) return true;
+  }
+
+  const key = `${source.sourceGameKey}:${source.result}`;
+  if (seen.has(key)) return false;
+  seen.add(key);
+
+  if (sourceGame.team_1_id !== null || sourceGame.team_2_id !== null) return false;
+  return slotCannotReceiveTeamRecursive(sourceGame.game_key, 1, byKey, incomingBySlot, seen) &&
+    slotCannotReceiveTeamRecursive(sourceGame.game_key, 2, byKey, incomingBySlot, seen);
+}
+
+function slotCannotReceiveTeamRecursive(
+  gameKey: string,
+  slot: number,
+  byKey: Map<string, SimGame>,
+  incomingBySlot: Map<string, IncomingSource[]>,
+  seen: Set<string>
+): boolean {
+  const sources = incomingBySlot.get(slotKey(gameKey, slot)) || [];
+  if (sources.length === 0) return true;
+  return sources.every((source) => sourceCannotProduce(source, byKey, incomingBySlot, seen));
 }
 
 function recordResolvedGame(
