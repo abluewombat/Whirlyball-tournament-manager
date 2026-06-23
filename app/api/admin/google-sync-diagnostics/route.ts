@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
       googleScoresRange: process.env.GOOGLE_SCORES_RANGE || null,
       googleScheduleSheetIndex: process.env.GOOGLE_SCHEDULE_SYNC_SHEET_INDEX || null,
       googleScheduleSheetName: process.env.GOOGLE_SCHEDULE_SYNC_SHEET_NAME || null,
+      effectiveScheduleSheetName: effectiveGoogleScheduleSheetName(process.env.GOOGLE_SCHEDULE_SYNC_SHEET_NAME || process.env.GOOGLE_SCORES_SHEET_NAME),
       googleScheduleRange: process.env.GOOGLE_SCHEDULE_SYNC_RANGE || null,
       googleScoresSyncEnabled: process.env.GOOGLE_SCORES_SYNC_ENABLED !== "false",
       googleScheduleSyncEnabled: process.env.GOOGLE_SCHEDULE_SYNC_ENABLED !== "false"
@@ -69,6 +70,21 @@ function sanitizedDatabaseUrl(value: string) {
   } catch {
     return { present: true, parseable: false };
   }
+}
+
+function effectiveGoogleScheduleSheetName(value: string | undefined) {
+  const trimmed = value?.trim();
+  const staleNames = new Set([
+    "2026 Schedule Final wcolor no R",
+    "2026 Schedule Final ver 1.5 w/color no Refs",
+    "2026 Schedule Final ver 1.5 wco"
+  ].map(normalizeSheetName));
+  if (!trimmed || staleNames.has(normalizeSheetName(trimmed))) return "2026 Schedule Final v1.6";
+  return trimmed;
+}
+
+function normalizeSheetName(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function authorized(request: NextRequest) {

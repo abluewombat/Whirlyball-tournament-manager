@@ -116,6 +116,12 @@ export type GoogleScheduleSyncSummary = {
 const defaultSpreadsheetId = "1Ja6ff8IbAWm3_eGWCWlRhWoKRyQELQxA";
 const defaultRange = "A1:Q1000";
 const defaultSheetIndex = 0;
+const currentScheduleSheetName = "2026 Schedule Final v1.6";
+const staleScheduleSheetNames = new Set([
+  "2026 Schedule Final wcolor no R",
+  "2026 Schedule Final ver 1.5 w/color no Refs",
+  "2026 Schedule Final ver 1.5 wco"
+].map(normalizeSheetName));
 const dayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
 const teamSyncDefinitions: Record<string, { division: string; names: string[]; codes: string[] }> = {
   atlanta_a: { division: "A", names: ["Not In The Realm"], codes: ["ATLANTA A", "ATL A"] },
@@ -164,7 +170,7 @@ export async function syncGoogleSheetScores(tournamentId: number): Promise<Googl
   const range = process.env.GOOGLE_SCORES_RANGE || defaultRange;
   const sheet = await readGoogleSheetRows(spreadsheetId, {
     sheetIndex: process.env.GOOGLE_SCORES_SHEET_INDEX,
-    sheetName: process.env.GOOGLE_SCORES_SHEET_NAME,
+    sheetName: effectiveGoogleScheduleSheetName(process.env.GOOGLE_SCORES_SHEET_NAME),
     range
   });
   const games = await loadScheduleGameMatches(tournamentId);
@@ -226,7 +232,7 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
   const range = process.env.GOOGLE_SCHEDULE_SYNC_RANGE || process.env.GOOGLE_SCORES_RANGE || defaultRange;
   const sheet = await readGoogleSheetRows(spreadsheetId, {
     sheetIndex: process.env.GOOGLE_SCHEDULE_SYNC_SHEET_INDEX || process.env.GOOGLE_SCORES_SHEET_INDEX,
-    sheetName: process.env.GOOGLE_SCHEDULE_SYNC_SHEET_NAME || process.env.GOOGLE_SCORES_SHEET_NAME,
+    sheetName: effectiveGoogleScheduleSheetName(process.env.GOOGLE_SCHEDULE_SYNC_SHEET_NAME || process.env.GOOGLE_SCORES_SHEET_NAME),
     range
   });
   const games = await loadScheduleGameMatches(tournamentId);
@@ -693,6 +699,12 @@ function normalizeTeamName(value: string) {
     .replace(/\s+/g, " ")
     .replace(/[’]/g, "'")
     .toLowerCase();
+}
+
+function effectiveGoogleScheduleSheetName(value: string | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed || staleScheduleSheetNames.has(normalizeSheetName(trimmed))) return currentScheduleSheetName;
+  return trimmed;
 }
 
 async function loadScheduleGameMatches(tournamentId: number) {
