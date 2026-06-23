@@ -82,3 +82,16 @@ export function tournamentTimeLabel(value: string, timeZone = DEFAULT_TOURNAMENT
   if (!literal) return value.slice(11, 16);
   return formatClock(literal.hour, literal.minute);
 }
+
+export function tournamentDateTimeLabel(value: Date | string, timeZone = DEFAULT_TOURNAMENT_TIMEZONE) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return formatter(timeZone, {
+    month: "numeric",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(date);
+}

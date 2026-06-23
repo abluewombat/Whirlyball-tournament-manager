@@ -12,7 +12,7 @@ import {
   mostRepeatedOpponent
 } from "@/lib/schedule-quality";
 import { publicStreamLinkForGame } from "@/lib/streams";
-import { tournamentDateKey, tournamentDayLabel, tournamentTimeLabel } from "@/lib/time-format";
+import { tournamentDateKey, tournamentDateTimeLabel, tournamentDayLabel, tournamentTimeLabel } from "@/lib/time-format";
 
 export const dynamic = "force-dynamic";
 
@@ -166,7 +166,7 @@ export default async function PublicSchedulePage({
   const gridRows = buildScheduleGrid(games, hiddenDivisionLabels, tournament.timezone);
   const detailRows = buildScheduleDetailRows(teams, games, tournament.timezone);
   const refCountRows = buildRefCountRows(teams, games, tournament.timezone);
-  const lastUpdated = games.length ? new Date().toLocaleString() : null;
+  const lastUpdated = games.length ? tournamentDateTimeLabel(new Date(), tournament.timezone) : null;
   const scheduleGrid = gridRows.length ? (
     <section className="section schedule-grid-section">
       {hiddenDivisionLabels.size === 0 ? <div className="schedule-legend" aria-label="Division color legend">
