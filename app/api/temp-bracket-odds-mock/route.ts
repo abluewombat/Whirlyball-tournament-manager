@@ -18,7 +18,7 @@ export const runtime = "nodejs";
 const tournamentSlug = "novi-2026";
 
 type MockRequest = {
-  action?: "apply" | "reset";
+  action?: "apply" | "recalculate" | "reset";
   snapshotId?: number;
 };
 
@@ -47,6 +47,11 @@ export async function POST(request: Request) {
       await restoreSnapshot(tournament.id, Number(payload.snapshotId));
       await clearGoogleSheetSyncPause(tournament.id);
       return NextResponse.json({ ok: true, action: "reset", snapshotId: Number(payload.snapshotId), cronPaused: false });
+    }
+
+    if (payload.action === "recalculate") {
+      const oddsResults = await recalculateBracketOddsForTournament(tournament.id);
+      return NextResponse.json({ ok: true, action: "recalculate", odds: oddsResults });
     }
 
     const snapshotLabel = `Pre bracket odds mock ${new Date().toISOString()}`;

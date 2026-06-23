@@ -253,13 +253,14 @@ function simulateBracket(
   const opponents = new Map<number, Map<number, number>>();
   const eliminators = new Map<number, Map<number, number>>();
   const losses = new Map<number, number>();
+  const resolvedGames = new Set<string>();
   let championId: number | null = null;
   const finalistIds = new Set<number>();
 
   for (let pass = 0; pass < 80; pass++) {
     let changed = false;
     for (const game of games.sort(compareBracketGames)) {
-      if (game.winner_team_id === null && oneTeamOnly(game)) {
+      if (game.winner_team_id === null && isFirstRoundBye(game)) {
         const winnerId = game.team_1_id || game.team_2_id;
         if (winnerId) {
           game.winner_team_id = winnerId;
@@ -271,11 +272,11 @@ function simulateBracket(
         const loserId = winnerId === game.team_1_id ? game.team_2_id : game.team_1_id;
         game.winner_team_id = winnerId;
         game.loser_team_id = loserId;
-        recordOpponent(opponents, game.team_1_id, game.team_2_id);
-        recordOpponent(opponents, game.team_2_id, game.team_1_id);
-        losses.set(loserId, (losses.get(loserId) || 0) + 1);
-        recordOpponent(eliminators, loserId, winnerId);
         changed = true;
+      }
+      if (game.winner_team_id !== null && game.loser_team_id !== null && !resolvedGames.has(game.game_key)) {
+        resolvedGames.add(game.game_key);
+        recordResolvedGame(game, opponents, eliminators, losses);
       }
       if (game.winner_team_id !== null && game.next_winner_game_key && game.next_winner_slot) {
         changed = fillSlot(byKey, game.next_winner_game_key, game.next_winner_slot, game.winner_team_id) || changed;
@@ -311,6 +312,22 @@ function simulateBracket(
   }
 
   return { championId, finalistIds, finishRanks, opponents, eliminators };
+}
+
+function recordResolvedGame(
+  game: SimGame,
+  opponents: Map<number, Map<number, number>>,
+  eliminators: Map<number, Map<number, number>>,
+  losses: Map<number, number>
+) {
+  if (game.team_1_id === null || game.team_2_id === null || game.winner_team_id === null || game.loser_team_id === null) return;
+  recordOpponent(opponents, game.team_1_id, game.team_2_id);
+  recordOpponent(opponents, game.team_2_id, game.team_1_id);
+  const newLossCount = (losses.get(game.loser_team_id) || 0) + 1;
+  losses.set(game.loser_team_id, newLossCount);
+  if (newLossCount >= 2 || (game.game_key === "F1" && game.team_1_id === game.winner_team_id) || game.game_key === "F2") {
+    recordOpponent(eliminators, game.loser_team_id, game.winner_team_id);
+  }
 }
 
 function chooseWinner(
@@ -349,8 +366,10 @@ function fillSlot(byKey: Map<string, SimGame>, gameKey: string, slot: number, te
   return true;
 }
 
-function oneTeamOnly(game: SimGame) {
-  return (game.team_1_id !== null && game.team_2_id === null) || (game.team_1_id === null && game.team_2_id !== null);
+function isFirstRoundBye(game: SimGame) {
+  return game.bracket_side === "winners" &&
+    game.round === 1 &&
+    ((game.team_1_id !== null && game.team_2_id === null) || (game.team_1_id === null && game.team_2_id !== null));
 }
 
 function compareBracketGames(left: BracketGameRow, right: BracketGameRow) {

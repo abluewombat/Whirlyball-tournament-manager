@@ -39,6 +39,9 @@ export function BracketDivisionTabs({ divisions }: { divisions: PublicBracketDiv
           <div>
             <p className="eyebrow">{selected.division} Division</p>
             <h2>Championship Odds</h2>
+            <p className="muted">
+              Simulated from current bracket position, seeding results, team performance, and prior head-to-head results.
+            </p>
           </div>
           {selected.odds ? <span className="pill">Updated {new Date(selected.odds.generatedAt).toLocaleString()}</span> : null}
         </div>
@@ -72,10 +75,10 @@ function OddsTable({ odds }: { odds: StoredBracketOdds }) {
           <tr>
             <th>Seed</th>
             <th>Team</th>
-            <th>Title Odds</th>
-            <th>Final Odds</th>
-            <th>Likely Obstacles</th>
-            <th>Likely Eliminators</th>
+            <th>Win Championship</th>
+            <th>Reach Championship</th>
+            <th>Likely Path Opponents</th>
+            <th>Likely Knockout Teams</th>
           </tr>
         </thead>
         <tbody>
