@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
 import { syncGoogleSheetSchedule, syncGoogleSheetScores, type GoogleScheduleSyncSummary } from "@/lib/google-score-sync";
-import { recordGoogleSheetSyncStatus } from "@/lib/sync-status";
+import { readGoogleSheetSyncPause, recordGoogleSheetSyncStatus } from "@/lib/sync-status";
 import { currentTournament } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +21,19 @@ async function runSync(request: NextRequest) {
 
   const tournament = await currentTournament(process.env.GOOGLE_SCORES_TOURNAMENT || null);
   try {
+    const dbPause = await readGoogleSheetSyncPause(tournament.id);
+    if (dbPause) {
+      await recordGoogleSheetSyncStatus({
+        tournamentId: tournament.id,
+        status: "success",
+        summary: dbPause.summary || "Google Sheet sync paused",
+        changedCount: 0,
+        detail: { paused: true, pause: dbPause.detail_json || null }
+      });
+      revalidatePath("/schedule");
+      return NextResponse.json({ ok: true, tournament: tournament.slug, paused: true, reason: dbPause.summary });
+    }
+
     if (process.env.GOOGLE_SCORES_SYNC_ENABLED === "false") {
       await recordGoogleSheetSyncStatus({
         tournamentId: tournament.id,

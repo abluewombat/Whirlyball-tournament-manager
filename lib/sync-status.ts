@@ -1,6 +1,7 @@
 import { exec, query } from "./db";
 
 export const googleSheetSyncKey = "google-sheet-sync";
+export const googleSheetSyncPauseKey = "google-sheet-sync-pause";
 
 export type SyncStatus = {
   sync_key: string;
@@ -51,4 +52,35 @@ export async function recordGoogleSheetSyncStatus(input: {
       input.changedCount || 0
     ]
   );
+}
+
+export async function readGoogleSheetSyncPause(tournamentId: number) {
+  const [status] = await query<SyncStatus>(
+    `SELECT sync_key, tournament_id, status, summary, detail_json, changed_count, synced_at, updated_at
+       FROM sync_status
+      WHERE sync_key = $1
+        AND tournament_id = $2`,
+    [googleSheetSyncPauseKey, tournamentId]
+  );
+  return status || null;
+}
+
+export async function setGoogleSheetSyncPause(tournamentId: number, summary: string, detail?: Record<string, unknown>) {
+  await exec(
+    `INSERT INTO sync_status (sync_key, tournament_id, status, summary, detail_json, changed_count, synced_at, updated_at)
+     VALUES ($1, $2, 'success', $3, $4::jsonb, 0, NOW(), NOW())
+     ON CONFLICT (sync_key)
+     DO UPDATE SET tournament_id = EXCLUDED.tournament_id,
+                   status = EXCLUDED.status,
+                   summary = EXCLUDED.summary,
+                   detail_json = EXCLUDED.detail_json,
+                   changed_count = 0,
+                   synced_at = EXCLUDED.synced_at,
+                   updated_at = NOW()`,
+    [googleSheetSyncPauseKey, tournamentId, summary, JSON.stringify(detail || null)]
+  );
+}
+
+export async function clearGoogleSheetSyncPause(tournamentId: number) {
+  await exec("DELETE FROM sync_status WHERE sync_key = $1 AND tournament_id = $2", [googleSheetSyncPauseKey, tournamentId]);
 }

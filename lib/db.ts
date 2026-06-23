@@ -690,7 +690,11 @@ export async function getFullState(tournamentId: number) {
 
 export async function createSnapshot(tournamentId: number, label: string) {
   const data = await getFullState(tournamentId);
-  return exec("INSERT INTO state_snapshots (tournament_id, label, data_json) VALUES ($1, $2, $3::jsonb)", [tournamentId, label, JSON.stringify(data)]);
+  return exec("INSERT INTO state_snapshots (tournament_id, label, data_json) VALUES ($1, $2, $3::jsonb) RETURNING id", [
+    tournamentId,
+    label,
+    JSON.stringify(data)
+  ]);
 }
 
 export async function restoreSnapshot(tournamentId: number, id: number) {
