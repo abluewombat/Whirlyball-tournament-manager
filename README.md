@@ -86,9 +86,9 @@ The database tables and default centers are created automatically on first reque
 
 ## Google Score Sync
 
-Call `/api/cron/sync-google-scores` from Vercel Cron on a Pro plan or from an external scheduler every 2 minutes. The route reads the configured Google Sheet, syncs game/ref rows when `GOOGLE_SCHEDULE_SYNC_ENABLED=true`, then imports rows with both score cells filled through the same scoring rules used by the score entry workflow.
+Call `/api/cron/sync-google-scores` from Vercel Cron every minute for testing. The route reads the configured Google Sheet, syncs game/ref rows by default, then imports rows with both score cells filled through the same scoring rules used by the score entry workflow.
 
-Share the source Google Sheet with the service account email, then set `GOOGLE_SERVICE_ACCOUNT_JSON` to the full JSON key in Vercel. `CRON_SECRET` protects the cron endpoint; manual test calls can also use `x-admin-password`. Add `?scheduleSync=0` to a manual call to skip the game/ref sync pass while still importing scores.
+Share the source Google Sheet with the service account email, then set `GOOGLE_SERVICE_ACCOUNT_JSON` to the full JSON key in Vercel. `CRON_SECRET` protects the cron endpoint; manual test calls can also use `x-admin-password`. Set `GOOGLE_SCHEDULE_SYNC_ENABLED=false` or add `?scheduleSync=0` to skip the game/ref sync pass while still importing scores.
 
 ## Admin Schedule Import
 
