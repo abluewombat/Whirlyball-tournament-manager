@@ -706,11 +706,44 @@ export async function restoreSnapshot(tournamentId: number, id: number) {
 
   const data = snapshot.data_json;
   await withTransaction(async (client) => {
+    const personIdMap = new Map<number, number>();
+    for (const row of data.people || []) {
+      const snapshotPersonId = Number(row.id);
+      const centerId = Number(row.center_id);
+      const normalizedName = String(row.normalized_name || "");
+      const name = String(row.name || "");
+      if (!snapshotPersonId || !centerId || !normalizedName) continue;
+
+      const existingByIdentity = await client.query<{ id: number }>(
+        "SELECT id FROM people WHERE center_id = $1 AND normalized_name = $2",
+        [centerId, normalizedName]
+      );
+      if (existingByIdentity.rows[0]) {
+        personIdMap.set(snapshotPersonId, existingByIdentity.rows[0].id);
+        await client.query("UPDATE people SET name = $1, updated_at = NOW() WHERE id = $2", [name, existingByIdentity.rows[0].id]);
+        continue;
+      }
+
+      const keys = Object.keys(row);
+      await client.query(
+        `INSERT INTO people (${keys.join(", ")}) VALUES (${keys.map((_, index) => `$${index + 1}`).join(", ")})
+         ON CONFLICT (id) DO UPDATE SET
+           center_id = EXCLUDED.center_id,
+           name = EXCLUDED.name,
+           normalized_name = EXCLUDED.normalized_name,
+           updated_at = NOW()`,
+        keys.map((key) => row[key])
+      );
+      personIdMap.set(snapshotPersonId, snapshotPersonId);
+    }
+
     await client.query("DELETE FROM bracket_games WHERE bracket_id IN (SELECT id FROM brackets WHERE tournament_id = $1)", [tournamentId]);
     await client.query("DELETE FROM brackets WHERE tournament_id = $1", [tournamentId]);
     await client.query("DELETE FROM blocker_requests WHERE tournament_id = $1", [tournamentId]);
     await client.query("DELETE FROM games WHERE tournament_id = $1", [tournamentId]);
     await client.query("DELETE FROM court_streams WHERE tournament_id = $1", [tournamentId]);
+    await client.query("DELETE FROM registration_request_players WHERE request_id IN (SELECT id FROM registration_requests WHERE tournament_id = $1)", [tournamentId]);
+    await client.query("DELETE FROM registration_requests WHERE tournament_id = $1", [tournamentId]);
     await client.query("DELETE FROM shirt_orders WHERE player_id IN (SELECT id FROM players WHERE tournament_id = $1)", [tournamentId]);
     await client.query("DELETE FROM players WHERE tournament_id = $1", [tournamentId]);
     await client.query("DELETE FROM team_availability_blocks WHERE team_id IN (SELECT id FROM teams WHERE tournament_id = $1)", [tournamentId]);
@@ -718,14 +751,6 @@ export async function restoreSnapshot(tournamentId: number, id: number) {
     await client.query("DELETE FROM tournament_settings WHERE tournament_id = $1", [tournamentId]);
     await client.query("DELETE FROM tournament_divisions WHERE tournament_id = $1", [tournamentId]);
 
-    for (const row of data.people || []) {
-      const keys = Object.keys(row);
-      await client.query(
-        `INSERT INTO people (${keys.join(", ")}) VALUES (${keys.map((_, index) => `$${index + 1}`).join(", ")})
-         ON CONFLICT (id) DO NOTHING`,
-        keys.map((key) => row[key])
-      );
-    }
     for (const table of [
       "tournament_divisions",
       "tournament_settings",
@@ -740,10 +765,17 @@ export async function restoreSnapshot(tournamentId: number, id: number) {
       "bracket_games"
     ]) {
       for (const row of data[table] || []) {
-        const keys = Object.keys(row);
+        let restoredRow = row;
+        if (table === "players" && row.person_id !== null && row.person_id !== undefined) {
+          restoredRow = {
+            ...row,
+            person_id: personIdMap.get(Number(row.person_id)) || row.person_id
+          };
+        }
+        const keys = Object.keys(restoredRow);
         const cols = keys.join(", ");
         const placeholders = keys.map((_, index) => `$${index + 1}`).join(", ");
-        await client.query(`INSERT INTO ${table} (${cols}) VALUES (${placeholders})`, keys.map((key) => row[key]));
+        await client.query(`INSERT INTO ${table} (${cols}) VALUES (${placeholders})`, keys.map((key) => restoredRow[key]));
       }
     }
   });
