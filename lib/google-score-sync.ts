@@ -118,6 +118,47 @@ const defaultSpreadsheetId = "1Ja6ff8IbAWm3_eGWCWlRhWoKRyQELQxA";
 const defaultRange = "A1:Q1000";
 const defaultSheetIndex = 0;
 const dayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+const teamSyncDefinitions: Record<string, { division: string; names: string[]; codes: string[] }> = {
+  atlanta_a: { division: "A", names: ["Not In The Realm"], codes: ["ATLANTA A", "ATL A"] },
+  atlanta_b: { division: "B", names: ["The Remnants"], codes: ["ATLANTA B", "ATL B"] },
+  chicago_a: { division: "A", names: ["Lake Effect"], codes: ["CHICAGO A", "CHI A"] },
+  chicago_b1: { division: "B", names: ["Goal-A-Dinga"], codes: ["CHICAGO B1", "CHI B1"] },
+  chicago_b2: { division: "B", names: ["Dead Horse"], codes: ["CHICAGO B2", "CHI B2"] },
+  chicago_c1: { division: "C", names: ["Mean Whirls"], codes: ["CHICAGO C1", "CHI C1"] },
+  chicago_c2: { division: "C", names: ["Maximum Effort"], codes: ["CHICAGO C2", "CHI C2"] },
+  chicago_c3: { division: "C", names: ["Squad Goals"], codes: ["CHICAGO C3", "CHI C3"] },
+  chicago_d: { division: "D", names: ["SWATTY BALLZ"], codes: ["CHICAGO D", "CHI D"] },
+  cleveland_a: { division: "A", names: ["WhirlyHausen"], codes: ["CLEVELAND A", "CLEV A"] },
+  cleveland_c1: { division: "C", names: ["Whirld of Hurt"], codes: ["CLEVELAND C1", "CLEV C1"] },
+  cleveland_c2: { division: "C", names: ["The BWC", "The BWC (Buckeye Whirly Club)"], codes: ["CLEVELAND C2", "CLEV C2"] },
+  cleveland_c3: { division: "C", names: ["Two Fams & a Weatherman"], codes: ["CLEVELAND C3", "CLEV C3"] },
+  cleveland_d: { division: "D", names: ["The Goon Squad"], codes: ["CLEVELAND D", "CLEV D"] },
+  michigan_a1: { division: "A", names: ["Hey You Guys"], codes: ["MICHIGAN A1", "MICH A1"] },
+  michigan_a2: { division: "A", names: ["Goal Diggers"], codes: ["MICHIGAN A2", "MICH A2"] },
+  michigan_a3: { division: "A", names: ["Shots Fired"], codes: ["MICHIGAN A3", "MICH A3"] },
+  michigan_c: { division: "C", names: ["MixT Up", "Mixt Up"], codes: ["MICHIGAN C", "MICH C"] },
+  michigan_d1: { division: "D", names: ["Motown Motion"], codes: ["MICHIGAN D1", "MICH D1"] },
+  michigan_d2: { division: "D", names: ["Designated Drunk Drivers"], codes: ["MICHIGAN D2", "MICH D2"] },
+  minnesota_b: { division: "B", names: ["Whirly Sirs"], codes: ["MINNESOTA B", "MINN B"] },
+  minnesota_c: { division: "C", names: ["Whirly Blue Balls"], codes: ["MINNESOTA C", "MINN C"] },
+  minnesota_d: { division: "D", names: ["4 Lefts 1 Wrong"], codes: ["MINNESOTA D", "MINN D"] },
+  seattle_a1: { division: "A", names: ["A-Rex"], codes: ["SEATTLE A1", "SEA A1"] },
+  seattle_a2: { division: "A", names: ["Brick City"], codes: ["SEATTLE A2", "SEA A2"] },
+  seattle_a3: { division: "A", names: ["Goat Herders"], codes: ["SEATTLE A3", "SEA A3"] },
+  seattle_b1: { division: "B", names: ["Whirlocks"], codes: ["SEATTLE B1", "SEA B1"] },
+  seattle_b2: { division: "B", names: ["Gooey Ducks"], codes: ["SEATTLE B2", "SEA B2"] },
+  seattle_c1: { division: "C", names: ["Seattle Sea Devils"], codes: ["SEATTLE C1", "SEA C1"] },
+  seattle_c2: { division: "C", names: ["Whirld War C"], codes: ["SEATTLE C2", "SEA C2"] },
+  seattle_c3: { division: "C", names: ["Whirled Not Stirred"], codes: ["SEATTLE C3", "SEA C3"] },
+  seattle_c4: { division: "C", names: ["Cherry Peckers"], codes: ["SEATTLE C4", "SEA C4"] },
+  seattle_d: { division: "D", names: ["Hollaback Whirl"], codes: ["SEATTLE D", "SEA D"] },
+  texas_a1: { division: "A", names: ["SouthBound & Down", "Southbound & Down"], codes: ["TEXAS A1", "TEX A1"] },
+  texas_a2: { division: "A", names: ["Los Guapos"], codes: ["TEXAS A2", "TEX A2"] },
+  texas_b1: { division: "B", names: ["Team USA"], codes: ["TEXAS B1", "TEX B1"] },
+  texas_c: { division: "C", names: ["First Weld Problems"], codes: ["TEXAS C", "TEX C"] },
+  texas_d1: { division: "D", names: ["The 30%ers"], codes: ["TEXAS D1", "TEX D1"] },
+  texas_d2: { division: "D", names: ["I Don't Remember"], codes: ["TEXAS D2", "TEX D2"] }
+};
 
 export async function syncGoogleSheetScores(tournamentId: number): Promise<GoogleScoreSyncSummary> {
   const spreadsheetId = process.env.GOOGLE_SCORES_SPREADSHEET_ID || defaultSpreadsheetId;
@@ -201,7 +242,7 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
           AND deleted_at IS NULL`,
       [tournamentId]
     );
-    const teamsByName = new Map(teamRows.rows.map((team) => [normalizeTeamName(team.name), team]));
+    const teamsByName = buildTeamSyncLookup(teamRows.rows);
     const summary: GoogleScheduleSyncSummary = {
       enabled: true,
       sheetName: sheet.sheetName,
@@ -592,6 +633,23 @@ function refTeamNameFromSheetCell(value: unknown) {
   const text = cellText(value).replace(/\s+/g, " ");
   if (!text || /^ref name$/i.test(text)) return "";
   return teamNameFromSheetCell(text);
+}
+
+function buildTeamSyncLookup(teams: TeamMatch[]) {
+  const lookup = new Map<string, TeamMatch>();
+  for (const team of teams) lookup.set(normalizeTeamName(team.name), team);
+
+  for (const definition of Object.values(teamSyncDefinitions)) {
+    const aliases = definition.names.map(normalizeTeamName);
+    const matches = teams.filter((team) => team.division === definition.division && aliases.includes(normalizeTeamName(team.name)));
+    if (matches.length !== 1) continue;
+    const team = matches[0];
+    for (const alias of [...definition.names, ...definition.codes]) {
+      lookup.set(normalizeTeamName(alias), team);
+    }
+  }
+
+  return lookup;
 }
 
 function normalizeTeamName(value: string) {
