@@ -409,7 +409,7 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
 }
 
 function buildScheduleDayOptions(rows: ScheduleGridRow[]): ScheduleDayOption[] {
-  const allowedDays = ["Tuesday", "Wednesday", "Friday", "Saturday", "Sunday"];
+  const allowedDays = ["Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
   const dayByName = new Map<string, ScheduleDayOption>();
   for (const row of rows) {
     if (!allowedDays.includes(row.dayName) || dayByName.has(row.dayName)) continue;
