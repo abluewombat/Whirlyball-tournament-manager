@@ -108,6 +108,7 @@ export type GoogleScheduleSyncSummary = {
   gamesDeleted: number;
   scoredGamesRetained: number;
   refsUpdated: number;
+  refsRemoved: number;
   refsUnchanged: number;
   streamsLinked: number;
   skipped: Array<{
@@ -265,6 +266,7 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
       gamesDeleted: 0,
       scoredGamesRetained: 0,
       refsUpdated: 0,
+      refsRemoved: 0,
       refsUnchanged: 0,
       streamsLinked: 0,
       skipped: []
@@ -297,16 +299,15 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
       sourceGameKeys.add(syncGameKey(row.startsAt, row.court, team1.division, team1.id, team2.id));
       sourceLocalDates.add(row.localDate);
 
-      let refTeam: TeamMatch | null = null;
-      let shouldUpdateRef = false;
+      let targetRefId: number | null = null;
       if (row.refTeamName) {
-        refTeam = teamsByName.get(row.refTeamName) || null;
+        const refTeam = teamsByName.get(row.refTeamName) || null;
         if (!refTeam) {
           skip(row, "Unknown ref team name");
         } else if (refTeam.division === team1.division) {
           skip(row, "Ref team is in the same division as the game");
         } else {
-          shouldUpdateRef = true;
+          targetRefId = refTeam.id;
         }
       }
 
@@ -330,10 +331,10 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
           `INSERT INTO games (tournament_id, phase, division, court, starts_at, team_1_id, team_2_id, ref_team_id, label)
            VALUES ($1, 'seeding', $2, $3, $4::timestamptz, $5, $6, $7, NULL)
            RETURNING id`,
-          [tournamentId, team1.division, row.court, row.startsAt, team1.id, team2.id, shouldUpdateRef ? refTeam?.id || null : null]
+          [tournamentId, team1.division, row.court, row.startsAt, team1.id, team2.id, targetRefId]
         );
         summary.gamesInserted += 1;
-        if (shouldUpdateRef && insertResult.rows[0]) summary.refsUpdated += 1;
+        if (targetRefId && insertResult.rows[0]) summary.refsUpdated += 1;
         continue;
       }
 
@@ -342,16 +343,16 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
         continue;
       }
 
-      const targetRefId = shouldUpdateRef ? refTeam?.id || null : primary.ref_team_id;
       const gameAlreadySame =
         sameGame(primary, team1.division, team1.id, team2.id) &&
         primary.phase === "seeding" &&
         primary.label === null;
       const refAlreadySame = primary.ref_team_id === targetRefId;
+      const refTracked = Boolean(row.refTeamName || primary.ref_team_id);
 
       if (gameAlreadySame && refAlreadySame) {
         summary.gamesUnchanged += 1;
-        if (shouldUpdateRef) summary.refsUnchanged += 1;
+        if (refTracked) summary.refsUnchanged += 1;
         continue;
       }
 
@@ -376,8 +377,9 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
       );
       if (gameAlreadySame) summary.gamesUnchanged += 1;
       else summary.gamesUpdated += 1;
-      if (shouldUpdateRef) {
+      if (refTracked) {
         if (refAlreadySame) summary.refsUnchanged += 1;
+        else if (targetRefId === null && primary.ref_team_id !== null) summary.refsRemoved += 1;
         else summary.refsUpdated += 1;
       }
     }
