@@ -18,18 +18,22 @@ async function runSync(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const tournament = await currentTournament(process.env.GOOGLE_SCORES_TOURNAMENT || null);
-  const summary = await syncGoogleSheetScores(tournament.id);
-  revalidatePath("/");
-  revalidatePath("/score");
-  revalidatePath("/schedule");
-  revalidatePath("/standings");
-  revalidatePath("/brackets");
-  return NextResponse.json({
-    ok: true,
-    tournament: tournament.slug,
-    ...summary
-  });
+  try {
+    const tournament = await currentTournament(process.env.GOOGLE_SCORES_TOURNAMENT || null);
+    const summary = await syncGoogleSheetScores(tournament.id);
+    revalidatePath("/");
+    revalidatePath("/score");
+    revalidatePath("/schedule");
+    revalidatePath("/standings");
+    revalidatePath("/brackets");
+    return NextResponse.json({
+      ok: true,
+      tournament: tournament.slug,
+      ...summary
+    });
+  } catch (error) {
+    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Score sync failed" }, { status: 500 });
+  }
 }
 
 function authorized(request: NextRequest) {
