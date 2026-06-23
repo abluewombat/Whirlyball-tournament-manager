@@ -1,13 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ManagedBracketViewer, type ManagedBracketData } from "./managed-bracket-viewer";
 import type { StoredBracketOdds } from "@/lib/bracket-odds";
 
 export type PublicBracketDivision = {
   id: number;
   division: string;
-  bracketData: ManagedBracketData | null;
   odds: StoredBracketOdds | null;
   updatedAt: string;
 };
@@ -46,22 +44,6 @@ export function BracketDivisionTabs({ divisions }: { divisions: PublicBracketDiv
           {selected.odds ? <span className="pill">Updated {new Date(selected.odds.generatedAt).toLocaleString()}</span> : null}
         </div>
         {selected.odds ? <OddsTable odds={selected.odds} /> : <p className="muted">Odds have not been calculated for this bracket yet.</p>}
-      </section>
-
-      <section className="section card bracket-view-card">
-        <div className="section-heading">
-          <div>
-            <h2>Bracket</h2>
-            <p className="muted">Scroll horizontally on smaller screens.</p>
-          </div>
-        </div>
-        {selected.bracketData ? (
-          <div className="schedule-grid-wrap">
-            <ManagedBracketViewer data={selected.bracketData} />
-          </div>
-        ) : (
-          <p className="muted">This bracket does not have viewer data attached yet.</p>
-        )}
       </section>
     </div>
   );
