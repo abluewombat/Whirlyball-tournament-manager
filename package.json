@@ -22,6 +22,7 @@
     "brackets-model": "^1.7.0",
     "brackets-viewer": "^1.9.1",
     "exceljs": "^4.4.0",
+    "google-auth-library": "^10.7.0",
     "lucide-react": "^0.511.0",
     "next": "^15.3.3",
     "pg": "^8.21.0",

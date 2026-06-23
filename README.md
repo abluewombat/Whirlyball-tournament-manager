@@ -20,6 +20,12 @@ DATABASE_URL=postgresql://whirlyball:whirlyball@localhost:55432/whirlyball
 ADMIN_PASSWORD=admin
 APP_SECRET=local-dev-secret-change-me
 YOUTUBE_API_KEY=optional-youtube-data-api-v3-key
+CRON_SECRET=change-this-long-random-string
+GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
+GOOGLE_SCORES_SPREADSHEET_ID=1Ja6ff8IbAWm3_eGWCWlRhWoKRyQELQxA
+GOOGLE_SCORES_SHEET_NAME=2026 Schedule Final wcolor no R
+GOOGLE_SCORES_RANGE=A1:Q1000
+GOOGLE_SCORES_TOURNAMENT=novi-2026
 ```
 
 Open http://localhost:3000.
@@ -74,6 +80,12 @@ The database tables and default centers are created automatically on first reque
 - Tournament generation has separate tournament-day and final-day end times so Sunday can stop earlier than seeding nights.
 - Tournament divisions can be assigned automatically by bracket size so the largest brackets are split across tournament days.
 - Excel export includes teams, players, extra shirts, and schedule.
+
+## Google Score Sync
+
+Vercel calls `/api/cron/sync-google-scores` every 2 minutes. The route reads the configured Google Sheet, imports rows with both score cells filled, and applies them through the same scoring rules used by the score entry workflow.
+
+Share the source Google Sheet with the service account email, then set `GOOGLE_SERVICE_ACCOUNT_JSON` to the full JSON key in Vercel. `CRON_SECRET` protects the cron endpoint; manual test calls can also use `x-admin-password`.
 
 ## Admin Schedule Import
 
