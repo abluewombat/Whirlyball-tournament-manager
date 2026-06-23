@@ -2,6 +2,7 @@ import {
   addTeamAction,
   adminLogoutAction,
   goLiveCourtStreamAction,
+  recalculateBracketOddsAction,
   reviewBlockerRequestAction,
   restoreSnapshotAction,
   setCenterPasscodeAction,
@@ -37,6 +38,7 @@ type AdminDashboardParams = {
   scores_cleared?: string;
   stream_error?: string;
   stream_live?: string;
+  odds_recalculated?: string;
 };
 
 type StreamControlRow = {
@@ -229,6 +231,24 @@ export default async function AdminDashboardPage({
             );
           }) : <p className="muted">Connect court streams from score entry before marking games live.</p>}
         </div>
+      </article>
+
+      <article className="card">
+        <h2>Bracket Odds</h2>
+        {params.odds_recalculated !== undefined ? (
+          <p className="pill ok">Recalculated odds for {Number(params.odds_recalculated) || 0} active brackets.</p>
+        ) : null}
+        <p className="muted">
+          Run this after the externally generated bracket has been uploaded, or any time you want to refresh projected title odds.
+          Bracket score entry also recalculates odds automatically.
+        </p>
+        <form action={recalculateBracketOddsAction} className="stack">
+          <input name="tournament_id" type="hidden" value={tournament.id} />
+          <button className="button">Recalculate Bracket Odds</button>
+        </form>
+        <p className="muted section">
+          <a href="/brackets">View public brackets</a>
+        </p>
       </article>
 
       <article className="card">

@@ -174,6 +174,7 @@ export async function initDb() {
       );
 
       ALTER TABLE brackets ADD COLUMN IF NOT EXISTS bracket_data_json JSONB;
+      ALTER TABLE brackets ADD COLUMN IF NOT EXISTS bracket_odds_json JSONB;
 
       CREATE TABLE IF NOT EXISTS bracket_games (
         id SERIAL PRIMARY KEY,

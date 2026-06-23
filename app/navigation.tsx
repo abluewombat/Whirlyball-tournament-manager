@@ -25,6 +25,7 @@ function publicTabs(base: string): NavTab[] {
     { label: "Teams", href: base || "/", match: (pathname) => pathname === (base || "/") || pathname.startsWith(`${base}/teams`) },
     { label: "Players", href: `${base}/players`, match: (pathname) => pathname === `${base}/players` },
     { label: "Schedule", href: `${base}/schedule`, match: (pathname) => pathname === `${base}/schedule` },
+    { label: "Brackets", href: `${base}/brackets`, match: (pathname) => pathname === `${base}/brackets` },
     { label: "Standings", href: `${base}/standings`, match: (pathname) => pathname === `${base}/standings` }
   ];
 }
@@ -77,7 +78,7 @@ function buildNavGroups(base: string, accessRole: AccessRole): NavGroup[] {
       pathname.startsWith(`${base}/teams`) ||
       pathname === "/faq" ||
       pathname === "/requests" ||
-      [`${base}/players`, `${base}/schedule`, `${base}/standings`, `${base}/register`].includes(pathname),
+      [`${base}/players`, `${base}/schedule`, `${base}/brackets`, `${base}/standings`, `${base}/register`].includes(pathname),
     tabs: publicTabs(base)
   }];
   if (accessRole) groups.push(manageGroup(accessRole));

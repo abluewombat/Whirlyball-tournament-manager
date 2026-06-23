@@ -3,6 +3,7 @@ import {
   getActiveBracketScheduleSlots,
   scoreBracketGame
 } from "./brackets";
+import { recalculateBracketOddsForTournament } from "./bracket-odds";
 import { exec, query } from "./db";
 import { completeAndAdvanceCourtGame } from "./streams";
 
@@ -138,6 +139,7 @@ export async function scoreBracketGameFromSync(input: {
   if (!wasComplete && isComplete && scheduleSlot?.schedule_game_id) {
     await completeAndAdvanceCourtGame(scheduleSlot.schedule_game_id);
   }
+  await recalculateBracketOddsForTournament(game.tournament_id);
   return { ok: true, changed: true, kind: "bracket", gameId: input.bracketGameId };
 }
 

@@ -70,7 +70,7 @@ type ScoreEntryTablesProps = {
 
 export function ScoreEntryTables({ seedingGames, bracketGames, bracketsReady, timeZone }: ScoreEntryTablesProps) {
   const scoreableSeedingGames = useMemo(() => seedingGames.filter(isScoreableGame), [seedingGames]);
-  const scoreableBracketGames = useMemo(() => bracketGames.filter((game) => isScoreableGame(game) && game.starts_at && game.court), [bracketGames]);
+  const scoreableBracketGames = useMemo(() => bracketGames.filter((game) => isScoreableGame(game)), [bracketGames]);
   const [showAllSeeding, setShowAllSeeding] = useState(false);
   const [showAllTournament, setShowAllTournament] = useState(false);
   const [seedingDayFilter, setSeedingDayFilter] = useState("");
@@ -404,8 +404,7 @@ function isScoreableGame(game: FilterableScoreRow) {
 
 function BracketScheduleScoreGrid({ games, emptyText, timeZone }: { games: EditableBracketGame[]; emptyText: string; timeZone: string }) {
   if (!games.length) return <p className="muted">{emptyText}</p>;
-  const scheduledGames = games.filter((game) => game.starts_at && game.court);
-  const rows = buildBracketScheduleScoreRows(scheduledGames);
+  const rows = buildBracketScheduleScoreRows(games);
   if (!rows.rows.length) return <p className="muted">{emptyText}</p>;
   return (
     <div className="score-schedule-list">
@@ -416,12 +415,11 @@ function BracketScheduleScoreGrid({ games, emptyText, timeZone }: { games: Edita
 
 function buildBracketScheduleScoreRows(games: EditableBracketGame[]) {
   const rows = new Map<string, { startsAt: string; games: EditableBracketGame[] }>();
-  for (const game of [...games].sort((left, right) => (left.starts_at || "").localeCompare(right.starts_at || "") || (left.court || 0) - (right.court || 0))) {
-    const court = normalizeCourt(game.court);
-    if (!game.starts_at || court === null) continue;
-    const row = rows.get(game.starts_at) || { startsAt: game.starts_at, games: [] };
+  for (const game of [...games].sort((left, right) => (left.starts_at || "").localeCompare(right.starts_at || "") || (left.court || 0) - (right.court || 0) || left.id - right.id)) {
+    const rowKey = game.starts_at || `unscheduled-${game.id}`;
+    const row = rows.get(rowKey) || { startsAt: game.starts_at || "", games: [] };
     row.games.push(game);
-    rows.set(game.starts_at, row);
+    rows.set(rowKey, row);
   }
   return { rows: [...rows.values()].filter((row) => row.games.length > 0).sort((left, right) => left.startsAt.localeCompare(right.startsAt)) };
 }

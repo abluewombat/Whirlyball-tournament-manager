@@ -31,6 +31,7 @@ import {
 } from "@/lib/brackets";
 import { currentTournament, currentTournamentId, normalizePersonName, tournamentPath } from "@/lib/tournaments";
 import { completeAndAdvanceCourtGame, goLiveCourtStreamGame, saveCourtStream, youtubeVideoId } from "@/lib/streams";
+import { recalculateBracketOddsForTournament } from "@/lib/bracket-odds";
 
 function text(formData: FormData, key: string) {
   return String(formData.get(key) || "").trim();
@@ -1006,6 +1007,7 @@ export async function generateBracketAction(formData: FormData) {
   );
   for (const { division } of divisions) await rebuildBracketForDivision(tournamentId, division);
   await syncActiveBracketsToSchedule(tournamentId);
+  await recalculateBracketOddsForTournament(tournamentId);
   revalidatePath("/score");
   revalidatePath("/brackets");
   revalidatePath("/schedule");
@@ -1016,9 +1018,20 @@ export async function syncScheduleFromBracketsAction(formData: FormData) {
   if (!(await ensureTournamentEditable(tournamentId))) return;
   await requireScorekeeperOrAdmin(tournamentId);
   await syncActiveBracketsToSchedule(tournamentId);
+  await recalculateBracketOddsForTournament(tournamentId);
   revalidatePath("/score");
   revalidatePath("/brackets");
   revalidatePath("/schedule");
+}
+
+export async function recalculateBracketOddsAction(formData: FormData) {
+  await requireAdmin();
+  const tournamentId = await currentTournamentId(text(formData, "tournament_id") || null);
+  if (!(await ensureTournamentEditable(tournamentId))) return;
+  const results = await recalculateBracketOddsForTournament(tournamentId);
+  revalidatePath("/admin/dashboard");
+  revalidatePath("/brackets");
+  redirect(`/admin/dashboard?view=overview&odds_recalculated=${results.length}`);
 }
 
 export async function submitBracketScoreAction(formData: FormData) {
@@ -1051,6 +1064,7 @@ export async function submitBracketScoreAction(formData: FormData) {
   if (!wasComplete && isComplete && scheduleSlot?.schedule_game_id) {
     await completeAndAdvanceCourtGame(scheduleSlot.schedule_game_id);
   }
+  await recalculateBracketOddsForTournament(game.tournament_id);
   revalidatePath("/");
   revalidatePath("/score");
   revalidatePath("/brackets");
@@ -1087,6 +1101,7 @@ export async function submitBracketForfeitAction(formData: FormData) {
   if (!wasComplete && isComplete && scheduleSlot?.schedule_game_id) {
     await completeAndAdvanceCourtGame(scheduleSlot.schedule_game_id);
   }
+  await recalculateBracketOddsForTournament(game.tournament_id);
   revalidatePath("/");
   revalidatePath("/score");
   revalidatePath("/brackets");
@@ -1103,6 +1118,7 @@ export async function resetBracketScoreAction(formData: FormData) {
   if (!(await ensureTournamentEditable(game.tournament_id))) return;
   await requireScorekeeperOrAdmin(game.tournament_id);
   await resetBracketGameScore(bracketGameId);
+  await recalculateBracketOddsForTournament(game.tournament_id);
   revalidatePath("/score");
   revalidatePath("/brackets");
   revalidatePath("/schedule");
@@ -1118,6 +1134,7 @@ export async function rebuildBracketAction(formData: FormData) {
   if ((await scoredTournamentResultCountForDivision(tournamentId, division)) > 0) return;
   await rebuildBracketForDivision(tournamentId, division);
   await syncActiveBracketsToSchedule(tournamentId);
+  await recalculateBracketOddsForTournament(tournamentId);
   revalidatePath("/brackets");
   revalidatePath("/score");
   revalidatePath("/schedule");

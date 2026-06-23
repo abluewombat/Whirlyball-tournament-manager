@@ -1139,6 +1139,35 @@ th {
   padding-top: 12px;
 }
 
+.bracket-division-picker {
+  max-width: 260px;
+}
+
+.bracket-view-card {
+  overflow: hidden;
+}
+
+.bracket-odds-table td:nth-child(3),
+.bracket-odds-table td:nth-child(4) {
+  white-space: nowrap;
+}
+
+.bracket-linked-teams {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bracket-linked-teams span {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
 .qr-code {
   background: white;
   border: 1px solid var(--line);
