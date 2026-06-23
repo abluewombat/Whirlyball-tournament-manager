@@ -96,8 +96,8 @@ function OddsTable({ odds }: { odds: StoredBracketOdds }) {
                 <br />
                 <span className="muted">PD {formatPointDiff(team.pointDiff)}</span>
               </td>
-              <td><strong>{team.titleOdds.toFixed(1)}%</strong></td>
-              <td>{team.finalOdds.toFixed(1)}%</td>
+              <td><strong>{formatOddsPercent(team.titleOdds)}</strong></td>
+              <td>{formatOddsPercent(team.finalOdds)}</td>
               <td>{linkedTeams(team.likelyObstacles)}</td>
               <td>{linkedTeams(team.likelyEliminators)}</td>
             </tr>
@@ -113,13 +113,18 @@ function formatPointDiff(value: number) {
   return String(value);
 }
 
+function formatOddsPercent(value: number) {
+  if (value > 0 && value < 1) return "<1%";
+  return `${value.toFixed(1)}%`;
+}
+
 function linkedTeams(teams: Array<{ team: string; chance: number }>) {
   if (!teams.length) return <span className="muted">Not enough path data</span>;
   return (
     <span className="bracket-linked-teams">
       {teams.map((team) => (
         <span key={team.team}>
-          {team.team} <strong>{team.chance.toFixed(1)}%</strong>
+          {team.team} <strong>{formatOddsPercent(team.chance)}</strong>
         </span>
       ))}
     </span>

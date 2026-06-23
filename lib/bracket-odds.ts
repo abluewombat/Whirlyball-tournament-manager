@@ -521,6 +521,8 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function roundPct(value: number) {
+  const percent = value * 100;
+  if (percent > 0 && percent < 0.1) return 0.1;
   return Math.round(value * 1000) / 10;
 }
 
