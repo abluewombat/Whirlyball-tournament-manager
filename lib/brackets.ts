@@ -71,8 +71,8 @@ export async function maybeCreateBracketForDivision(tournamentId: number, divisi
   if (!existing) await rebuildBracketForDivision(tournamentId, division);
 }
 
-export async function rebuildBracketForDivision(tournamentId: number, division: string) {
-  if ((await scoredTournamentResultCountForDivision(tournamentId, division)) > 0) return null;
+export async function rebuildBracketForDivision(tournamentId: number, division: string, options: { force?: boolean } = {}) {
+  if (!options.force && (await scoredTournamentResultCountForDivision(tournamentId, division)) > 0) return null;
   const standings = (await getStandings(tournamentId, division)).filter((row) => row.division === division);
   if (standings.length < 2) return null;
   const seeds = standings.map((row, index) => ({ seed: index + 1, teamId: row.team_id, team: row.team, center: row.center }));

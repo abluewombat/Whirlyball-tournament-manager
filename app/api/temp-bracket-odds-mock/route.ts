@@ -18,7 +18,7 @@ export const runtime = "nodejs";
 const tournamentSlug = "novi-2026";
 
 type MockRequest = {
-  action?: "apply" | "recalculate" | "reset";
+  action?: "apply" | "clearBrackets" | "recalculate" | "reset";
   snapshotId?: number;
 };
 
@@ -52,6 +52,11 @@ export async function POST(request: Request) {
     if (payload.action === "recalculate") {
       const oddsResults = await recalculateBracketOddsForTournament(tournament.id);
       return NextResponse.json({ ok: true, action: "recalculate", odds: oddsResults });
+    }
+
+    if (payload.action === "clearBrackets") {
+      const result = await clearActiveBrackets(tournament.id);
+      return NextResponse.json({ ok: true, action: "clearBrackets", ...result });
     }
 
     const snapshotLabel = `Pre bracket odds mock ${new Date().toISOString()}`;
@@ -103,6 +108,38 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
+}
+
+async function clearActiveBrackets(tournamentId: number) {
+  return withTransaction(async (client) => {
+    const archived = await client.query(
+      "UPDATE brackets SET status = 'archived', updated_at = NOW() WHERE tournament_id = $1 AND status = 'active'",
+      [tournamentId]
+    );
+    const clearedGames = await client.query(
+      `UPDATE games
+       SET team_1_id = NULL,
+           team_2_id = NULL,
+           team_1_score = NULL,
+           team_2_score = NULL,
+           winner_team_id = NULL,
+           loser_team_id = NULL,
+           result_type = NULL,
+           forfeit_team_id = NULL,
+           scored_by = NULL,
+           scored_at = NULL,
+           actual_started_at = NULL,
+           actual_ended_at = NULL
+       WHERE tournament_id = $1
+         AND phase = 'tournament'
+         AND division <> 'Unlimited'`,
+      [tournamentId]
+    );
+    return {
+      archivedBrackets: archived.rowCount || 0,
+      clearedTournamentGames: clearedGames.rowCount || 0
+    };
+  });
 }
 
 async function tournamentBySlug() {

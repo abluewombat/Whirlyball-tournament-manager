@@ -18,6 +18,7 @@ import { listAvailabilityBlocksByTeams, listPlayersByTeams, listShirtOrdersByPla
 import { currentTournament, tournamentDivisionNames } from "@/lib/tournaments";
 import { AdminScheduleContent } from "../schedule/content";
 import { TournamentManagementContent } from "../tournaments/content";
+import { GenerateBracketForm } from "./generate-bracket-form";
 import { AdminTeamManager } from "./team-picker";
 
 export const dynamic = "force-dynamic";
@@ -39,6 +40,8 @@ type AdminDashboardParams = {
   stream_error?: string;
   stream_live?: string;
   odds_recalculated?: string;
+  bracket_generated?: string;
+  bracket_replaced?: string;
 };
 
 type StreamControlRow = {
@@ -150,6 +153,28 @@ export default async function AdminDashboardPage({
       ORDER BY court_streams.stream_date, court_streams.court`,
     [tournament.id]
   );
+  const [seedingStatus] = await query<{ total: string; unscored: string }>(
+    `SELECT COUNT(*) as total,
+            COUNT(*) FILTER (
+              WHERE result_type IS DISTINCT FROM 'forfeit'
+                AND (team_1_score IS NULL OR team_2_score IS NULL)
+            ) as unscored
+       FROM games
+      WHERE tournament_id = $1
+        AND phase = 'seeding'
+        AND division <> 'Unlimited'
+        AND team_1_id IS NOT NULL
+        AND team_2_id IS NOT NULL`,
+    [tournament.id]
+  );
+  const [activeBracketStatus] = await query<{ count: string }>(
+    "SELECT COUNT(*) as count FROM brackets WHERE tournament_id = $1 AND status = 'active'",
+    [tournament.id]
+  );
+  const seedingGameCount = Number(seedingStatus?.total || 0);
+  const unscoredSeedingCount = Number(seedingStatus?.unscored || 0);
+  const seedingComplete = seedingGameCount > 0 && unscoredSeedingCount === 0;
+  const activeBracketCount = Number(activeBracketStatus?.count || 0);
 
   const overview = (
     <section className="section grid dashboard-card-grid">
@@ -235,16 +260,30 @@ export default async function AdminDashboardPage({
 
       <article className="card">
         <h2>Bracket Odds</h2>
+        {params.bracket_generated !== undefined ? (
+          <p className="pill ok">
+            {params.bracket_replaced ? "Replaced" : "Generated"} {Number(params.bracket_generated) || 0} tournament brackets.
+          </p>
+        ) : null}
         {params.odds_recalculated !== undefined ? (
           <p className="pill ok">Recalculated odds for {Number(params.odds_recalculated) || 0} active brackets.</p>
         ) : null}
         <p className="muted">
-          Run this after the externally generated bracket has been uploaded, or any time you want to refresh projected title odds.
+          Generate double-elimination brackets from completed seeding standings, or refresh projected title odds.
           Bracket score entry also recalculates odds automatically.
         </p>
+        <GenerateBracketForm
+          tournamentId={tournament.id}
+          seedingComplete={seedingComplete}
+          activeBracketCount={activeBracketCount}
+          unscoredSeedingCount={unscoredSeedingCount}
+        />
+        {activeBracketCount ? (
+          <p className="muted">{activeBracketCount} active bracket {activeBracketCount === 1 ? "division" : "divisions"} currently exists.</p>
+        ) : null}
         <form action={recalculateBracketOddsAction} className="stack">
           <input name="tournament_id" type="hidden" value={tournament.id} />
-          <button className="button">Recalculate Bracket Odds</button>
+          <button className="button secondary">Recalculate Bracket Odds</button>
         </form>
         <p className="muted section">
           <a href="/brackets">View public brackets</a>

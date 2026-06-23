@@ -980,6 +980,7 @@ export async function generateBracketAction(formData: FormData) {
   const tournamentId = await currentTournamentId(text(formData, "tournament_id") || null);
   if (!(await ensureTournamentEditable(tournamentId))) return;
   await requireScorekeeperOrAdmin(tournamentId);
+  const force = text(formData, "force") === "1";
   const [remaining] = await query<{ count: string }>(
     `SELECT COUNT(*) as count
      FROM games
@@ -994,6 +995,34 @@ export async function generateBracketAction(formData: FormData) {
   );
   if (Number(remaining?.count || 0) > 0) return;
 
+  if (force) {
+    await withTransaction(async (client) => {
+      await client.query(
+        "UPDATE brackets SET status = 'archived', updated_at = NOW() WHERE tournament_id = $1 AND status = 'active'",
+        [tournamentId]
+      );
+      await client.query(
+        `UPDATE games
+         SET team_1_id = NULL,
+             team_2_id = NULL,
+             team_1_score = NULL,
+             team_2_score = NULL,
+             winner_team_id = NULL,
+             loser_team_id = NULL,
+             result_type = NULL,
+             forfeit_team_id = NULL,
+             scored_by = NULL,
+             scored_at = NULL,
+             actual_started_at = NULL,
+             actual_ended_at = NULL
+         WHERE tournament_id = $1
+           AND phase = 'tournament'
+           AND division <> 'Unlimited'`,
+        [tournamentId]
+      );
+    });
+  }
+
   const divisions = await query<{ division: string }>(
     `SELECT DISTINCT division
      FROM games
@@ -1005,12 +1034,18 @@ export async function generateBracketAction(formData: FormData) {
      ORDER BY division`,
     [tournamentId]
   );
-  for (const { division } of divisions) await rebuildBracketForDivision(tournamentId, division);
+  let generatedCount = 0;
+  for (const { division } of divisions) {
+    const bracketId = await rebuildBracketForDivision(tournamentId, division, { force });
+    if (bracketId) generatedCount++;
+  }
   await syncActiveBracketsToSchedule(tournamentId);
   await recalculateBracketOddsForTournament(tournamentId);
+  revalidatePath("/admin/dashboard");
   revalidatePath("/score");
   revalidatePath("/brackets");
   revalidatePath("/schedule");
+  redirect(`/admin/dashboard?view=overview&bracket_generated=${generatedCount}${force ? "&bracket_replaced=1" : ""}`);
 }
 
 export async function syncScheduleFromBracketsAction(formData: FormData) {
