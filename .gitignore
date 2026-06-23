@@ -9,6 +9,7 @@ tsconfig.tsbuildinfo
 .env
 .env.local
 exports
+output
 output/schedule-import/temp-seed-token.*
 
 .vercel
