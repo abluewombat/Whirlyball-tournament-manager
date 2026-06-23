@@ -68,7 +68,7 @@ function scheduleSyncEnabled(request: NextRequest) {
   const queryValue = request.nextUrl.searchParams.get("scheduleSync");
   if (queryValue && ["0", "false", "off", "no"].includes(queryValue.toLowerCase())) return false;
   if (queryValue && ["1", "true", "on", "yes"].includes(queryValue.toLowerCase())) return true;
-  return process.env.GOOGLE_SCHEDULE_SYNC_ENABLED !== "false";
+  return process.env.GOOGLE_SCHEDULE_SYNC_ENABLED === "true";
 }
 
 function disabledScheduleSummary(): GoogleScheduleSyncSummary {
