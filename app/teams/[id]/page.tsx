@@ -4,7 +4,7 @@ import { listTournamentDivisions, query } from "@/lib/db";
 import { getStandings, type StandingRow } from "@/lib/standings";
 import { LiveRefresh } from "@/app/live-refresh";
 import { currentTournament, tournamentPath } from "@/lib/tournaments";
-import { formatStreamOffset, youtubeReplayOffsetSeconds, youtubeReplayUrl } from "@/lib/streams";
+import { publicStreamLinkForGame } from "@/lib/streams";
 import { tournamentDateKey, tournamentTimeLabel, tournamentWeekdayLabel } from "@/lib/time-format";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +37,7 @@ type TeamGame = {
   ref_team: string | null;
   label: string | null;
   actual_started_at: string | null;
+  actual_ended_at: string | null;
   youtube_video_id: string | null;
   stream_started_at: string | null;
 };
@@ -139,7 +140,7 @@ export default async function TeamPage({
     `SELECT games.id, games.phase, games.division, games.starts_at, games.court,
             games.team_1_id, games.team_2_id, games.team_1_score, games.team_2_score,
             games.winner_team_id, games.loser_team_id, games.result_type, games.forfeit_team_id,
-            games.ref_team_id, games.label, games.actual_started_at,
+            games.ref_team_id, games.label, games.actual_started_at, games.actual_ended_at,
             t1.name as team_1, t2.name as team_2, tr.name as ref_team,
             court_streams.youtube_video_id, court_streams.stream_started_at
      FROM games
@@ -233,7 +234,7 @@ export default async function TeamPage({
                             {playing ? <div className="muted">Opponent: {opponentLabel(game, team.id)}</div> : null}
                           </td>
                           <td>{playing ? scoreEntryCell(game, team.id, teamPagePath) : scoreLabel(game, team.id)}</td>
-                          <td>{replayLink(game)}</td>
+                          <td>{streamLink(game)}</td>
                         </tr>
                       );
                     })}
@@ -653,17 +654,17 @@ function groupGamesByDay(games: TeamGame[], timeZone: string) {
     }));
 }
 
-function replayLink(game: TeamGame) {
-  if (!isScored(game) || !game.actual_started_at || !game.youtube_video_id || !game.stream_started_at) return null;
-  const offset = youtubeReplayOffsetSeconds(game.actual_started_at, game.stream_started_at);
+function streamLink(game: TeamGame) {
+  const link = publicStreamLinkForGame(game);
+  if (!link.url) return null;
   return (
     <a
       className="schedule-stream-link"
-      href={youtubeReplayUrl(game.youtube_video_id, game.actual_started_at, game.stream_started_at)}
+      href={link.url}
       target="_blank"
       rel="noreferrer"
     >
-      Replay {formatStreamOffset(offset)}
+      {link.label}
     </a>
   );
 }

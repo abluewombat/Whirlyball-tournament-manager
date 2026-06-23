@@ -22,6 +22,7 @@ export async function LiveNow({ tournament }: { tournament: TournamentRow }) {
      WHERE games.tournament_id = $1
        AND games.actual_started_at IS NOT NULL
        AND games.actual_started_at <= NOW()
+       AND games.starts_at <= NOW()
        AND games.actual_ended_at IS NULL
        AND (games.team_1_score IS NULL OR games.team_2_score IS NULL)
        AND games.result_type IS DISTINCT FROM 'forfeit'

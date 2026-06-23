@@ -11,7 +11,7 @@ import {
   maxOpponentRepeat,
   mostRepeatedOpponent
 } from "@/lib/schedule-quality";
-import { formatStreamOffset, youtubeReplayOffsetSeconds, youtubeReplayUrl, youtubeWatchUrl } from "@/lib/streams";
+import { publicStreamLinkForGame } from "@/lib/streams";
 import { tournamentDayLabel, tournamentTimeLabel } from "@/lib/time-format";
 
 export const dynamic = "force-dynamic";
@@ -400,7 +400,7 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
     const resultText = publicResultText(game);
     const gameText = scheduleGameText(game, hiddenDivisionLabels, resultText);
     const scored = isCompleteResult(game);
-    const streamLink = publicStreamLink(game, scored);
+    const streamLink = publicStreamLinkForGame(game);
 
     if (game.court === 1) {
       row.court1Ref = refTeamLabel(game);
@@ -513,20 +513,6 @@ function scheduleGameText(game: PublicScheduleGame, hiddenDivisionLabels: Set<st
 
 function isOpenScheduleSlot(game: PublicScheduleGame) {
   return game.division === "Open" && game.label === "Open schedule slot" && game.team_1_id === null && game.team_2_id === null;
-}
-
-function publicStreamLink(game: PublicScheduleGame, scored: boolean) {
-  if (!game.youtube_video_id || !game.actual_started_at || !game.stream_started_at) return { url: "", label: "" };
-  const startedAt = Date.parse(game.actual_started_at);
-  const liveWindowMs = 45 * 60 * 1000;
-  if (!scored && !game.actual_ended_at && Number.isFinite(startedAt) && startedAt <= Date.now() && Date.now() - startedAt <= liveWindowMs) {
-    return { url: youtubeWatchUrl(game.youtube_video_id), label: "Watch live" };
-  }
-  const offset = youtubeReplayOffsetSeconds(game.actual_started_at, game.stream_started_at);
-  return {
-    url: youtubeReplayUrl(game.youtube_video_id, game.actual_started_at, game.stream_started_at),
-    label: scored ? `Replay around ${formatStreamOffset(offset)}` : `Estimated replay ${formatStreamOffset(offset)}`
-  };
 }
 
 function isCompleteResult(game: PublicScheduleGame) {

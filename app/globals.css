@@ -410,12 +410,17 @@ a {
 }
 
 .schedule-stream-link {
-  color: white;
+  color: #d7f0ff;
   display: block;
   font-size: 12px;
   font-weight: 700;
   margin-top: 6px;
   text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.schedule-game-cell .schedule-stream-link {
+  color: #064e70;
 }
 
 .card {

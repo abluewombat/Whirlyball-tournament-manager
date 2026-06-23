@@ -51,6 +51,43 @@ export function youtubeReplayUrl(videoId: string, gameStartedAt: string, streamS
   return `${youtubeWatchUrl(videoId)}&t=${offset}s`;
 }
 
+export type PublicStreamLinkInput = {
+  starts_at: string;
+  actual_started_at: string | null;
+  actual_ended_at?: string | null;
+  youtube_video_id: string | null;
+  stream_started_at: string | null;
+  team_1_score: number | null;
+  team_2_score: number | null;
+  result_type: string | null;
+};
+
+export function publicStreamLinkForGame(game: PublicStreamLinkInput, now = Date.now()) {
+  if (!game.youtube_video_id || !game.actual_started_at || !game.stream_started_at) return { url: "", label: "" };
+  const scored = (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
+  const startedAt = Date.parse(game.actual_started_at);
+  const scheduledAt = Date.parse(game.starts_at);
+  const liveWindowMs = 45 * 60 * 1000;
+
+  if (
+    !scored &&
+    !game.actual_ended_at &&
+    Number.isFinite(startedAt) &&
+    Number.isFinite(scheduledAt) &&
+    startedAt <= now &&
+    scheduledAt <= now &&
+    now - startedAt <= liveWindowMs
+  ) {
+    return { url: youtubeWatchUrl(game.youtube_video_id), label: "Watch live" };
+  }
+
+  const offset = youtubeReplayOffsetSeconds(game.actual_started_at, game.stream_started_at);
+  return {
+    url: youtubeReplayUrl(game.youtube_video_id, game.actual_started_at, game.stream_started_at),
+    label: scored ? `Replay around ${formatStreamOffset(offset)}` : `Estimated replay ${formatStreamOffset(offset)}`
+  };
+}
+
 export function formatStreamOffset(seconds: number) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
