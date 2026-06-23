@@ -3,7 +3,7 @@
   "buildCommand": "npm run build",
   "crons": [
     {
-      "path": "/api/cron/sync-google-scores?scheduleSync=0",
+      "path": "/api/cron/sync-google-scores?scheduleSync=1",
       "schedule": "*/2 * * * *"
     }
   ]
