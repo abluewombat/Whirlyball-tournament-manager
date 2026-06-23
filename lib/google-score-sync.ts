@@ -1,4 +1,5 @@
 import { JWT } from "google-auth-library";
+import xlsx from "xlsx";
 import { query, withTransaction } from "./db";
 import { scoreCourtGameFromSync } from "./score-sync";
 import { estimateUnfilledStreamGameStarts, linkGamesToExistingCourtStreams } from "./streams";
@@ -6,6 +7,11 @@ import { estimateUnfilledStreamGameStarts, linkGamesToExistingCourtStreams } fro
 type GoogleSheetValuesResponse = {
   range?: string;
   values?: string[][];
+};
+
+type GoogleSheetRows = {
+  sheetName: string;
+  values: string[][];
 };
 
 type GoogleSpreadsheetResponse = {
@@ -115,17 +121,17 @@ const dayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDA
 
 export async function syncGoogleSheetScores(tournamentId: number): Promise<GoogleScoreSyncSummary> {
   const spreadsheetId = process.env.GOOGLE_SCORES_SPREADSHEET_ID || defaultSpreadsheetId;
-  const sheetName = await resolveGoogleSheetName(spreadsheetId, {
-    sheetIndex: process.env.GOOGLE_SCORES_SHEET_INDEX,
-    sheetName: process.env.GOOGLE_SCORES_SHEET_NAME
-  });
   const range = process.env.GOOGLE_SCORES_RANGE || defaultRange;
-  const values = await readGoogleSheetValues(spreadsheetId, sheetName, range);
+  const sheet = await readGoogleSheetRows(spreadsheetId, {
+    sheetIndex: process.env.GOOGLE_SCORES_SHEET_INDEX,
+    sheetName: process.env.GOOGLE_SCORES_SHEET_NAME,
+    range
+  });
   const games = await loadScheduleGameMatches(tournamentId);
   const dateByDayName = buildDateByDayName(games);
-  const parsedRows = parseScheduleSheetScores(values, sheetName, dateByDayName);
+  const parsedRows = parseScheduleSheetScores(sheet.values, sheet.sheetName, dateByDayName);
   const summary: GoogleScoreSyncSummary = {
-    sheetName,
+    sheetName: sheet.sheetName,
     parsedRows: parsedRows.length,
     scoredRows: 0,
     updated: 0,
@@ -177,15 +183,15 @@ export async function syncGoogleSheetScores(tournamentId: number): Promise<Googl
 
 export async function syncGoogleSheetSchedule(tournamentId: number): Promise<GoogleScheduleSyncSummary> {
   const spreadsheetId = process.env.GOOGLE_SCORES_SPREADSHEET_ID || defaultSpreadsheetId;
-  const sheetName = await resolveGoogleSheetName(spreadsheetId, {
-    sheetIndex: process.env.GOOGLE_SCHEDULE_SYNC_SHEET_INDEX || process.env.GOOGLE_SCORES_SHEET_INDEX,
-    sheetName: process.env.GOOGLE_SCHEDULE_SYNC_SHEET_NAME || process.env.GOOGLE_SCORES_SHEET_NAME
-  });
   const range = process.env.GOOGLE_SCHEDULE_SYNC_RANGE || process.env.GOOGLE_SCORES_RANGE || defaultRange;
-  const values = await readGoogleSheetValues(spreadsheetId, sheetName, range);
+  const sheet = await readGoogleSheetRows(spreadsheetId, {
+    sheetIndex: process.env.GOOGLE_SCHEDULE_SYNC_SHEET_INDEX || process.env.GOOGLE_SCORES_SHEET_INDEX,
+    sheetName: process.env.GOOGLE_SCHEDULE_SYNC_SHEET_NAME || process.env.GOOGLE_SCORES_SHEET_NAME,
+    range
+  });
   const games = await loadScheduleGameMatches(tournamentId);
   const dateByDayName = buildDateByDayName(games);
-  const parsedRows = parseScheduleSheetScores(values, sheetName, dateByDayName);
+  const parsedRows = parseScheduleSheetScores(sheet.values, sheet.sheetName, dateByDayName);
 
   return withTransaction(async (client) => {
     const teamRows = await client.query<TeamMatch>(
@@ -198,7 +204,7 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
     const teamsByName = new Map(teamRows.rows.map((team) => [normalizeTeamName(team.name), team]));
     const summary: GoogleScheduleSyncSummary = {
       enabled: true,
-      sheetName,
+      sheetName: sheet.sheetName,
       parsedRows: parsedRows.length,
       gamesInserted: 0,
       gamesUpdated: 0,
@@ -324,6 +330,26 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
   });
 }
 
+async function readGoogleSheetRows(spreadsheetId: string, options: { sheetIndex?: string; sheetName?: string; range: string }): Promise<GoogleSheetRows> {
+  try {
+    const sheetName = await resolveGoogleSheetName(spreadsheetId, {
+      sheetIndex: options.sheetIndex,
+      sheetName: options.sheetName
+    });
+    return {
+      sheetName,
+      values: await readGoogleSheetValues(spreadsheetId, sheetName, options.range)
+    };
+  } catch (error) {
+    if (!isUnsupportedOfficeFileError(error)) throw error;
+    return readGoogleDriveWorkbookRows(spreadsheetId, {
+      sheetIndex: options.sheetIndex,
+      sheetName: options.sheetName,
+      range: options.range
+    });
+  }
+}
+
 async function resolveGoogleSheetName(spreadsheetId: string, options: { sheetIndex?: string; sheetName?: string }) {
   const trimmedIndex = options.sheetIndex?.trim();
   const requestedIndex = trimmedIndex === undefined || trimmedIndex === "" ? defaultSheetIndex : Number(trimmedIndex);
@@ -360,6 +386,71 @@ async function readGoogleSheetNameByIndex(spreadsheetId: string, sheetIndex: num
   const selected = sheets.find((sheet) => sheet.index === sheetIndex) || sheets[sheetIndex];
   if (!selected) throw new Error(`Google Sheet tab index ${sheetIndex} was not found.`);
   return selected.title;
+}
+
+async function readGoogleDriveWorkbookRows(spreadsheetId: string, options: { sheetIndex?: string; sheetName?: string; range: string }): Promise<GoogleSheetRows> {
+  const client = googleJwtClient();
+  const accessToken = await client.getAccessToken();
+  const token = typeof accessToken === "string" ? accessToken : accessToken?.token;
+  if (!token) throw new Error("Unable to obtain a Google access token.");
+
+  const params = new URLSearchParams();
+  params.set("alt", "media");
+  params.set("supportsAllDrives", "true");
+  const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(spreadsheetId)}?${params.toString()}`;
+  const response = await fetch(url, {
+    headers: { authorization: `Bearer ${token}` },
+    cache: "no-store"
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Google Drive workbook download failed (${response.status}): ${body.slice(0, 500)}`);
+  }
+
+  const workbook = xlsx.read(Buffer.from(await response.arrayBuffer()), { type: "buffer", cellDates: false });
+  const sheetName = selectWorkbookSheetName(workbook.SheetNames, {
+    sheetIndex: options.sheetIndex,
+    sheetName: options.sheetName
+  });
+  const worksheet = workbook.Sheets[sheetName];
+  if (!worksheet) throw new Error(`Workbook sheet "${sheetName}" was not found.`);
+  return {
+    sheetName,
+    values: workbookRangeValues(worksheet, options.range)
+  };
+}
+
+function selectWorkbookSheetName(sheetNames: string[], options: { sheetIndex?: string; sheetName?: string }) {
+  const trimmedIndex = options.sheetIndex?.trim();
+  const requestedIndex = trimmedIndex === undefined || trimmedIndex === "" ? defaultSheetIndex : Number(trimmedIndex);
+  if (Number.isInteger(requestedIndex) && requestedIndex >= 0) {
+    const sheetName = sheetNames[requestedIndex];
+    if (!sheetName) throw new Error(`Workbook sheet index ${requestedIndex} was not found.`);
+    return sheetName;
+  }
+  if (options.sheetName?.trim()) {
+    const requestedName = options.sheetName.trim();
+    const sheetName = sheetNames.find((candidate) => candidate === requestedName);
+    if (sheetName) return sheetName;
+    throw new Error(`Workbook sheet "${requestedName}" was not found.`);
+  }
+  throw new Error(`GOOGLE_SCORES_SHEET_INDEX must be a non-negative integer when set. Received: ${options.sheetIndex}`);
+}
+
+function workbookRangeValues(worksheet: xlsx.WorkSheet, range: string) {
+  return xlsx.utils
+    .sheet_to_json<unknown[]>(worksheet, {
+      header: 1,
+      defval: "",
+      raw: false,
+      range
+    })
+    .map((row) => row.map((cell) => String(cell ?? "").trim()));
+}
+
+function isUnsupportedOfficeFileError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("not supported for this document") || message.includes("must not be an Office file");
 }
 
 async function readGoogleSheetValues(spreadsheetId: string, sheetName: string, range: string) {
@@ -402,7 +493,7 @@ function googleJwtClient() {
   return new JWT({
     email: credentials.client_email,
     key: credentials.private_key.replace(/\\n/g, "\n"),
-    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly", "https://www.googleapis.com/auth/drive.readonly"]
   });
 }
 
