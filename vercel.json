@@ -4,7 +4,7 @@
   "crons": [
     {
       "path": "/api/cron/sync-google-scores?scheduleSync=0",
-      "schedule": "* * * * *"
+      "schedule": "*/2 * * * *"
     }
   ]
 }
