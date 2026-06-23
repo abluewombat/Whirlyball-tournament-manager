@@ -102,6 +102,8 @@ function disabledScheduleSummary(): GoogleScheduleSyncSummary {
     gamesInserted: 0,
     gamesUpdated: 0,
     gamesUnchanged: 0,
+    gamesDeleted: 0,
+    scoredGamesRetained: 0,
     refsUpdated: 0,
     refsUnchanged: 0,
     streamsLinked: 0,
@@ -113,7 +115,7 @@ function googleSheetChangedCount(
   scheduleSync: GoogleScheduleSyncSummary,
   scoreSync: { updated: number }
 ) {
-  return scheduleSync.gamesInserted + scheduleSync.gamesUpdated + scheduleSync.refsUpdated + scoreSync.updated;
+  return scheduleSync.gamesInserted + scheduleSync.gamesUpdated + scheduleSync.gamesDeleted + scheduleSync.refsUpdated + scoreSync.updated;
 }
 
 function googleSheetSyncSummaryText(
@@ -124,6 +126,7 @@ function googleSheetSyncSummaryText(
     countText(scoreSync.updated, "game scored", "games scored"),
     countText(scheduleSync.gamesInserted, "game added", "games added"),
     countText(scheduleSync.gamesUpdated, "game updated", "games updated"),
+    countText(scheduleSync.gamesDeleted, "game removed", "games removed"),
     countText(scheduleSync.refsUpdated, "ref updated", "refs updated")
   ].filter(Boolean);
   return parts.join(", ") || "No changes";

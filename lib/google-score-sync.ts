@@ -77,6 +77,11 @@ type DbGameRow = {
   scored_at: Date | null;
 };
 
+type SyncDeleteCandidate = DbGameRow & {
+  court: number;
+  starts_at: string;
+};
+
 export type GoogleScoreSyncSummary = {
   sheetName: string;
   parsedRows: number;
@@ -100,6 +105,8 @@ export type GoogleScheduleSyncSummary = {
   gamesInserted: number;
   gamesUpdated: number;
   gamesUnchanged: number;
+  gamesDeleted: number;
+  scoredGamesRetained: number;
   refsUpdated: number;
   refsUnchanged: number;
   streamsLinked: number;
@@ -255,11 +262,15 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
       gamesInserted: 0,
       gamesUpdated: 0,
       gamesUnchanged: 0,
+      gamesDeleted: 0,
+      scoredGamesRetained: 0,
       refsUpdated: 0,
       refsUnchanged: 0,
       streamsLinked: 0,
       skipped: []
     };
+    const sourceGameKeys = new Set<string>();
+    const sourceLocalDates = new Set<string>();
 
     const skip = (row: ParsedSheetGame, reason: string) => {
       summary.skipped.push({
@@ -283,6 +294,8 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
         skip(row, "Teams are not in the same syncable division");
         continue;
       }
+      sourceGameKeys.add(syncGameKey(row.startsAt, row.court, team1.division, team1.id, team2.id));
+      sourceLocalDates.add(row.localDate);
 
       let refTeam: TeamMatch | null = null;
       let shouldUpdateRef = false;
@@ -369,9 +382,53 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
       }
     }
 
+    const deleteSummary = await deleteMissingSheetGames(client, tournamentId, sourceGameKeys, sourceLocalDates);
+    summary.gamesDeleted = deleteSummary.deleted;
+    summary.scoredGamesRetained = deleteSummary.scoredRetained;
+
     summary.streamsLinked = await linkGamesToExistingCourtStreams(client, tournamentId);
     return summary;
   });
+}
+
+async function deleteMissingSheetGames(
+  client: { query: (sql: string, params?: unknown[]) => Promise<{ rows: SyncDeleteCandidate[]; rowCount?: number }> },
+  tournamentId: number,
+  sourceGameKeys: Set<string>,
+  sourceLocalDates: Set<string>
+) {
+  if (!sourceLocalDates.size) return { deleted: 0, scoredRetained: 0 };
+
+  const candidates = await client.query(
+    `SELECT games.id, games.phase, games.division, games.court, games.starts_at,
+            games.team_1_id, games.team_2_id, games.ref_team_id, games.label,
+            games.team_1_score, games.team_2_score, games.winner_team_id, games.loser_team_id,
+            games.result_type, games.forfeit_team_id, games.scored_at
+       FROM games
+       JOIN tournaments ON tournaments.id = games.tournament_id
+      WHERE games.tournament_id = $1
+        AND games.phase = 'seeding'
+        AND games.division = ANY($2::text[])
+        AND games.team_1_id IS NOT NULL
+        AND games.team_2_id IS NOT NULL
+        AND to_char(games.starts_at AT TIME ZONE tournaments.timezone, 'YYYY-MM-DD') = ANY($3::text[])`,
+    [tournamentId, ["A", "B", "C", "D"], [...sourceLocalDates]]
+  );
+
+  const deleteIds: number[] = [];
+  let scoredRetained = 0;
+  for (const game of candidates.rows) {
+    if (sourceGameKeys.has(syncGameKey(game.starts_at, game.court, game.division, game.team_1_id || 0, game.team_2_id || 0))) continue;
+    if (isScored(game)) {
+      scoredRetained += 1;
+      continue;
+    }
+    deleteIds.push(game.id);
+  }
+
+  if (!deleteIds.length) return { deleted: 0, scoredRetained };
+  const deleted = await client.query("DELETE FROM games WHERE id = ANY($1::int[])", [deleteIds]);
+  return { deleted: deleted.rowCount || 0, scoredRetained };
 }
 
 async function readGoogleSheetRows(spreadsheetId: string, options: { sheetIndex?: string; sheetName?: string; range: string }): Promise<GoogleSheetRows> {
@@ -780,6 +837,12 @@ function startsAtWithDetroitOffset(localDate: string, localMinute: number) {
 
 function sameGame(game: Pick<DbGameRow, "division" | "team_1_id" | "team_2_id">, division: string, team1Id: number, team2Id: number) {
   return game.division === division && game.team_1_id === team1Id && game.team_2_id === team2Id;
+}
+
+function syncGameKey(startsAt: string | Date, court: number, division: string, team1Id: number, team2Id: number) {
+  const millis = startsAt instanceof Date ? startsAt.getTime() : Date.parse(startsAt);
+  const timeKey = Number.isFinite(millis) ? String(millis) : String(startsAt);
+  return [timeKey, court, division, team1Id, team2Id].join("|");
 }
 
 function isScored(game: Pick<DbGameRow, "team_1_score" | "team_2_score" | "winner_team_id" | "loser_team_id" | "result_type" | "forfeit_team_id" | "scored_at">) {
