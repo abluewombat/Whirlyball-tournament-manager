@@ -863,48 +863,10 @@ export async function submitGameScoreAction(formData: FormData) {
 }
 
 export async function submitPublicTeamGameScoreAction(formData: FormData) {
-  const gameId = num(formData, "game_id");
   const teamId = num(formData, "team_id");
-  const team1Score = num(formData, "team_1_score");
-  const team2Score = num(formData, "team_2_score");
   const fallbackPath = Number.isInteger(teamId) && teamId > 0 ? `/teams/${teamId}` : "/teams";
   const returnTo = safeReturnPath(text(formData, "return_to"), fallbackPath);
-  if (!validScore(team1Score) || !validScore(team2Score) || !Number.isInteger(teamId) || teamId <= 0) redirect(returnTo);
-
-  const [game] = await query<{
-    tournament_id: number;
-    phase: string;
-    team_1_id: number | null;
-    team_2_id: number | null;
-    team_1_score: number | null;
-    team_2_score: number | null;
-    result_type: string | null;
-  }>(
-    "SELECT tournament_id, phase, team_1_id, team_2_id, team_1_score, team_2_score, result_type FROM games WHERE id = $1",
-    [gameId]
-  );
-  if (!game || game.team_1_id === null || game.team_2_id === null) redirect(returnTo);
-  if (game.team_1_id !== teamId && game.team_2_id !== teamId) redirect(returnTo);
-  if (!(await ensureTournamentEditable(game.tournament_id))) redirect(returnTo);
-
-  const winnerId = team1Score === team2Score ? null : team1Score > team2Score ? game.team_1_id : game.team_2_id;
-  const loserId = winnerId === null ? null : winnerId === game.team_1_id ? game.team_2_id : game.team_1_id;
-  const wasComplete = (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
-  await exec(
-    `UPDATE games
-     SET team_1_score = $1, team_2_score = $2, winner_team_id = $3, loser_team_id = $4,
-         result_type = 'score', forfeit_team_id = NULL, scored_by = 'public-team-page', scored_at = NOW()
-     WHERE id = $5`,
-    [team1Score, team2Score, winnerId, loserId, gameId]
-  );
-  if (!wasComplete) await completeAndAdvanceCourtGame(gameId);
-  revalidatePath("/");
-  revalidatePath("/score");
-  revalidatePath("/schedule");
-  revalidatePath("/standings");
-  revalidatePath(`/teams/${teamId}`);
-  revalidatePath(returnTo.split("?")[0] || fallbackPath);
-  redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}score_saved=1`);
+  redirect(returnTo);
 }
 
 export async function resetGameScoreAction(formData: FormData) {

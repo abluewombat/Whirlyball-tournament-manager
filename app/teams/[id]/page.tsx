@@ -1,5 +1,4 @@
 import { notFound } from "next/navigation";
-import { submitPublicTeamGameScoreAction } from "@/app/actions";
 import { listTournamentDivisions, query } from "@/lib/db";
 import { getStandings, type StandingRow } from "@/lib/standings";
 import { LiveRefresh } from "@/app/live-refresh";
@@ -116,14 +115,11 @@ const divisionClassNames: Record<string, string> = {
 };
 
 export default async function TeamPage({
-  params,
-  searchParams
+  params
 }: {
   params: Promise<{ id: string }>;
-  searchParams?: Promise<{ score_saved?: string }>;
 }) {
   const { id } = await params;
-  const pageParams = searchParams ? await searchParams : {};
   const teamId = Number(id);
   const tournament = await currentTournament();
   const timeZone = tournament.timezone;
@@ -221,7 +217,6 @@ export default async function TeamPage({
           </div>
           <img alt={`${team.name} QR code`} className="qr-code" src={qrUrl} />
         </div>
-        {pageParams.score_saved ? <p className="pill ok">Score saved. Replay timing will update when a court stream is connected.</p> : null}
       </section>
 
       <section className="section card">
@@ -257,7 +252,7 @@ export default async function TeamPage({
                             <div>{game.team_1 && game.team_2 ? `${game.team_1} vs. ${game.team_2}` : `${game.division}: ${game.label || "Game"}`}</div>
                             {playing ? <div className="muted">Opponent: {opponentLabel(game, team.id)}</div> : null}
                           </td>
-                          <td>{playing ? scoreEntryCell(game, team.id, teamPagePath) : scoreLabel(game, team.id)}</td>
+                          <td>{scoreLabel(game, team.id)}</td>
                           <td>{streamLink(game)}</td>
                         </tr>
                       );
@@ -723,27 +718,6 @@ function scoreLabel(game: TeamGame, teamId: number) {
   const opponentScore = game.team_1_id === teamId ? game.team_2_score || 0 : game.team_1_score || 0;
   const result = teamScore === opponentScore ? "T" : teamScore > opponentScore ? "W" : "L";
   return `${teamScore}-${opponentScore} ${result}`;
-}
-
-function scoreEntryCell(game: TeamGame, teamId: number, returnTo: string) {
-  if (isScored(game)) return scoreLabel(game, teamId);
-  if (!game.team_1 || !game.team_2 || !isPlaying(game, teamId)) return "";
-  return (
-    <form action={submitPublicTeamGameScoreAction} className="team-inline-score-form">
-      <input name="game_id" type="hidden" value={game.id} />
-      <input name="team_id" type="hidden" value={teamId} />
-      <input name="return_to" type="hidden" value={returnTo} />
-      <label>
-        <span>{game.team_1}</span>
-        <input name="team_1_score" type="number" inputMode="numeric" min="0" required aria-label={`${game.team_1} score`} />
-      </label>
-      <label>
-        <span>{game.team_2}</span>
-        <input name="team_2_score" type="number" inputMode="numeric" min="0" required aria-label={`${game.team_2} score`} />
-      </label>
-      <button className="button secondary">Save</button>
-    </form>
-  );
 }
 
 function recordText(wins: number, losses: number, ties: number) {
