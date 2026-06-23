@@ -227,14 +227,9 @@ export default async function PublicSchedulePage({
   return (
     <main className="content schedule-page">
       <ScheduleGridDisplayRefresh seconds={15} />
-      <div className="section-heading schedule-page-heading">
-        <div>
-          <h1>Public Schedule</h1>
-          <p className="muted">
-            {games.length ? `${games.length} scheduled games${lastUpdated ? ` loaded ${lastUpdated}` : ""}.` : "No tournament schedule has been generated yet."}
-          </p>
-        </div>
-      </div>
+      <p className="schedule-page-refresh muted">
+        {games.length && lastUpdated ? `Last refreshed: ${lastUpdated}` : "No tournament schedule has been generated yet."}
+      </p>
       <div className="schedule-sync-sticky">
         <ScheduleSyncStatus status={syncStatus} timeZone={tournament.timezone} />
       </div>
