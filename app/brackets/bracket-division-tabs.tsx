@@ -75,6 +75,7 @@ function OddsTable({ odds }: { odds: StoredBracketOdds }) {
           <tr>
             <th>Seed</th>
             <th>Team</th>
+            <th>Record</th>
             <th>Win Championship</th>
             <th>Reach Championship</th>
             <th>Likely Path Opponents</th>
@@ -90,6 +91,11 @@ function OddsTable({ odds }: { odds: StoredBracketOdds }) {
                 <br />
                 <span className="muted">{team.center}</span>
               </td>
+              <td>
+                <strong>{team.record}</strong>
+                <br />
+                <span className="muted">PD {formatPointDiff(team.pointDiff)}</span>
+              </td>
               <td><strong>{team.titleOdds.toFixed(1)}%</strong></td>
               <td>{team.finalOdds.toFixed(1)}%</td>
               <td>{linkedTeams(team.likelyObstacles)}</td>
@@ -100,6 +106,11 @@ function OddsTable({ odds }: { odds: StoredBracketOdds }) {
       </table>
     </div>
   );
+}
+
+function formatPointDiff(value: number) {
+  if (value > 0) return `+${value}`;
+  return String(value);
 }
 
 function linkedTeams(teams: Array<{ team: string; chance: number }>) {

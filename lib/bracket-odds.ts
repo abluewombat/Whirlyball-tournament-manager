@@ -65,6 +65,9 @@ export type StoredBracketOdds = {
     team: string;
     center: string;
     seed: number;
+    record: string;
+    pointDiff: number;
+    gamesPlayed: number;
     rating: number;
     titleOdds: number;
     finalOdds: number;
@@ -177,6 +180,9 @@ async function calculateBracketOdds(tournamentId: number, bracket: ActiveBracket
         team: profile.team,
         center: profile.center,
         seed: profile.seed,
+        record: recordText(profile.standings),
+        pointDiff: profile.standings?.point_diff || 0,
+        gamesPlayed: profile.standings?.games_played || 0,
         rating: Math.round(profile.rating),
         titleOdds: roundPct((titleCounts.get(profile.teamId) || 0) / iterations),
         finalOdds: roundPct((finalCounts.get(profile.teamId) || 0) / iterations),
@@ -219,6 +225,12 @@ function teamRating(standing: StandingRow | null, seed: number) {
   const pointDiffPerGame = standing.point_diff / games;
   const pointsPerGame = standing.standing_points / games;
   return 1500 + winPct * 120 + pointsPerGame * 45 + clamp(pointDiffPerGame, -12, 12) * 12 - seed * 5;
+}
+
+function recordText(standing: StandingRow | null) {
+  if (!standing) return "0-0";
+  const base = `${standing.wins}-${standing.losses}`;
+  return standing.ties ? `${base}-${standing.ties}` : base;
 }
 
 function buildHeadToHead(games: SeedingGameRow[]) {
