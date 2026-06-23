@@ -3,6 +3,7 @@ import { currentTournament } from "@/lib/tournaments";
 import { LiveNow } from "@/app/live-now";
 import { ViewTabs } from "@/app/view-tabs";
 import { readGoogleSheetSyncStatus, type SyncStatus } from "@/lib/sync-status";
+import { ScheduleDayGrid, type ScheduleDayOption } from "@/app/schedule/schedule-day-grid";
 import { ScheduleGridDisplayRefresh } from "@/app/schedule/schedule-grid-display-refresh";
 import {
   buildDivisionAverages,
@@ -12,7 +13,7 @@ import {
   mostRepeatedOpponent
 } from "@/lib/schedule-quality";
 import { publicStreamLinkForGame } from "@/lib/streams";
-import { tournamentDateKey, tournamentDateTimeLabel, tournamentDayLabel, tournamentTimeLabel } from "@/lib/time-format";
+import { tournamentDateKey, tournamentDateTimeLabel, tournamentDayLabel, tournamentTimeLabel, tournamentWeekdayLabel } from "@/lib/time-format";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +51,8 @@ type PublicScheduleTeam = {
 };
 
 type ScheduleGridRow = {
+  dayKey: string;
+  dayName: string;
   day: string;
   time: string;
   court1Ref: string;
@@ -100,6 +103,7 @@ type RefCountRow = {
 };
 
 type ScheduleSearchParams = {
+  day?: string;
   view?: string;
 };
 
@@ -164,6 +168,8 @@ export default async function PublicSchedulePage({
   );
   const syncStatus = await readGoogleSheetSyncStatus(tournament.id);
   const gridRows = buildScheduleGrid(games, hiddenDivisionLabels, tournament.timezone);
+  const dayOptions = buildScheduleDayOptions(gridRows);
+  const initialDay = initialScheduleDay(params.day, dayOptions);
   const detailRows = buildScheduleDetailRows(teams, games, tournament.timezone);
   const refCountRows = buildRefCountRows(teams, games, tournament.timezone);
   const lastUpdated = games.length ? tournamentDateTimeLabel(new Date(), tournament.timezone) : null;
@@ -176,46 +182,7 @@ export default async function PublicSchedulePage({
           </span>
         ))}
       </div> : null}
-      <div className="schedule-grid-wrap">
-        <table className="schedule-grid-table">
-          <thead>
-            <tr>
-              <th>Day</th>
-              <th>Time</th>
-              <th>Ref Court 1</th>
-              <th>Court 1</th>
-              <th>Court 2</th>
-              <th>Ref Court 2</th>
-            </tr>
-          </thead>
-          <tbody>
-            {gridRows.map((row) => (
-              <tr key={`${row.day}-${row.time}`}>
-                <td className="schedule-day">{row.day}</td>
-                <td className="schedule-time">{row.time}</td>
-                <td className={refCellClass(row.court1RefDivision)}>{row.court1Ref}</td>
-                <td className={gameCellClass(row.court1Division, row.court1Scored)}>
-                  {row.court1Game}
-                  {row.court1StreamUrl ? (
-                    <a className="schedule-stream-link" href={row.court1StreamUrl} target="_blank" rel="noreferrer">
-                      {row.court1StreamLabel}
-                    </a>
-                  ) : null}
-                </td>
-                <td className={gameCellClass(row.court2Division, row.court2Scored)}>
-                  {row.court2Game}
-                  {row.court2StreamUrl ? (
-                    <a className="schedule-stream-link" href={row.court2StreamUrl} target="_blank" rel="noreferrer">
-                      {row.court2StreamLabel}
-                    </a>
-                  ) : null}
-                </td>
-                <td className={refCellClass(row.court2RefDivision)}>{row.court2Ref}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <ScheduleDayGrid rows={gridRows} days={dayOptions} initialDay={initialDay} />
     </section>
   ) : (
     <section className="section card">
@@ -393,6 +360,8 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
     const row =
       rows.get(game.starts_at) ||
       {
+        dayKey: tournamentDateKey(game.starts_at, timeZone),
+        dayName: tournamentWeekdayLabel(game.starts_at, timeZone),
         day: formatDay(game.starts_at, timeZone),
         time: formatTime(game.starts_at, timeZone),
         court1Ref: "",
@@ -437,6 +406,24 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
   }
 
   return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row);
+}
+
+function buildScheduleDayOptions(rows: ScheduleGridRow[]): ScheduleDayOption[] {
+  const allowedDays = ["Tuesday", "Wednesday", "Friday", "Saturday", "Sunday"];
+  const dayByName = new Map<string, ScheduleDayOption>();
+  for (const row of rows) {
+    if (!allowedDays.includes(row.dayName) || dayByName.has(row.dayName)) continue;
+    dayByName.set(row.dayName, { key: row.dayKey, label: row.dayName });
+  }
+  return [
+    { key: "all", label: "All" },
+    ...allowedDays.flatMap((dayName) => dayByName.get(dayName) || [])
+  ];
+}
+
+function initialScheduleDay(requestedDay: string | undefined, days: ScheduleDayOption[]) {
+  if (requestedDay && days.some((day) => day.key === requestedDay)) return requestedDay;
+  return "all";
 }
 
 function firstStreamGameIdsByCourtDay(games: PublicScheduleGame[], timeZone: string) {
@@ -559,14 +546,6 @@ function publicResultText(game: PublicScheduleGame) {
   }
   if (game.team_1_score !== null && game.team_2_score !== null) return ` (${game.team_1_score}-${game.team_2_score})`;
   return "";
-}
-
-function gameCellClass(division: string, scored = false) {
-  return `schedule-game-cell ${divisionClassNames[division] || ""} ${scored ? "muted-game-row" : ""}`.trim();
-}
-
-function refCellClass(division: string) {
-  return `schedule-ref-cell ${divisionClassNames[division] || ""}`.trim();
 }
 
 function formatDay(value: string, timeZone: string) {

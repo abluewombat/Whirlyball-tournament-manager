@@ -815,6 +815,25 @@ th {
   margin: 0 0 6px;
 }
 
+.schedule-day-control {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 8px;
+}
+
+.schedule-day-control label {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  margin: 0;
+}
+
+.schedule-day-control select {
+  min-width: 132px;
+}
+
 .schedule-sync-sticky {
   align-items: center;
   background: var(--bg);
