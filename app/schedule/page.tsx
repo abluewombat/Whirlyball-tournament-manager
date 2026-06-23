@@ -233,7 +233,13 @@ export default async function PublicSchedulePage({
             id: "details",
             label: "Schedule Details",
             badge: detailRows.length,
-            content: <ScheduleDetails rows={detailRows} refRows={refCountRows} />
+            content: <ScheduleDetails rows={detailRows} />
+          },
+          {
+            id: "refs",
+            label: "Ref Detail",
+            badge: refCountRows.length,
+            content: <RefDetails rows={refCountRows} />
           }
         ]}
       />
@@ -257,7 +263,7 @@ function ScheduleSyncStatus({ status, timeZone }: { status: SyncStatus | null; t
   );
 }
 
-function ScheduleDetails({ rows, refRows }: { rows: ScheduleDetailRow[]; refRows: RefCountRow[] }) {
+function ScheduleDetails({ rows }: { rows: ScheduleDetailRow[] }) {
   if (!rows.length) {
     return (
       <section className="section card">
@@ -274,40 +280,6 @@ function ScheduleDetails({ rows, refRows }: { rows: ScheduleDetailRow[]; refRows
           <h2>Schedule Details</h2>
           <p className="muted">Same breakdown as the export summary: game totals, unique opponents, repeat opponents, court balance, and first/last seeding game.</p>
         </div>
-      </div>
-      <div className="schedule-detail-subsection">
-        <h3>Ref Counts</h3>
-        <div className="table-wrap schedule-detail-wrap">
-          <table className="schedule-detail-table">
-            <thead>
-              <tr>
-                <th>Division</th>
-                <th>Center</th>
-                <th>Team</th>
-                <th>Ref Slots</th>
-                <th>Court Assignments</th>
-                <th>First Ref</th>
-                <th>Last Ref</th>
-              </tr>
-            </thead>
-            <tbody>
-              {refRows.map((row) => (
-                <tr key={`ref-${row.division}-${row.center}-${row.team}`}>
-                  <td className={`schedule-detail-division ${divisionClassNames[row.division] || ""}`}>{row.division}</td>
-                  <td>{row.center}</td>
-                  <td>{row.team}</td>
-                  <td className={row.countWarning ? "schedule-detail-warn" : ""}>{row.refSlots}</td>
-                  <td>{row.courtAssignments}</td>
-                  <td>{row.firstRef}</td>
-                  <td>{row.lastRef}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div className="schedule-detail-subsection">
-        <h3>Game Counts</h3>
       </div>
       <div className="table-wrap schedule-detail-wrap">
         <table className="schedule-detail-table">
@@ -342,6 +314,56 @@ function ScheduleDetails({ rows, refRows }: { rows: ScheduleDetailRow[]; refRows
                 <td className={row.courtBalanceWarning ? "schedule-detail-warn" : ""}>{row.courtBalance}</td>
                 <td>{row.firstSeeding}</td>
                 <td>{row.lastSeeding}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function RefDetails({ rows }: { rows: RefCountRow[] }) {
+  if (!rows.length) {
+    return (
+      <section className="section card">
+        <h2>No Ref Details Yet</h2>
+        <p className="muted">Once refs are assigned, this tab will show per-team ref slots and court assignments.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="section schedule-detail-section">
+      <div className="section-heading">
+        <div>
+          <h2>Ref Detail</h2>
+          <p className="muted">Per-team ref slots, court assignments, and first/last assigned ref time.</p>
+        </div>
+      </div>
+      <div className="table-wrap schedule-detail-wrap">
+        <table className="schedule-detail-table">
+          <thead>
+            <tr>
+              <th>Division</th>
+              <th>Center</th>
+              <th>Team</th>
+              <th>Ref Slots</th>
+              <th>Court Assignments</th>
+              <th>First Ref</th>
+              <th>Last Ref</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={`ref-${row.division}-${row.center}-${row.team}`}>
+                <td className={`schedule-detail-division ${divisionClassNames[row.division] || ""}`}>{row.division}</td>
+                <td>{row.center}</td>
+                <td>{row.team}</td>
+                <td className={row.countWarning ? "schedule-detail-warn" : ""}>{row.refSlots}</td>
+                <td>{row.courtAssignments}</td>
+                <td>{row.firstRef}</td>
+                <td>{row.lastRef}</td>
               </tr>
             ))}
           </tbody>
