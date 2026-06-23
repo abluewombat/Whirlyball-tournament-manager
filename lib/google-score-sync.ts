@@ -8,6 +8,15 @@ type GoogleSheetValuesResponse = {
   values?: string[][];
 };
 
+type GoogleSpreadsheetResponse = {
+  sheets?: Array<{
+    properties?: {
+      title?: string;
+      index?: number;
+    };
+  }>;
+};
+
 type ParsedSheetScore = {
   sheetName: string;
   rowNumber: number;
@@ -100,13 +109,16 @@ export type GoogleScheduleSyncSummary = {
 };
 
 const defaultSpreadsheetId = "1Ja6ff8IbAWm3_eGWCWlRhWoKRyQELQxA";
-const defaultSheetName = "2026 Schedule Final wcolor no R";
 const defaultRange = "A1:Q1000";
+const defaultSheetIndex = 0;
 const dayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
 
 export async function syncGoogleSheetScores(tournamentId: number): Promise<GoogleScoreSyncSummary> {
   const spreadsheetId = process.env.GOOGLE_SCORES_SPREADSHEET_ID || defaultSpreadsheetId;
-  const sheetName = process.env.GOOGLE_SCORES_SHEET_NAME || defaultSheetName;
+  const sheetName = await resolveGoogleSheetName(spreadsheetId, {
+    sheetIndex: process.env.GOOGLE_SCORES_SHEET_INDEX,
+    sheetName: process.env.GOOGLE_SCORES_SHEET_NAME
+  });
   const range = process.env.GOOGLE_SCORES_RANGE || defaultRange;
   const values = await readGoogleSheetValues(spreadsheetId, sheetName, range);
   const games = await loadScheduleGameMatches(tournamentId);
@@ -165,7 +177,10 @@ export async function syncGoogleSheetScores(tournamentId: number): Promise<Googl
 
 export async function syncGoogleSheetSchedule(tournamentId: number): Promise<GoogleScheduleSyncSummary> {
   const spreadsheetId = process.env.GOOGLE_SCORES_SPREADSHEET_ID || defaultSpreadsheetId;
-  const sheetName = process.env.GOOGLE_SCHEDULE_SYNC_SHEET_NAME || process.env.GOOGLE_SCORES_SHEET_NAME || defaultSheetName;
+  const sheetName = await resolveGoogleSheetName(spreadsheetId, {
+    sheetIndex: process.env.GOOGLE_SCHEDULE_SYNC_SHEET_INDEX || process.env.GOOGLE_SCORES_SHEET_INDEX,
+    sheetName: process.env.GOOGLE_SCHEDULE_SYNC_SHEET_NAME || process.env.GOOGLE_SCORES_SHEET_NAME
+  });
   const range = process.env.GOOGLE_SCHEDULE_SYNC_RANGE || process.env.GOOGLE_SCORES_RANGE || defaultRange;
   const values = await readGoogleSheetValues(spreadsheetId, sheetName, range);
   const games = await loadScheduleGameMatches(tournamentId);
@@ -309,6 +324,44 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
   });
 }
 
+async function resolveGoogleSheetName(spreadsheetId: string, options: { sheetIndex?: string; sheetName?: string }) {
+  const trimmedIndex = options.sheetIndex?.trim();
+  const requestedIndex = trimmedIndex === undefined || trimmedIndex === "" ? defaultSheetIndex : Number(trimmedIndex);
+  if (Number.isInteger(requestedIndex) && requestedIndex >= 0) {
+    return readGoogleSheetNameByIndex(spreadsheetId, requestedIndex);
+  }
+  if (options.sheetName?.trim()) return options.sheetName.trim();
+  throw new Error(`GOOGLE_SCORES_SHEET_INDEX must be a non-negative integer when set. Received: ${options.sheetIndex}`);
+}
+
+async function readGoogleSheetNameByIndex(spreadsheetId: string, sheetIndex: number) {
+  const client = googleJwtClient();
+  const accessToken = await client.getAccessToken();
+  const token = typeof accessToken === "string" ? accessToken : accessToken?.token;
+  if (!token) throw new Error("Unable to obtain a Google access token.");
+
+  const params = new URLSearchParams();
+  params.set("fields", "sheets(properties(title,index))");
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?${params.toString()}`;
+  const response = await fetch(url, {
+    headers: { authorization: `Bearer ${token}` },
+    cache: "no-store"
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Google Sheets metadata read failed (${response.status}): ${body.slice(0, 500)}`);
+  }
+
+  const data = (await response.json()) as GoogleSpreadsheetResponse;
+  const sheets = (data.sheets || [])
+    .map((sheet) => sheet.properties)
+    .filter((sheet): sheet is { title: string; index: number } => typeof sheet?.title === "string" && typeof sheet.index === "number")
+    .sort((left, right) => left.index - right.index);
+  const selected = sheets.find((sheet) => sheet.index === sheetIndex) || sheets[sheetIndex];
+  if (!selected) throw new Error(`Google Sheet tab index ${sheetIndex} was not found.`);
+  return selected.title;
+}
+
 async function readGoogleSheetValues(spreadsheetId: string, sheetName: string, range: string) {
   const client = googleJwtClient();
   const accessToken = await client.getAccessToken();
@@ -317,9 +370,7 @@ async function readGoogleSheetValues(spreadsheetId: string, sheetName: string, r
 
   const params = new URLSearchParams();
   params.set("majorDimension", "ROWS");
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(
-    `'${sheetName}'!${range}`
-  )}?${params.toString()}`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(a1Range(sheetName, range))}?${params.toString()}`;
   const response = await fetch(url, {
     headers: { authorization: `Bearer ${token}` },
     cache: "no-store"
@@ -330,6 +381,10 @@ async function readGoogleSheetValues(spreadsheetId: string, sheetName: string, r
   }
   const data = (await response.json()) as GoogleSheetValuesResponse;
   return data.values || [];
+}
+
+function a1Range(sheetName: string, range: string) {
+  return `'${sheetName.replace(/'/g, "''")}'!${range}`;
 }
 
 function googleJwtClient() {

@@ -23,12 +23,12 @@ YOUTUBE_API_KEY=optional-youtube-data-api-v3-key
 CRON_SECRET=change-this-long-random-string
 GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
 GOOGLE_SCORES_SPREADSHEET_ID=1Ja6ff8IbAWm3_eGWCWlRhWoKRyQELQxA
-GOOGLE_SCORES_SHEET_NAME=2026 Schedule Final wcolor no R
+GOOGLE_SCORES_SHEET_INDEX=0
 GOOGLE_SCORES_RANGE=A1:Q1000
 GOOGLE_SCORES_TOURNAMENT=novi-2026
 GOOGLE_SCORES_SYNC_ENABLED=true
 GOOGLE_SCHEDULE_SYNC_ENABLED=false
-GOOGLE_SCHEDULE_SYNC_SHEET_NAME=2026 Schedule Final wcolor no R
+GOOGLE_SCHEDULE_SYNC_SHEET_INDEX=0
 GOOGLE_SCHEDULE_SYNC_RANGE=A1:Q1000
 ```
 
@@ -89,7 +89,7 @@ The database tables and default centers are created automatically on first reque
 
 Call `/api/cron/sync-google-scores?scheduleSync=0` from Vercel Cron every minute for testing. The route reads the configured Google Sheet and imports rows with both score cells filled through the same scoring rules used by the score entry workflow. Game/ref row sync is disabled by default so manual ref fixes are not overwritten.
 
-Share the source Google Sheet with the service account email, then set `GOOGLE_SERVICE_ACCOUNT_JSON` to the full JSON key in Vercel. `CRON_SECRET` protects the cron endpoint; manual test calls can also use `x-admin-password`. Set `GOOGLE_SCORES_SYNC_ENABLED=false` to pause Google reads without failing the cron. Set `GOOGLE_SCHEDULE_SYNC_ENABLED=true` or add `?scheduleSync=1` only when you intentionally want the game/ref sync pass.
+Share the source Google Sheet with the service account email, then set `GOOGLE_SERVICE_ACCOUNT_JSON` to the full JSON key in Vercel. The sync reads worksheet index `0` by default, so renaming the first tab is safe. Set `GOOGLE_SCORES_SHEET_INDEX` or `GOOGLE_SCHEDULE_SYNC_SHEET_INDEX` only if the source tab moves. `GOOGLE_SCORES_SHEET_NAME` and `GOOGLE_SCHEDULE_SYNC_SHEET_NAME` remain available as fallbacks when an index is intentionally not set. `CRON_SECRET` protects the cron endpoint; manual test calls can also use `x-admin-password`. Set `GOOGLE_SCORES_SYNC_ENABLED=false` to pause Google reads without failing the cron. Set `GOOGLE_SCHEDULE_SYNC_ENABLED=true` or add `?scheduleSync=1` only when you intentionally want the game/ref sync pass.
 
 ## Admin Schedule Import
 
