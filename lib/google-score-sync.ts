@@ -1,5 +1,5 @@
 import { JWT } from "google-auth-library";
-import xlsx from "xlsx";
+import * as xlsx from "xlsx";
 import { query, withTransaction } from "./db";
 import { scoreCourtGameFromSync } from "./score-sync";
 import { estimateUnfilledStreamGameStarts, linkGamesToExistingCourtStreams } from "./streams";
