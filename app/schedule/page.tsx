@@ -12,11 +12,12 @@ import {
   mostRepeatedOpponent
 } from "@/lib/schedule-quality";
 import { publicStreamLinkForGame } from "@/lib/streams";
-import { tournamentDayLabel, tournamentTimeLabel } from "@/lib/time-format";
+import { tournamentDateKey, tournamentDayLabel, tournamentTimeLabel } from "@/lib/time-format";
 
 export const dynamic = "force-dynamic";
 
 type PublicScheduleGame = {
+  id: number;
   phase: string;
   division: string;
   court: number;
@@ -123,7 +124,7 @@ export default async function PublicSchedulePage({
     divisionRows.length === 1 && divisionRows[0].public_label_hidden ? [divisionRows[0].name] : []
   );
   const games = await query<PublicScheduleGame>(
-    `SELECT games.phase, games.division, games.court, games.starts_at,
+    `SELECT games.id, games.phase, games.division, games.court, games.starts_at,
             games.team_1_id, games.team_2_id, games.ref_team_id, games.team_1_score, games.team_2_score,
             games.result_type, games.forfeit_team_id, games.actual_started_at, games.actual_ended_at,
             t1.name as team_1, t2.name as team_2,
@@ -377,6 +378,7 @@ function RefDetails({ rows }: { rows: RefCountRow[] }) {
 
 function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = new Set<string>(), timeZone: string) {
   const rows = new Map<string, ScheduleGridRow>();
+  const firstStreamGameIds = firstStreamGameIdsByCourtDay(games, timeZone);
 
   for (const game of games) {
     const row =
@@ -402,7 +404,7 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
     const resultText = publicResultText(game);
     const gameText = scheduleGameText(game, hiddenDivisionLabels, resultText);
     const scored = isCompleteResult(game);
-    const streamLink = publicStreamLinkForGame(game);
+    const streamLink = publicStreamLinkForGame(game, { firstStreamGame: firstStreamGameIds.has(game.id) });
 
     if (game.court === 1) {
       row.court1Ref = refTeamLabel(game);
@@ -426,6 +428,25 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
   }
 
   return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row);
+}
+
+function firstStreamGameIdsByCourtDay(games: PublicScheduleGame[], timeZone: string) {
+  const gamesByStream = new Map<string, PublicScheduleGame[]>();
+  for (const game of games) {
+    if (!game.youtube_video_id || game.team_1_id === null || game.team_2_id === null) continue;
+    const key = `${tournamentDateKey(game.starts_at, timeZone)}-${game.court}-${game.youtube_video_id}`;
+    const streamGames = gamesByStream.get(key) || [];
+    streamGames.push(game);
+    gamesByStream.set(key, streamGames);
+  }
+
+  const firstStreamGameIds = new Set<number>();
+  for (const streamGames of gamesByStream.values()) {
+    streamGames.sort((left, right) => left.starts_at.localeCompare(right.starts_at) || left.id - right.id);
+    const firstGame = streamGames[0];
+    if (firstGame) firstStreamGameIds.add(firstGame.id);
+  }
+  return firstStreamGameIds;
 }
 
 function refTeamLabel(game: PublicScheduleGame) {

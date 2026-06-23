@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { PoolClient } from "pg";
 import { withTransaction } from "@/lib/db";
-import { estimateUnfilledStreamGameStarts, linkGamesToExistingCourtStreams } from "@/lib/streams";
+import { linkGamesToExistingCourtStreams } from "@/lib/streams";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -234,7 +234,6 @@ export async function POST(request: Request) {
       }
 
       const streamsLinked = await linkGamesToExistingCourtStreams(client, tournamentId);
-      const estimatedStarts = await estimateUnfilledStreamGameStarts(client, tournamentId);
       const refUpdateResult = await updateRefsBySlot(client, tournamentId, refUpdates, teamByCode);
 
       return {
@@ -245,8 +244,7 @@ export async function POST(request: Request) {
         removed,
         duplicateRowsDeleted,
         ...refUpdateResult,
-        streamsLinked,
-        estimatedStarts
+        streamsLinked
       };
     });
 

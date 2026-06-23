@@ -92,7 +92,6 @@ function disabledScheduleSummary(): GoogleScheduleSyncSummary {
     refsUpdated: 0,
     refsUnchanged: 0,
     streamsLinked: 0,
-    estimatedStarts: 0,
     skipped: []
   };
 }

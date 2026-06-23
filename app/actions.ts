@@ -30,7 +30,7 @@ import {
   syncActiveBracketsToSchedule
 } from "@/lib/brackets";
 import { currentTournament, currentTournamentId, normalizePersonName, tournamentPath } from "@/lib/tournaments";
-import { completeAndAdvanceCourtGame, estimateUnfilledStreamGameStartsForTournament, saveCourtStream, youtubeVideoId } from "@/lib/streams";
+import { completeAndAdvanceCourtGame, goLiveCourtStreamGame, saveCourtStream, youtubeVideoId } from "@/lib/streams";
 
 function text(formData: FormData, key: string) {
   return String(formData.get(key) || "").trim();
@@ -804,6 +804,22 @@ export async function saveCourtStreamAction(formData: FormData) {
   redirect("/score?stream_saved=1");
 }
 
+export async function goLiveCourtStreamAction(formData: FormData) {
+  await requireAdmin();
+  const tournamentId = await currentTournamentId(text(formData, "tournament_id") || null);
+  if (!(await ensureTournamentEditable(tournamentId))) return;
+  const streamId = num(formData, "stream_id");
+  const returnTo = safeReturnPath(text(formData, "return_to"), "/admin/dashboard?view=overview");
+  if (!Number.isInteger(streamId) || streamId <= 0) redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}stream_error=1`);
+
+  const gameId = await goLiveCourtStreamGame(tournamentId, streamId);
+  revalidatePath("/");
+  revalidatePath("/score");
+  revalidatePath("/schedule");
+  revalidatePath("/admin/dashboard");
+  redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}${gameId ? "stream_live=1" : "stream_error=1"}`);
+}
+
 export async function submitGameScoreAction(formData: FormData) {
   const gameId = num(formData, "game_id");
   const team1Score = num(formData, "team_1_score");
@@ -873,7 +889,6 @@ export async function submitPublicTeamGameScoreAction(formData: FormData) {
   const winnerId = team1Score === team2Score ? null : team1Score > team2Score ? game.team_1_id : game.team_2_id;
   const loserId = winnerId === null ? null : winnerId === game.team_1_id ? game.team_2_id : game.team_1_id;
   const wasComplete = (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
-  await estimateUnfilledStreamGameStartsForTournament(game.tournament_id);
   await exec(
     `UPDATE games
      SET team_1_score = $1, team_2_score = $2, winner_team_id = $3, loser_team_id = $4,

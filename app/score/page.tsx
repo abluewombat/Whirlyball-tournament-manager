@@ -99,11 +99,11 @@ export default async function ScorePage({
           <div>
             <h2>Court Streams</h2>
             <p className="muted">
-              Saving a YouTube URL connects that court and estimates replay timestamps from the stream start. Each first-time final score advances the next game to the current time.
+              Saving a YouTube URL connects that court. Each first-time final score timestamps the next game at the current time.
             </p>
           </div>
         </div>
-        {params.stream_saved ? <p className="pill ok">Stream saved and replay estimates updated.</p> : null}
+        {params.stream_saved ? <p className="pill ok">Stream saved.</p> : null}
         {params.stream_error ? <p className="pill warn">Enter a valid YouTube video or live-stream URL.</p> : null}
         {streamSlots.length ? (
           <div className="grid">

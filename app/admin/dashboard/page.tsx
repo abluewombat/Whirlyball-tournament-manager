@@ -1,6 +1,7 @@
 import {
   addTeamAction,
   adminLogoutAction,
+  goLiveCourtStreamAction,
   reviewBlockerRequestAction,
   restoreSnapshotAction,
   setCenterPasscodeAction,
@@ -34,6 +35,20 @@ type AdminDashboardParams = {
   unscheduled_tournament?: string;
   locked?: string;
   scores_cleared?: string;
+  stream_error?: string;
+  stream_live?: string;
+};
+
+type StreamControlRow = {
+  stream_id: number;
+  court: number;
+  stream_date: string;
+  live_division: string | null;
+  live_team_1: string | null;
+  live_team_2: string | null;
+  next_division: string | null;
+  next_team_1: string | null;
+  next_team_2: string | null;
 };
 
 export default async function AdminDashboardPage({
@@ -93,6 +108,46 @@ export default async function AdminDashboardPage({
      ORDER BY blocker_requests.created_at`,
     [tournament.id]
   );
+  const streamControls = await query<StreamControlRow>(
+    `SELECT court_streams.id as stream_id,
+            court_streams.court,
+            court_streams.stream_date,
+            live_game.division as live_division,
+            live_game.team_1 as live_team_1,
+            live_game.team_2 as live_team_2,
+            next_game.division as next_division,
+            next_game.team_1 as next_team_1,
+            next_game.team_2 as next_team_2
+       FROM court_streams
+       LEFT JOIN LATERAL (
+         SELECT games.division, t1.name as team_1, t2.name as team_2
+           FROM games
+           JOIN teams t1 ON t1.id = games.team_1_id
+           JOIN teams t2 ON t2.id = games.team_2_id
+          WHERE games.stream_id = court_streams.id
+            AND games.actual_started_at IS NOT NULL
+            AND games.actual_ended_at IS NULL
+            AND (games.team_1_score IS NULL OR games.team_2_score IS NULL)
+            AND games.result_type IS DISTINCT FROM 'forfeit'
+          ORDER BY games.actual_started_at DESC, games.starts_at, games.id
+          LIMIT 1
+       ) live_game ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT games.division, t1.name as team_1, t2.name as team_2
+           FROM games
+           JOIN teams t1 ON t1.id = games.team_1_id
+           JOIN teams t2 ON t2.id = games.team_2_id
+          WHERE games.stream_id = court_streams.id
+            AND games.actual_ended_at IS NULL
+            AND (games.team_1_score IS NULL OR games.team_2_score IS NULL)
+            AND games.result_type IS DISTINCT FROM 'forfeit'
+          ORDER BY games.starts_at, games.id
+          LIMIT 1
+       ) next_game ON TRUE
+      WHERE court_streams.tournament_id = $1
+      ORDER BY court_streams.stream_date, court_streams.court`,
+    [tournament.id]
+  );
 
   const overview = (
     <section className="section grid dashboard-card-grid">
@@ -145,6 +200,35 @@ export default async function AdminDashboardPage({
           </label>
           <button className="button">Save Announcement</button>
         </form>
+      </article>
+
+      <article className="card">
+        <h2>Stream Controls</h2>
+        {params.stream_live ? <p className="pill ok">Stream marked live.</p> : null}
+        {params.stream_error ? <p className="pill warn">No unscored game is available for that stream.</p> : null}
+        <div className="stack">
+          {streamControls.length ? streamControls.map((stream) => {
+            const liveLabel = stream.live_team_1 && stream.live_team_2
+              ? `${stream.live_division}: ${stream.live_team_1} vs. ${stream.live_team_2}`
+              : "";
+            const nextLabel = stream.next_team_1 && stream.next_team_2
+              ? `${stream.next_division}: ${stream.next_team_1} vs. ${stream.next_team_2}`
+              : "";
+            return (
+              <form action={goLiveCourtStreamAction} className="inline-form mobile-form-row" key={stream.stream_id}>
+                <input name="tournament_id" type="hidden" value={tournament.id} />
+                <input name="stream_id" type="hidden" value={stream.stream_id} />
+                <input name="return_to" type="hidden" value={`/admin/dashboard?view=overview&tournament=${tournament.slug}`} />
+                <span>
+                  Court {stream.court} <span className="muted">{String(stream.stream_date).slice(0, 10)}</span>
+                  <br />
+                  <span className="muted">{liveLabel ? `Live: ${liveLabel}` : nextLabel ? `Next: ${nextLabel}` : "No unscored game"}</span>
+                </span>
+                <button className="button secondary" disabled={Boolean(liveLabel) || !nextLabel}>Go Live</button>
+              </form>
+            );
+          }) : <p className="muted">Connect court streams from score entry before marking games live.</p>}
+        </div>
       </article>
 
       <article className="card">

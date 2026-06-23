@@ -40,6 +40,7 @@ type TeamGame = {
   actual_ended_at: string | null;
   youtube_video_id: string | null;
   stream_started_at: string | null;
+  first_stream_game: boolean;
 };
 
 type DivisionTeam = {
@@ -142,6 +143,15 @@ export default async function TeamPage({
             games.winner_team_id, games.loser_team_id, games.result_type, games.forfeit_team_id,
             games.ref_team_id, games.label, games.actual_started_at, games.actual_ended_at,
             t1.name as team_1, t2.name as team_2, tr.name as ref_team,
+            games.stream_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1
+                FROM games previous_game
+                WHERE previous_game.stream_id = games.stream_id
+                  AND previous_game.team_1_id IS NOT NULL
+                  AND previous_game.team_2_id IS NOT NULL
+                  AND (previous_game.starts_at < games.starts_at OR (previous_game.starts_at = games.starts_at AND previous_game.id < games.id))
+              ) as first_stream_game,
             court_streams.youtube_video_id, court_streams.stream_started_at
      FROM games
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
@@ -655,7 +665,7 @@ function groupGamesByDay(games: TeamGame[], timeZone: string) {
 }
 
 function streamLink(game: TeamGame) {
-  const link = publicStreamLinkForGame(game);
+  const link = publicStreamLinkForGame(game, { firstStreamGame: game.first_stream_game });
   if (!link.url) return null;
   return (
     <a

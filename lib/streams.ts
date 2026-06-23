@@ -1,5 +1,14 @@
 import type { PoolClient } from "pg";
 import { query, withTransaction } from "./db";
+import { youtubeWatchUrl } from "./stream-links";
+
+export {
+  formatStreamOffset,
+  publicStreamLinkForGame,
+  youtubeReplayOffsetSeconds,
+  youtubeReplayUrl,
+  youtubeWatchUrl
+} from "./stream-links";
 
 export type CourtStreamRow = {
   id: number;
@@ -11,6 +20,39 @@ export type CourtStreamRow = {
   stream_started_at: string;
   created_at: string;
   updated_at: string;
+};
+
+type StreamTimelineGameRow = {
+  id: number;
+  stream_id: number;
+  starts_at: string;
+  stream_started_at: string;
+  team_1_score: number | null;
+  team_2_score: number | null;
+  result_type: string | null;
+  scored_at: string | null;
+  actual_started_at: string | null;
+  actual_ended_at: string | null;
+};
+
+export type StreamTimelineRepairSummary = {
+  apply: boolean;
+  streamsChecked: number;
+  startsSet: number;
+  startsCleared: number;
+  endsSet: number;
+  endsCleared: number;
+  gamesChanged: number;
+  streamsLinked: number;
+  changes: Array<{
+    gameId: number;
+    streamId: number;
+    startsAt: string;
+    actualStartedAt: string | null;
+    nextActualStartedAt: string | null;
+    actualEndedAt: string | null;
+    nextActualEndedAt: string | null;
+  }>;
 };
 
 export function youtubeVideoId(value: string) {
@@ -36,68 +78,6 @@ export function youtubeVideoId(value: string) {
 function validVideoId(value: string | null | undefined) {
   return value && /^[A-Za-z0-9_-]{11}$/.test(value) ? value : null;
 }
-
-export function youtubeWatchUrl(videoId: string) {
-  return `https://www.youtube.com/watch?v=${videoId}`;
-}
-
-export function youtubeReplayOffsetSeconds(gameStartedAt: string, streamStartedAt: string, leadInSeconds = 10) {
-  const offset = Math.floor((Date.parse(gameStartedAt) - Date.parse(streamStartedAt)) / 1000) - leadInSeconds;
-  return Number.isFinite(offset) ? Math.max(0, offset) : 0;
-}
-
-export function youtubeReplayUrl(videoId: string, gameStartedAt: string, streamStartedAt: string) {
-  const offset = youtubeReplayOffsetSeconds(gameStartedAt, streamStartedAt);
-  return `${youtubeWatchUrl(videoId)}&t=${offset}s`;
-}
-
-export type PublicStreamLinkInput = {
-  starts_at: string;
-  actual_started_at: string | null;
-  actual_ended_at?: string | null;
-  youtube_video_id: string | null;
-  stream_started_at: string | null;
-  team_1_score: number | null;
-  team_2_score: number | null;
-  result_type: string | null;
-};
-
-export function publicStreamLinkForGame(game: PublicStreamLinkInput, now = Date.now()) {
-  if (!game.youtube_video_id || !game.actual_started_at || !game.stream_started_at) return { url: "", label: "" };
-  const scored = (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
-  const startedAt = Date.parse(game.actual_started_at);
-  const scheduledAt = Date.parse(game.starts_at);
-  const liveWindowMs = 45 * 60 * 1000;
-
-  if (
-    !scored &&
-    !game.actual_ended_at &&
-    Number.isFinite(startedAt) &&
-    Number.isFinite(scheduledAt) &&
-    startedAt <= now &&
-    scheduledAt <= now &&
-    now - startedAt <= liveWindowMs
-  ) {
-    return { url: youtubeWatchUrl(game.youtube_video_id), label: "Watch live" };
-  }
-
-  const offset = youtubeReplayOffsetSeconds(game.actual_started_at, game.stream_started_at);
-  return {
-    url: youtubeReplayUrl(game.youtube_video_id, game.actual_started_at, game.stream_started_at),
-    label: scored ? `Replay around ${formatStreamOffset(offset)}` : `Estimated replay ${formatStreamOffset(offset)}`
-  };
-}
-
-export function formatStreamOffset(seconds: number) {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainder = seconds % 60;
-  return hours
-    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
-    : `${minutes}:${String(remainder).padStart(2, "0")}`;
-}
-
-const streamGameLeadInMinutes = 10;
 
 async function youtubeActualStart(videoId: string) {
   const apiKey = process.env.YOUTUBE_API_KEY;
@@ -158,7 +138,6 @@ export async function saveCourtStream(input: {
       [streamId, input.tournamentId, input.court, timeZone, input.streamDate]
     );
 
-    await estimateUnfilledStreamGameStarts(client, input.tournamentId, [streamId]);
     return streamId;
   });
 }
@@ -179,55 +158,165 @@ export async function linkGamesToExistingCourtStreams(client: PoolClient, tourna
   return result.rowCount || 0;
 }
 
-export async function estimateUnfilledStreamGameStarts(client: PoolClient, tournamentId: number, streamIds?: number[]) {
-  const streamResult = await client.query<{ id: number; stream_started_at: Date | string }>(
-    `SELECT id, stream_started_at
-     FROM court_streams
-     WHERE tournament_id = $1
-       ${streamIds?.length ? "AND id = ANY($2::int[])" : ""}
-     ORDER BY stream_date, court`,
-    streamIds?.length ? [tournamentId, streamIds] : [tournamentId]
-  );
-
-  let updated = 0;
-  for (const stream of streamResult.rows) {
-    const games = await client.query<{ id: number; starts_at: Date | string; actual_started_at: Date | string | null }>(
-      `SELECT id, starts_at, actual_started_at
-       FROM games
-       WHERE tournament_id = $1
-         AND stream_id = $2
-         AND team_1_id IS NOT NULL
-         AND team_2_id IS NOT NULL
-       ORDER BY starts_at, id
-       FOR UPDATE`,
-      [tournamentId, stream.id]
-    );
-    const firstGame = games.rows[0];
-    if (!firstGame) continue;
-    const streamStart = Date.parse(String(stream.stream_started_at));
-    const firstScheduledStart = Date.parse(String(firstGame.starts_at));
-    if (!Number.isFinite(streamStart) || !Number.isFinite(firstScheduledStart)) continue;
-
-    for (const game of games.rows) {
-      if (game.actual_started_at) continue;
-      const scheduledStart = Date.parse(String(game.starts_at));
-      if (!Number.isFinite(scheduledStart)) continue;
-      const estimatedStart = new Date(streamStart + streamGameLeadInMinutes * 60_000 + (scheduledStart - firstScheduledStart));
-      const result = await client.query("UPDATE games SET actual_started_at = $1 WHERE id = $2 AND actual_started_at IS NULL", [
-        estimatedStart.toISOString(),
-        game.id
-      ]);
-      updated += result.rowCount || 0;
-    }
-  }
-  return updated;
+export async function repairStreamTimeline(tournamentId: number, options: { apply?: boolean } = {}) {
+  const apply = Boolean(options.apply);
+  return withTransaction(async (client) => repairStreamTimelineWithClient(client, tournamentId, apply));
 }
 
-export async function estimateUnfilledStreamGameStartsForTournament(tournamentId: number) {
+export async function repairStreamTimelineWithClient(client: PoolClient, tournamentId: number, apply: boolean) {
+  const summary: StreamTimelineRepairSummary = {
+    apply,
+    streamsChecked: 0,
+    startsSet: 0,
+    startsCleared: 0,
+    endsSet: 0,
+    endsCleared: 0,
+    gamesChanged: 0,
+    streamsLinked: apply ? await linkGamesToExistingCourtStreams(client, tournamentId) : 0,
+    changes: []
+  };
+  const streams = await client.query<{ id: number }>(
+    "SELECT id FROM court_streams WHERE tournament_id = $1 ORDER BY stream_date, court",
+    [tournamentId]
+  );
+
+  for (const stream of streams.rows) {
+    summary.streamsChecked += 1;
+    const games = await client.query<StreamTimelineGameRow>(
+      `SELECT games.id,
+              games.stream_id,
+              games.starts_at,
+              court_streams.stream_started_at,
+              games.team_1_score,
+              games.team_2_score,
+              games.result_type,
+              games.scored_at,
+              games.actual_started_at,
+              games.actual_ended_at
+         FROM games
+         JOIN court_streams ON court_streams.id = games.stream_id
+        WHERE games.stream_id = $1
+          AND games.team_1_id IS NOT NULL
+          AND games.team_2_id IS NOT NULL
+        ORDER BY games.starts_at, games.id
+        FOR UPDATE OF games`,
+      [stream.id]
+    );
+    let previousFinish: string | null = null;
+    let waitingForCurrentGameToFinish = false;
+
+    for (const game of games.rows) {
+      const complete = isCompleteStreamGame(game);
+      const fallbackFinish: string | null = complete ? game.actual_ended_at || game.scored_at : null;
+      const nextActualStartedAt: string | null = complete
+        ? previousFinish || game.stream_started_at || game.actual_started_at
+        : !waitingForCurrentGameToFinish && previousFinish
+          ? previousFinish
+          : null;
+      const nextActualEndedAt: string | null = complete ? fallbackFinish : null;
+
+      await applyStreamTimelineUpdate(client, summary, game, nextActualStartedAt, nextActualEndedAt);
+
+      if (complete) {
+        previousFinish = nextActualEndedAt;
+        waitingForCurrentGameToFinish = false;
+      } else {
+        previousFinish = null;
+        waitingForCurrentGameToFinish = Boolean(nextActualStartedAt);
+      }
+    }
+  }
+
+  return summary;
+}
+
+export async function goLiveCourtStreamGame(tournamentId: number, streamId: number) {
   return withTransaction(async (client) => {
-    await linkGamesToExistingCourtStreams(client, tournamentId);
-    return estimateUnfilledStreamGameStarts(client, tournamentId);
+    const streamResult = await client.query<{ id: number }>(
+      "SELECT id FROM court_streams WHERE id = $1 AND tournament_id = $2 FOR UPDATE",
+      [streamId, tournamentId]
+    );
+    if (!streamResult.rows[0]) return null;
+
+    const nextGame = await client.query<{ id: number }>(
+      `SELECT id
+         FROM games
+        WHERE stream_id = $1
+          AND team_1_id IS NOT NULL
+          AND team_2_id IS NOT NULL
+          AND actual_ended_at IS NULL
+          AND (team_1_score IS NULL OR team_2_score IS NULL)
+          AND result_type IS DISTINCT FROM 'forfeit'
+        ORDER BY starts_at, id
+        LIMIT 1
+        FOR UPDATE`,
+      [streamId]
+    );
+    const next = nextGame.rows[0];
+    if (!next) return null;
+
+    await client.query(
+      `UPDATE games
+          SET actual_started_at = CASE WHEN id = $2 THEN NOW() ELSE NULL END,
+              actual_ended_at = NULL
+        WHERE stream_id = $1
+          AND team_1_id IS NOT NULL
+          AND team_2_id IS NOT NULL
+          AND actual_ended_at IS NULL
+          AND (team_1_score IS NULL OR team_2_score IS NULL)
+          AND result_type IS DISTINCT FROM 'forfeit'`,
+      [streamId, next.id]
+    );
+    return next.id;
   });
+}
+
+function isCompleteStreamGame(game: Pick<StreamTimelineGameRow, "team_1_score" | "team_2_score" | "result_type">) {
+  return (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
+}
+
+async function applyStreamTimelineUpdate(
+  client: PoolClient,
+  summary: StreamTimelineRepairSummary,
+  game: StreamTimelineGameRow,
+  nextActualStartedAt: string | null,
+  nextActualEndedAt: string | null
+) {
+  const startChanged = !sameTimestamp(game.actual_started_at, nextActualStartedAt);
+  const endChanged = !sameTimestamp(game.actual_ended_at, nextActualEndedAt);
+  if (!startChanged && !endChanged) return;
+
+  summary.gamesChanged += 1;
+  if (startChanged && nextActualStartedAt) summary.startsSet += 1;
+  if (startChanged && !nextActualStartedAt) summary.startsCleared += 1;
+  if (endChanged && nextActualEndedAt) summary.endsSet += 1;
+  if (endChanged && !nextActualEndedAt) summary.endsCleared += 1;
+  summary.changes.push({
+    gameId: game.id,
+    streamId: game.stream_id,
+    startsAt: game.starts_at,
+    actualStartedAt: game.actual_started_at,
+    nextActualStartedAt,
+    actualEndedAt: game.actual_ended_at,
+    nextActualEndedAt
+  });
+
+  if (!summary.apply) return;
+  await client.query(
+    `UPDATE games
+        SET actual_started_at = $2::timestamptz,
+            actual_ended_at = $3::timestamptz
+      WHERE id = $1`,
+    [game.id, nextActualStartedAt, nextActualEndedAt]
+  );
+}
+
+function sameTimestamp(left: string | null, right: string | null) {
+  if (!left && !right) return true;
+  if (!left || !right) return false;
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  return Number.isFinite(leftMs) && Number.isFinite(rightMs) ? leftMs === rightMs : left === right;
 }
 
 export async function completeAndAdvanceCourtGame(gameId: number) {
@@ -248,7 +337,7 @@ export async function completeAndAdvanceCourtGame(gameId: number) {
       [gameId]
     );
     const game = gameResult.rows[0];
-    if (!game?.stream_id || !game.actual_started_at || game.actual_ended_at) return null;
+    if (!game?.stream_id || game.actual_ended_at) return null;
 
     await client.query("UPDATE games SET actual_ended_at = NOW() WHERE id = $1", [game.id]);
     const nextGame = await client.query<{ id: number }>(
@@ -267,16 +356,17 @@ export async function completeAndAdvanceCourtGame(gameId: number) {
        FOR UPDATE`,
       [game.stream_id, game.id, game.starts_at]
     );
-    if (!nextGame.rows[0]) return null;
+    const next = nextGame.rows[0];
+    if (!next) return null;
 
     await client.query(
       `UPDATE games
        SET actual_started_at = NOW(),
            actual_ended_at = NULL
        WHERE id = $1`,
-      [nextGame.rows[0].id]
+      [next.id]
     );
-    return nextGame.rows[0].id;
+    return next.id;
   });
 }
 

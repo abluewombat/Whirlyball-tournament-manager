@@ -2,7 +2,7 @@ import { JWT } from "google-auth-library";
 import * as xlsx from "xlsx";
 import { query, withTransaction } from "./db";
 import { scoreCourtGameFromSync } from "./score-sync";
-import { estimateUnfilledStreamGameStarts, linkGamesToExistingCourtStreams } from "./streams";
+import { linkGamesToExistingCourtStreams } from "./streams";
 
 type GoogleSheetValuesResponse = {
   range?: string;
@@ -103,7 +103,6 @@ export type GoogleScheduleSyncSummary = {
   refsUpdated: number;
   refsUnchanged: number;
   streamsLinked: number;
-  estimatedStarts: number;
   skipped: Array<{
     rowNumber: number;
     court: number;
@@ -253,7 +252,6 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
       refsUpdated: 0,
       refsUnchanged: 0,
       streamsLinked: 0,
-      estimatedStarts: 0,
       skipped: []
     };
 
@@ -366,7 +364,6 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
     }
 
     summary.streamsLinked = await linkGamesToExistingCourtStreams(client, tournamentId);
-    summary.estimatedStarts = await estimateUnfilledStreamGameStarts(client, tournamentId);
     return summary;
   });
 }
