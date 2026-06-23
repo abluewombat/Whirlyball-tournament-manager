@@ -19,10 +19,20 @@ export async function LiveNow({ tournament }: { tournament: TournamentRow }) {
      JOIN teams t1 ON t1.id = games.team_1_id
      JOIN teams t2 ON t2.id = games.team_2_id
      JOIN court_streams ON court_streams.id = games.stream_id
+     LEFT JOIN LATERAL (
+       SELECT MIN(next_games.starts_at) as starts_at
+       FROM games next_games
+       WHERE next_games.tournament_id = games.tournament_id
+         AND next_games.stream_id = games.stream_id
+         AND next_games.team_1_id IS NOT NULL
+         AND next_games.team_2_id IS NOT NULL
+         AND next_games.starts_at > games.starts_at
+     ) next_game ON TRUE
      WHERE games.tournament_id = $1
        AND games.actual_started_at IS NOT NULL
        AND games.actual_started_at <= NOW()
        AND games.starts_at <= NOW()
+       AND NOW() < COALESCE(next_game.starts_at, games.starts_at + INTERVAL '45 minutes')
        AND games.actual_ended_at IS NULL
        AND (games.team_1_score IS NULL OR games.team_2_score IS NULL)
        AND games.result_type IS DISTINCT FROM 'forfeit'
