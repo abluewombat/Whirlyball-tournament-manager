@@ -477,7 +477,7 @@ function selectWorkbookSheetName(sheetNames: string[], options: { sheetIndex?: s
   const hasExplicitIndex = trimmedIndex !== undefined && trimmedIndex !== "";
   if (!hasExplicitIndex && options.sheetName?.trim()) {
     const requestedName = options.sheetName.trim();
-    const sheetName = sheetNames.find((candidate) => candidate === requestedName);
+    const sheetName = findRequestedWorkbookSheetName(sheetNames, requestedName);
     if (sheetName) return sheetName;
     const fallbackName = sheetNames[defaultSheetIndex];
     if (fallbackName) return fallbackName;
@@ -491,6 +491,26 @@ function selectWorkbookSheetName(sheetNames: string[], options: { sheetIndex?: s
     return sheetName;
   }
   throw new Error(`GOOGLE_SCORES_SHEET_INDEX must be a non-negative integer when set. Received: ${options.sheetIndex}`);
+}
+
+function findRequestedWorkbookSheetName(sheetNames: string[], requestedName: string) {
+  const exact = sheetNames.find((candidate) => candidate === requestedName);
+  if (exact) return exact;
+
+  const normalizedRequested = normalizeSheetName(requestedName);
+  const normalized = sheetNames.find((candidate) => normalizeSheetName(candidate) === normalizedRequested);
+  if (normalized) return normalized;
+
+  const excelSafeRequested = excelSafeSheetName(requestedName);
+  return sheetNames.find((candidate) => candidate === excelSafeRequested || normalizeSheetName(candidate) === normalizeSheetName(excelSafeRequested));
+}
+
+function excelSafeSheetName(value: string) {
+  return value.replace(/[:\\/?*[\]]/g, "").slice(0, 31);
+}
+
+function normalizeSheetName(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function workbookRangeValues(worksheet: xlsx.WorkSheet, range: string) {
