@@ -23,9 +23,11 @@ type PublicScheduleGame = {
   starts_at: string;
   team_1_id: number | null;
   team_2_id: number | null;
+  ref_team_id: number | null;
   team_1: string | null;
   team_2: string | null;
   ref_team: string | null;
+  ref_team_center: string | null;
   ref_team_division: string | null;
   team_1_score: number | null;
   team_2_score: number | null;
@@ -85,6 +87,17 @@ type ScheduleDetailRow = {
   courtBalanceWarning: boolean;
 };
 
+type RefCountRow = {
+  division: string;
+  center: string;
+  team: string;
+  refSlots: number;
+  courtAssignments: number;
+  firstRef: string;
+  lastRef: string;
+  countWarning: boolean;
+};
+
 type ScheduleSearchParams = {
   view?: string;
 };
@@ -111,15 +124,16 @@ export default async function PublicSchedulePage({
   );
   const games = await query<PublicScheduleGame>(
     `SELECT games.phase, games.division, games.court, games.starts_at,
-            games.team_1_id, games.team_2_id, games.team_1_score, games.team_2_score,
+            games.team_1_id, games.team_2_id, games.ref_team_id, games.team_1_score, games.team_2_score,
             games.result_type, games.forfeit_team_id, games.actual_started_at, games.actual_ended_at,
             t1.name as team_1, t2.name as team_2,
-            tr.name as ref_team, tr.division as ref_team_division, games.label,
+            tr.name as ref_team, tr.division as ref_team_division, COALESCE(cr.name, 'Draft') as ref_team_center, games.label,
             court_streams.youtube_video_id, court_streams.stream_started_at
       FROM games
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
      LEFT JOIN teams t2 ON t2.id = games.team_2_id
      LEFT JOIN teams tr ON tr.id = games.ref_team_id
+     LEFT JOIN centers cr ON cr.id = tr.center_id
      LEFT JOIN court_streams ON court_streams.id = games.stream_id
      WHERE games.tournament_id = $1
      ORDER BY games.starts_at, games.court`,
@@ -136,6 +150,7 @@ export default async function PublicSchedulePage({
   const syncStatus = await readGoogleSheetSyncStatus(tournament.id);
   const gridRows = buildScheduleGrid(games, hiddenDivisionLabels, tournament.timezone);
   const detailRows = buildScheduleDetailRows(teams, games, tournament.timezone);
+  const refCountRows = buildRefCountRows(teams, games, tournament.timezone);
   const lastUpdated = games.length ? new Date().toLocaleString() : null;
   const scheduleGrid = gridRows.length ? (
     <section className="section schedule-grid-section">
@@ -218,7 +233,7 @@ export default async function PublicSchedulePage({
             id: "details",
             label: "Schedule Details",
             badge: detailRows.length,
-            content: <ScheduleDetails rows={detailRows} />
+            content: <ScheduleDetails rows={detailRows} refRows={refCountRows} />
           }
         ]}
       />
@@ -242,7 +257,7 @@ function ScheduleSyncStatus({ status, timeZone }: { status: SyncStatus | null; t
   );
 }
 
-function ScheduleDetails({ rows }: { rows: ScheduleDetailRow[] }) {
+function ScheduleDetails({ rows, refRows }: { rows: ScheduleDetailRow[]; refRows: RefCountRow[] }) {
   if (!rows.length) {
     return (
       <section className="section card">
@@ -259,6 +274,40 @@ function ScheduleDetails({ rows }: { rows: ScheduleDetailRow[] }) {
           <h2>Schedule Details</h2>
           <p className="muted">Same breakdown as the export summary: game totals, unique opponents, repeat opponents, court balance, and first/last seeding game.</p>
         </div>
+      </div>
+      <div className="schedule-detail-subsection">
+        <h3>Ref Counts</h3>
+        <div className="table-wrap schedule-detail-wrap">
+          <table className="schedule-detail-table">
+            <thead>
+              <tr>
+                <th>Division</th>
+                <th>Center</th>
+                <th>Team</th>
+                <th>Ref Slots</th>
+                <th>Court Assignments</th>
+                <th>First Ref</th>
+                <th>Last Ref</th>
+              </tr>
+            </thead>
+            <tbody>
+              {refRows.map((row) => (
+                <tr key={`ref-${row.division}-${row.center}-${row.team}`}>
+                  <td className={`schedule-detail-division ${divisionClassNames[row.division] || ""}`}>{row.division}</td>
+                  <td>{row.center}</td>
+                  <td>{row.team}</td>
+                  <td className={row.countWarning ? "schedule-detail-warn" : ""}>{row.refSlots}</td>
+                  <td>{row.courtAssignments}</td>
+                  <td>{row.firstRef}</td>
+                  <td>{row.lastRef}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div className="schedule-detail-subsection">
+        <h3>Game Counts</h3>
       </div>
       <div className="table-wrap schedule-detail-wrap">
         <table className="schedule-detail-table">
@@ -332,7 +381,7 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
     const streamLink = publicStreamLink(game, scored);
 
     if (game.court === 1) {
-      row.court1Ref = game.ref_team || "";
+      row.court1Ref = refTeamLabel(game);
       row.court1RefDivision = game.ref_team_division || "";
       row.court1Game = gameText;
       row.court1Division = game.division;
@@ -345,7 +394,7 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
       row.court2Scored = scored;
       row.court2StreamUrl = streamLink.url;
       row.court2StreamLabel = streamLink.label;
-      row.court2Ref = game.ref_team || "";
+      row.court2Ref = refTeamLabel(game);
       row.court2RefDivision = game.ref_team_division || "";
     }
 
@@ -353,6 +402,13 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
   }
 
   return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row);
+}
+
+function refTeamLabel(game: PublicScheduleGame) {
+  if (!game.ref_team) return "";
+  const centerCode = game.ref_team_center ? abbreviatedCenter(game.ref_team_center) : "";
+  const prefix = [centerCode, game.ref_team_division].filter(Boolean).join(" ");
+  return prefix ? `${prefix} - ${game.ref_team}` : game.ref_team;
 }
 
 function buildScheduleDetailRows(teams: PublicScheduleTeam[], games: PublicScheduleGame[], timeZone: string): ScheduleDetailRow[] {
@@ -386,6 +442,43 @@ function buildScheduleDetailRows(teams: PublicScheduleTeam[], games: PublicSched
       maxRepeatWarning: maxRepeat > 2,
       maxRepeatOk: maxRepeat === 2,
       courtBalanceWarning: courtImbalance > 1
+    };
+  });
+}
+
+function buildRefCountRows(teams: PublicScheduleTeam[], games: PublicScheduleGame[], timeZone: string): RefCountRow[] {
+  const activeTeams = teams.filter((team) => !team.deleted_at);
+  const countsByTeamId = new Map<number, { slots: Set<string>; courtAssignments: number; firstRef: string | null; lastRef: string | null }>(
+    activeTeams.map((team) => [team.id, { slots: new Set<string>(), courtAssignments: 0, firstRef: null, lastRef: null }])
+  );
+
+  for (const game of games) {
+    if (!game.ref_team_id) continue;
+    const counts = countsByTeamId.get(game.ref_team_id);
+    if (!counts) continue;
+    counts.slots.add(game.starts_at);
+    counts.courtAssignments += 1;
+    if (!counts.firstRef || game.starts_at.localeCompare(counts.firstRef) < 0) counts.firstRef = game.starts_at;
+    if (!counts.lastRef || game.starts_at.localeCompare(counts.lastRef) > 0) counts.lastRef = game.starts_at;
+  }
+
+  const slotCounts = [...countsByTeamId.values()].map((counts) => counts.slots.size);
+  const minSlots = slotCounts.length ? Math.min(...slotCounts) : 0;
+  const maxSlots = slotCounts.length ? Math.max(...slotCounts) : 0;
+
+  return activeTeams.map((team) => {
+    const counts = countsByTeamId.get(team.id);
+    const refSlots = counts?.slots.size || 0;
+
+    return {
+      division: team.division,
+      center: team.center,
+      team: team.name,
+      refSlots,
+      courtAssignments: counts?.courtAssignments || 0,
+      firstRef: formatDateTime(counts?.firstRef || null, timeZone),
+      lastRef: formatDateTime(counts?.lastRef || null, timeZone),
+      countWarning: maxSlots !== minSlots && (refSlots === minSlots || refSlots === maxSlots)
     };
   });
 }
@@ -456,4 +549,13 @@ function syncStatusTime(value: string, timeZone: string) {
     minute: "2-digit",
     timeZone
   }).format(new Date(value));
+}
+
+function normalizeLabel(value: string) {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function abbreviatedCenter(value: string) {
+  const normalized = normalizeLabel(value);
+  return normalized ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1, 4)}` : "";
 }

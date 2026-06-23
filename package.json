@@ -10,6 +10,7 @@
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "audit:schedule:prod": "node --experimental-strip-types --env-file-if-exists=.env.local --env-file-if-exists=.env.production.local scripts/audit-prod-schedule.mjs",
     "admin:import-schedule": "node --experimental-strip-types --env-file-if-exists=.env.local --env-file-if-exists=.env.production.local scripts/admin-import-schedule.mjs",
+    "admin:save-streams": "node --experimental-strip-types --env-file-if-exists=.env.local --env-file-if-exists=.env.production.local scripts/save-court-streams.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

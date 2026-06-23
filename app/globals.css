@@ -842,6 +842,16 @@ th {
   border: 1px solid var(--line);
 }
 
+.schedule-detail-subsection {
+  display: grid;
+  gap: 8px;
+}
+
+.schedule-detail-subsection h3 {
+  font-size: 18px;
+  margin: 0;
+}
+
 .schedule-detail-table {
   min-width: 1180px;
 }

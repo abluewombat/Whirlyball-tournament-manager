@@ -30,6 +30,7 @@ type GameExportRow = {
   team_2: string | null;
   team_2_center: string | null;
   ref_team: string | null;
+  ref_team_center: string | null;
   ref_team_division: string | null;
   label: string | null;
 };
@@ -137,13 +138,14 @@ export async function GET() {
             games.team_1_id, games.team_2_id, games.ref_team_id,
             t1.name as team_1, c1.name as team_1_center,
             t2.name as team_2, c2.name as team_2_center,
-            tr.name as ref_team, tr.division as ref_team_division, games.label
+            tr.name as ref_team, cr.name as ref_team_center, tr.division as ref_team_division, games.label
      FROM games
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
      LEFT JOIN centers c1 ON c1.id = t1.center_id
      LEFT JOIN teams t2 ON t2.id = games.team_2_id
      LEFT JOIN centers c2 ON c2.id = t2.center_id
      LEFT JOIN teams tr ON tr.id = games.ref_team_id
+     LEFT JOIN centers cr ON cr.id = tr.center_id
      WHERE games.tournament_id = $1
      ORDER BY games.starts_at, games.court`,
     [tournament.id]
@@ -358,11 +360,11 @@ function addReferenceScheduleDay(sheet: ExcelJS.Worksheet, section: ReferenceSch
 
     if (court1Game) {
       writeReferenceCourtGame(sheet, rowNumber, 3, court1Game, timeZone);
-      writeReferenceCell(sheet, rowNumber, 1, court1Game.ref_team || "", court1Game.ref_team_division || "", true);
+      writeReferenceCell(sheet, rowNumber, 1, exportRefTeamLabel(court1Game), court1Game.ref_team_division || "", true);
     }
     if (court2Game) {
       writeReferenceCourtGame(sheet, rowNumber, 9, court2Game, timeZone);
-      writeReferenceCell(sheet, rowNumber, 15, court2Game.ref_team || "", court2Game.ref_team_division || "", true);
+      writeReferenceCell(sheet, rowNumber, 15, exportRefTeamLabel(court2Game), court2Game.ref_team_division || "", true);
     }
     rowNumber += 1;
   }
@@ -538,7 +540,7 @@ function addScheduleDetailSheet(workbook: ExcelJS.Workbook, games: GameExportRow
       team1: game.team_1 ? exportTeamLabel(game.team_1_center, game.division, game.team_1) : "",
       team2: game.team_2 ? exportTeamLabel(game.team_2_center, game.division, game.team_2) : "",
       game: exportGameText(game, false),
-      ref: game.ref_team || ""
+      ref: exportRefTeamLabel(game)
     });
     colorGameCell(row.getCell("division"), game.division);
     colorGameCell(row.getCell("team1"), game.division);
@@ -692,14 +694,14 @@ function buildScheduleGrid(games: GameExportRow[]) {
       };
     const gameText = exportGameText(game, true);
     if (game.court === 1) {
-      row.court1Ref = game.ref_team || "";
+      row.court1Ref = exportRefTeamLabel(game);
       row.court1RefDivision = game.ref_team_division || "";
       row.court1Game = gameText;
       row.court1Division = game.division;
     } else if (game.court === 2) {
       row.court2Game = gameText;
       row.court2Division = game.division;
-      row.court2Ref = game.ref_team || "";
+      row.court2Ref = exportRefTeamLabel(game);
       row.court2RefDivision = game.ref_team_division || "";
     }
     rows.set(key, row);
@@ -727,6 +729,12 @@ function exportTeamLabel(center: string | null, division: string, name: string) 
   return code ? `${code} - ${name}` : name;
 }
 
+function exportRefTeamLabel(game: GameExportRow) {
+  if (!game.ref_team) return "";
+  const prefix = [abbreviatedCenter(game.ref_team_center), game.ref_team_division].filter(Boolean).join(" ");
+  return prefix ? `${prefix} - ${game.ref_team}` : game.ref_team;
+}
+
 function fallbackTeamCode(center: string | null, division: string) {
   const code = center ? centerCodes[normalizeTeamName(center)] || center.slice(0, 4).toUpperCase() : "";
   return [code, division].filter(Boolean).join(" ");
@@ -734,6 +742,11 @@ function fallbackTeamCode(center: string | null, division: string) {
 
 function normalizeTeamName(value: string) {
   return value.replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function abbreviatedCenter(value: string | null) {
+  const normalized = value ? normalizeTeamName(value) : "";
+  return normalized ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1, 4)}` : "";
 }
 
 function columnLetter(columnNumber: number) {
