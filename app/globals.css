@@ -517,6 +517,42 @@ th {
   color: var(--danger);
 }
 
+.sync-status-pill {
+  align-items: center;
+  background: #111922;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 7px;
+  min-height: 30px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.sync-status-pill strong {
+  color: var(--ink);
+}
+
+.sync-status-dot {
+  border-radius: 999px;
+  display: inline-block;
+  height: 9px;
+  width: 9px;
+}
+
+.sync-status-pill.is-success .sync-status-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(103, 211, 145, 0.15);
+}
+
+.sync-status-pill.is-failure .sync-status-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px rgba(255, 107, 87, 0.15);
+}
+
 .inline-form {
   display: inline-flex;
   flex-wrap: wrap;

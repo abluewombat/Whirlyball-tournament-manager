@@ -3,6 +3,7 @@ import { LiveRefresh } from "@/app/live-refresh";
 import { currentTournament } from "@/lib/tournaments";
 import { LiveNow } from "@/app/live-now";
 import { ViewTabs } from "@/app/view-tabs";
+import { readGoogleSheetSyncStatus, type SyncStatus } from "@/lib/sync-status";
 import {
   buildDivisionAverages,
   buildScheduleQuality,
@@ -132,6 +133,7 @@ export default async function PublicSchedulePage({
      ORDER BY teams.division, center, teams.name`,
     [tournament.id]
   );
+  const syncStatus = await readGoogleSheetSyncStatus(tournament.id);
   const gridRows = buildScheduleGrid(games, hiddenDivisionLabels, tournament.timezone);
   const detailRows = buildScheduleDetailRows(teams, games, tournament.timezone);
   const lastUpdated = games.length ? new Date().toLocaleString() : null;
@@ -202,6 +204,7 @@ export default async function PublicSchedulePage({
             {games.length ? `${games.length} scheduled games${lastUpdated ? ` loaded ${lastUpdated}` : ""}.` : "No tournament schedule has been generated yet."}
           </p>
         </div>
+        <ScheduleSyncStatus status={syncStatus} timeZone={tournament.timezone} />
       </div>
 
       <LiveNow tournament={tournament} />
@@ -220,6 +223,22 @@ export default async function PublicSchedulePage({
         ]}
       />
     </main>
+  );
+}
+
+function ScheduleSyncStatus({ status, timeZone }: { status: SyncStatus | null; timeZone: string }) {
+  if (!status) return null;
+  const success = status.status === "success";
+  const label = success ? "Last synced" : "Sync failed";
+  const time = syncStatusTime(status.synced_at, timeZone);
+  const title = `${label} ${time}. ${status.summary}`;
+
+  return (
+    <div className={`sync-status-pill ${success ? "is-success" : "is-failure"}`} title={title} aria-label={title}>
+      <span className="sync-status-dot" aria-hidden="true" />
+      <span>{label}</span>
+      <strong>{time}</strong>
+    </div>
   );
 }
 
@@ -427,4 +446,14 @@ function formatTime(value: string, timeZone: string) {
 
 function formatDateTime(value: string | null, timeZone: string) {
   return value ? `${formatDay(value, timeZone)} ${formatTime(value, timeZone)}` : "";
+}
+
+function syncStatusTime(value: string, timeZone: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone
+  }).format(new Date(value));
 }

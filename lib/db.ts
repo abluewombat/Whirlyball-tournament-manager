@@ -261,6 +261,17 @@ export async function initDb() {
 
       ALTER TABLE tournament_settings ADD COLUMN IF NOT EXISTS schedule_rules_report_json JSONB;
 
+      CREATE TABLE IF NOT EXISTS sync_status (
+        sync_key TEXT PRIMARY KEY,
+        tournament_id INTEGER REFERENCES tournaments(id),
+        status TEXT NOT NULL CHECK (status IN ('success', 'failure')),
+        summary TEXT NOT NULL,
+        detail_json JSONB,
+        changed_count INTEGER NOT NULL DEFAULT 0,
+        synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
       CREATE TABLE IF NOT EXISTS court_streams (
         id SERIAL PRIMARY KEY,
         tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,

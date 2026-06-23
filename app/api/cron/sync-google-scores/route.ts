@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
 import { syncGoogleSheetSchedule, syncGoogleSheetScores, type GoogleScheduleSyncSummary } from "@/lib/google-score-sync";
+import { recordGoogleSheetSyncStatus } from "@/lib/sync-status";
 import { currentTournament } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
@@ -18,12 +19,25 @@ async function runSync(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const tournament = await currentTournament(process.env.GOOGLE_SCORES_TOURNAMENT || null);
   try {
-    const tournament = await currentTournament(process.env.GOOGLE_SCORES_TOURNAMENT || null);
     const scheduleSync = scheduleSyncEnabled(request)
       ? await syncGoogleSheetSchedule(tournament.id)
       : disabledScheduleSummary();
     const summary = await syncGoogleSheetScores(tournament.id);
+    const changedCount = googleSheetChangedCount(scheduleSync, summary);
+    if (changedCount > 0) {
+      await recordGoogleSheetSyncStatus({
+        tournamentId: tournament.id,
+        status: "success",
+        summary: googleSheetSyncSummaryText(scheduleSync, summary),
+        changedCount,
+        detail: {
+          scheduleSync,
+          scoreSync: summary
+        }
+      });
+    }
     revalidatePath("/");
     revalidatePath("/score");
     revalidatePath("/schedule");
@@ -36,6 +50,16 @@ async function runSync(request: NextRequest) {
       scoreSync: summary
     });
   } catch (error) {
+    await recordGoogleSheetSyncStatus({
+      tournamentId: tournament.id,
+      status: "failure",
+      summary: error instanceof Error ? error.message : "Score sync failed",
+      changedCount: 0,
+      detail: {
+        error: error instanceof Error ? error.message : String(error)
+      }
+    });
+    revalidatePath("/schedule");
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Score sync failed" }, { status: 500 });
   }
 }
@@ -61,6 +85,31 @@ function disabledScheduleSummary(): GoogleScheduleSyncSummary {
     estimatedStarts: 0,
     skipped: []
   };
+}
+
+function googleSheetChangedCount(
+  scheduleSync: GoogleScheduleSyncSummary,
+  scoreSync: { updated: number }
+) {
+  return scheduleSync.gamesInserted + scheduleSync.gamesUpdated + scheduleSync.refsUpdated + scoreSync.updated;
+}
+
+function googleSheetSyncSummaryText(
+  scheduleSync: GoogleScheduleSyncSummary,
+  scoreSync: { updated: number }
+) {
+  const parts = [
+    countText(scoreSync.updated, "game scored", "games scored"),
+    countText(scheduleSync.gamesInserted, "game added", "games added"),
+    countText(scheduleSync.gamesUpdated, "game updated", "games updated"),
+    countText(scheduleSync.refsUpdated, "ref updated", "refs updated")
+  ].filter(Boolean);
+  return parts.join(", ") || "No changes";
+}
+
+function countText(count: number, singular: string, plural: string) {
+  if (!count) return "";
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function authorized(request: NextRequest) {
