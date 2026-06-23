@@ -16,7 +16,7 @@ export type PublicStreamLinkInput = {
   actual_started_at: string | null;
   actual_ended_at?: string | null;
   youtube_video_id: string | null;
-  stream_started_at: string | null;
+  replay_baseline_at: string | null;
   team_1_score: number | null;
   team_2_score: number | null;
   result_type: string | null;
@@ -30,8 +30,8 @@ export function publicStreamLinkForGame(game: PublicStreamLinkInput, options: { 
 
   if (options.firstStreamGame) return replayLink(game.youtube_video_id, 0);
   if (!complete && !game.actual_ended_at) return { url: "", label: "" };
-  if (!game.actual_started_at || !game.stream_started_at) return { url: "", label: "" };
-  return replayLink(game.youtube_video_id, youtubeReplayOffsetSeconds(game.actual_started_at, game.stream_started_at));
+  if (!game.actual_started_at || !game.replay_baseline_at) return { url: "", label: "" };
+  return replayLink(game.youtube_video_id, youtubeReplayOffsetSeconds(game.actual_started_at, game.replay_baseline_at));
 }
 
 function replayLink(videoId: string, offsetSeconds: number) {

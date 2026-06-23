@@ -26,7 +26,6 @@ type StreamTimelineGameRow = {
   id: number;
   stream_id: number;
   starts_at: string;
-  stream_started_at: string;
   team_1_score: number | null;
   team_2_score: number | null;
   result_type: string | null;
@@ -186,7 +185,6 @@ export async function repairStreamTimelineWithClient(client: PoolClient, tournam
       `SELECT games.id,
               games.stream_id,
               games.starts_at,
-              court_streams.stream_started_at,
               games.team_1_score,
               games.team_2_score,
               games.result_type,
@@ -194,7 +192,6 @@ export async function repairStreamTimelineWithClient(client: PoolClient, tournam
               games.actual_started_at,
               games.actual_ended_at
          FROM games
-         JOIN court_streams ON court_streams.id = games.stream_id
         WHERE games.stream_id = $1
           AND games.team_1_id IS NOT NULL
           AND games.team_2_id IS NOT NULL
@@ -209,7 +206,7 @@ export async function repairStreamTimelineWithClient(client: PoolClient, tournam
       const complete = isCompleteStreamGame(game);
       const fallbackFinish: string | null = complete ? game.actual_ended_at || game.scored_at : null;
       const nextActualStartedAt: string | null = complete
-        ? previousFinish || game.stream_started_at || game.actual_started_at
+        ? previousFinish
         : !waitingForCurrentGameToFinish && previousFinish
           ? previousFinish
           : null;

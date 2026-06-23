@@ -19,6 +19,10 @@ test("schedule display uses first stream games instead of estimated stream-only 
   const teamPage = await readFile(new URL("../app/teams/[id]/page.tsx", import.meta.url), "utf8");
 
   assert.match(schedulePage, /firstStreamGameIdsByCourtDay/);
+  assert.match(schedulePage, /stream_replay\.replay_baseline_at/);
+  assert.doesNotMatch(schedulePage, /court_streams\.stream_started_at/);
+  assert.match(teamPage, /stream_replay\.replay_baseline_at/);
+  assert.doesNotMatch(teamPage, /court_streams\.stream_started_at/);
   assert.match(teamPage, /first_stream_game/);
   assert.doesNotMatch(schedulePage, /streamOnlyGameIdsByCourtDay/);
   assert.doesNotMatch(teamPage, /stream_only_video_link/);
@@ -30,7 +34,7 @@ test("public stream links show live streams and recorded replay starts", () => {
     actual_started_at: null,
     actual_ended_at: null,
     youtube_video_id: "YaPfDGqOcnI",
-    stream_started_at: "2026-06-23T11:50:00.000Z",
+    replay_baseline_at: "2026-06-23T11:50:00.000Z",
     team_1_score: null,
     team_2_score: null,
     result_type: null
