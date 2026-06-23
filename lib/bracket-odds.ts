@@ -250,6 +250,7 @@ function simulateBracket(
 ) {
   const games = sourceGames.map<SimGame>((game) => ({ ...game }));
   const byKey = new Map(games.map((game) => [game.game_key, game]));
+  const incomingBySlot = buildIncomingBySlot(games);
   const opponents = new Map<number, Map<number, number>>();
   const eliminators = new Map<number, Map<number, number>>();
   const losses = new Map<number, number>();
@@ -260,7 +261,7 @@ function simulateBracket(
   for (let pass = 0; pass < 80; pass++) {
     let changed = false;
     for (const game of games.sort(compareBracketGames)) {
-      if (game.winner_team_id === null && isFirstRoundBye(game)) {
+      if (game.winner_team_id === null && canAutoAdvanceOneTeamGame(game, byKey, incomingBySlot)) {
         const winnerId = game.team_1_id || game.team_2_id;
         if (winnerId) {
           game.winner_team_id = winnerId;
@@ -312,6 +313,57 @@ function simulateBracket(
   }
 
   return { championId, finalistIds, finishRanks, opponents, eliminators };
+}
+
+type IncomingSource = {
+  sourceGameKey: string;
+  result: "winner" | "loser";
+};
+
+function buildIncomingBySlot(games: SimGame[]) {
+  const incoming = new Map<string, IncomingSource[]>();
+  for (const game of games) {
+    if (game.next_winner_game_key && game.next_winner_slot) {
+      addIncoming(incoming, game.next_winner_game_key, game.next_winner_slot, {
+        sourceGameKey: game.game_key,
+        result: "winner"
+      });
+    }
+    if (game.next_loser_game_key && game.next_loser_slot) {
+      addIncoming(incoming, game.next_loser_game_key, game.next_loser_slot, {
+        sourceGameKey: game.game_key,
+        result: "loser"
+      });
+    }
+  }
+  return incoming;
+}
+
+function addIncoming(target: Map<string, IncomingSource[]>, gameKey: string, slot: number, source: IncomingSource) {
+  const key = slotKey(gameKey, slot);
+  target.set(key, [...(target.get(key) || []), source]);
+}
+
+function canAutoAdvanceOneTeamGame(game: SimGame, byKey: Map<string, SimGame>, incomingBySlot: Map<string, IncomingSource[]>) {
+  if (!oneTeamOnly(game)) return false;
+  const emptySlot = game.team_1_id === null ? 1 : 2;
+  return slotCannotReceiveTeam(game.game_key, emptySlot, byKey, incomingBySlot);
+}
+
+function slotCannotReceiveTeam(
+  gameKey: string,
+  slot: number,
+  byKey: Map<string, SimGame>,
+  incomingBySlot: Map<string, IncomingSource[]>
+) {
+  const sources = incomingBySlot.get(slotKey(gameKey, slot)) || [];
+  if (sources.length === 0) return true;
+  return sources.every((source) => {
+    const sourceGame = byKey.get(source.sourceGameKey);
+    if (!sourceGame) return true;
+    if (source.result === "winner") return sourceGame.winner_team_id !== null;
+    return sourceGame.winner_team_id !== null || sourceGame.loser_team_id !== null;
+  });
 }
 
 function recordResolvedGame(
@@ -366,10 +418,8 @@ function fillSlot(byKey: Map<string, SimGame>, gameKey: string, slot: number, te
   return true;
 }
 
-function isFirstRoundBye(game: SimGame) {
-  return game.bracket_side === "winners" &&
-    game.round === 1 &&
-    ((game.team_1_id !== null && game.team_2_id === null) || (game.team_1_id === null && game.team_2_id !== null));
+function oneTeamOnly(game: SimGame) {
+  return (game.team_1_id !== null && game.team_2_id === null) || (game.team_1_id === null && game.team_2_id !== null);
 }
 
 function compareBracketGames(left: BracketGameRow, right: BracketGameRow) {
@@ -379,7 +429,7 @@ function compareBracketGames(left: BracketGameRow, right: BracketGameRow) {
 
 function recordOpponent(map: Map<number, Map<number, number>>, teamId: number, opponentId: number) {
   const nested = map.get(teamId) || new Map<number, number>();
-  nested.set(opponentId, (nested.get(opponentId) || 0) + 1);
+  nested.set(opponentId, 1);
   map.set(teamId, nested);
 }
 
@@ -417,6 +467,10 @@ function seededRandom(seed: string) {
 
 function pairKey(teamId: number, opponentId: number) {
   return `${teamId}:${opponentId}`;
+}
+
+function slotKey(gameKey: string, slot: number) {
+  return `${gameKey}:${slot}`;
 }
 
 function clamp(value: number, min: number, max: number) {
