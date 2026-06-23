@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { PoolClient } from "pg";
 import { withTransaction } from "@/lib/db";
 import { estimateUnfilledStreamGameStarts, linkGamesToExistingCourtStreams } from "@/lib/streams";
 
@@ -12,6 +13,12 @@ type IncomingGame = {
   team_1_code: string;
   team_2_code: string;
   ref_team_code?: string | null;
+};
+
+type IncomingRefUpdate = {
+  starts_at: string;
+  court: number;
+  ref_team_code: string | null;
 };
 
 type DbTeam = {
@@ -92,12 +99,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const payload = (await request.json()) as { games?: IncomingGame[]; deleteMissing?: boolean };
-  if (!Array.isArray(payload.games)) {
-    return NextResponse.json({ error: "Expected games array" }, { status: 400 });
+  const payload = (await request.json()) as { games?: IncomingGame[]; refUpdates?: IncomingRefUpdate[]; deleteMissing?: boolean };
+  const games = payload.games || [];
+  const refUpdates = payload.refUpdates || [];
+  if (!Array.isArray(games) || !Array.isArray(refUpdates)) {
+    return NextResponse.json({ error: "Expected games/refUpdates arrays" }, { status: 400 });
+  }
+  if (!games.length && !refUpdates.length) {
+    return NextResponse.json({ error: "Expected at least one game or ref update" }, { status: 400 });
   }
 
-  const validationError = validateIncomingGames(payload.games);
+  const validationError = validateIncomingGames(games) || validateIncomingRefUpdates(refUpdates);
   if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
 
   try {
@@ -123,7 +135,7 @@ export async function POST(request: Request) {
       let duplicateRowsDeleted = 0;
       const incomingSlots = new Set<string>();
 
-      for (const game of payload.games || []) {
+      for (const game of games) {
         const team1 = teamByCode[game.team_1_code];
         const team2 = teamByCode[game.team_2_code];
         if (!team1 || !team2) throw new Error(`Unknown team code in game: ${game.team_1_code} vs ${game.team_2_code}`);
@@ -223,14 +235,16 @@ export async function POST(request: Request) {
 
       const streamsLinked = await linkGamesToExistingCourtStreams(client, tournamentId);
       const estimatedStarts = await estimateUnfilledStreamGameStarts(client, tournamentId);
+      const refUpdateResult = await updateRefsBySlot(client, tournamentId, refUpdates, teamByCode);
 
       return {
-        received: payload.games?.length || 0,
+        received: games.length,
         inserted,
         updated,
         unchanged,
         removed,
         duplicateRowsDeleted,
+        ...refUpdateResult,
         streamsLinked,
         estimatedStarts
       };
@@ -240,6 +254,66 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
+}
+
+async function updateRefsBySlot(
+  client: PoolClient,
+  tournamentId: number,
+  refUpdates: IncomingRefUpdate[],
+  teamByCode: Record<string, DbTeam | null>
+) {
+  let refRowsReceived = 0;
+  let refsUpdated = 0;
+  let refsUnchanged = 0;
+  let refSlotsMissing = 0;
+
+  for (const update of refUpdates) {
+    refRowsReceived += 1;
+    const refTeam = update.ref_team_code ? teamByCode[update.ref_team_code] : null;
+    if (update.ref_team_code && !refTeam) throw new Error(`Unknown ref team code in ref update: ${update.ref_team_code}`);
+
+    const existingResult = await client.query<DbGame>(
+      `SELECT *
+       FROM games
+       WHERE tournament_id = $1 AND court = $2 AND starts_at = $3::timestamptz
+       ORDER BY id`,
+      [tournamentId, update.court, update.starts_at]
+    );
+    if (!existingResult.rows.length) {
+      refSlotsMissing += 1;
+      continue;
+    }
+
+    if (refTeam) {
+      const ownDivisionGame = existingResult.rows.find((row) => row.division === refTeam.division);
+      if (ownDivisionGame) {
+        throw new Error(`${update.ref_team_code} cannot ref ${ownDivisionGame.division} at ${update.starts_at} court ${update.court}`);
+      }
+    }
+
+    const targetRefId = refTeam?.id || null;
+    const rowsNeedingUpdate = existingResult.rows.filter((row) => row.ref_team_id !== targetRefId);
+    if (!rowsNeedingUpdate.length) {
+      refsUnchanged += existingResult.rows.length;
+      continue;
+    }
+
+    await client.query(
+      `UPDATE games
+       SET ref_team_id = $1
+       WHERE tournament_id = $2 AND court = $3 AND starts_at = $4::timestamptz`,
+      [targetRefId, tournamentId, update.court, update.starts_at]
+    );
+    refsUpdated += rowsNeedingUpdate.length;
+    refsUnchanged += existingResult.rows.length - rowsNeedingUpdate.length;
+  }
+
+  return {
+    refRowsReceived,
+    refsUpdated,
+    refsUnchanged,
+    refSlotsMissing
+  };
 }
 
 function validateIncomingGames(games: IncomingGame[]) {
@@ -256,6 +330,20 @@ function validateIncomingGames(games: IncomingGame[]) {
     if (teamDefinitions[game.team_2_code].division !== game.division) return `Division mismatch at index ${index}: ${game.team_2_code}`;
     const key = slotKey(game.starts_at, game.court);
     if (seen.has(key)) return `Duplicate incoming slot at index ${index}: ${game.starts_at} court ${game.court}`;
+    seen.add(key);
+  }
+  return null;
+}
+
+function validateIncomingRefUpdates(refUpdates: IncomingRefUpdate[]) {
+  const seen = new Set<string>();
+  for (const [index, update] of refUpdates.entries()) {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00-04:00$/.test(update.starts_at)) return `Invalid ref update starts_at at index ${index}: ${update.starts_at}`;
+    if (Number.isNaN(new Date(update.starts_at).getTime())) return `Unparseable ref update starts_at at index ${index}: ${update.starts_at}`;
+    if (![1, 2].includes(update.court)) return `Invalid ref update court at index ${index}: ${update.court}`;
+    if (update.ref_team_code && !teamDefinitions[update.ref_team_code]) return `Unknown ref_team_code at index ${index}: ${update.ref_team_code}`;
+    const key = slotKey(update.starts_at, update.court);
+    if (seen.has(key)) return `Duplicate ref update slot at index ${index}: ${update.starts_at} court ${update.court}`;
     seen.add(key);
   }
   return null;
