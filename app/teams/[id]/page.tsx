@@ -26,6 +26,8 @@ type TeamGame = {
   team_2_id: number | null;
   team_1: string | null;
   team_2: string | null;
+  team_1_center: string | null;
+  team_2_center: string | null;
   team_1_score: number | null;
   team_2_score: number | null;
   winner_team_id: number | null;
@@ -148,7 +150,10 @@ export default async function TeamPage({
             games.team_1_id, games.team_2_id, games.team_1_score, games.team_2_score,
             games.winner_team_id, games.loser_team_id, games.result_type, games.forfeit_team_id,
             games.ref_team_id, games.label, games.actual_started_at, games.actual_ended_at,
-            t1.name as team_1, t2.name as team_2, tr.name as ref_team,
+            t1.name as team_1, t2.name as team_2,
+            COALESCE(c1.name, 'Draft') as team_1_center,
+            COALESCE(c2.name, 'Draft') as team_2_center,
+            tr.name as ref_team,
             games.stream_id IS NOT NULL
               AND NOT EXISTS (
                 SELECT 1
@@ -162,6 +167,8 @@ export default async function TeamPage({
      FROM games
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
      LEFT JOIN teams t2 ON t2.id = games.team_2_id
+     LEFT JOIN centers c1 ON c1.id = t1.center_id
+     LEFT JOIN centers c2 ON c2.id = t2.center_id
      LEFT JOIN teams tr ON tr.id = games.ref_team_id
      LEFT JOIN court_streams ON court_streams.id = games.stream_id
      WHERE games.tournament_id = $2 AND (games.team_1_id = $1 OR games.team_2_id = $1 OR games.ref_team_id = $1)
@@ -214,6 +221,7 @@ export default async function TeamPage({
   const nextGames = games.filter((game) => isPlaying(game, team.id) && !isScored(game)).slice(0, 3);
   const courtPaceTimes = projectedCourtPaceTimes(courtPaceGames, timeZone);
   const nextGame = nextGames[0] || null;
+  const nextOpponent = nextGame ? opponentLink(nextGame, team.id, tournament) : null;
   const noMeetingOpponents = opponentReports.filter((row) => row.scheduledGames === 0).map((row) => row.team);
   const leader = teamStandings[0];
   const teamPagePath = `${tournamentPath(tournament) === "/" ? "" : tournamentPath(tournament)}/teams/${team.id}`;
@@ -254,7 +262,9 @@ export default async function TeamPage({
           </div>
           <div className="team-insight">
             <span>Next Up</span>
-            <strong>{nextGame ? opponentLabel(nextGame, team.id) : "TBD"}</strong>
+            <strong>
+              {nextOpponent ? <a href={nextOpponent.href}>{nextOpponent.label}</a> : "TBD"}
+            </strong>
             {nextGame ? (
               <div className="team-next-game-meta">
                 <span>{formatTime(nextGame.starts_at, timeZone)}</span>
@@ -765,6 +775,27 @@ function opponentLabel(game: TeamGame, teamId: number) {
   if (game.team_1_id === teamId) return game.team_2 || "TBD";
   if (game.team_2_id === teamId) return game.team_1 || "TBD";
   return "TBD";
+}
+
+function opponentLink(game: TeamGame, teamId: number, tournament: Awaited<ReturnType<typeof currentTournament>>) {
+  const basePath = tournamentPath(tournament) === "/" ? "" : tournamentPath(tournament);
+  if (game.team_1_id === teamId && game.team_2_id) {
+    return {
+      href: `${basePath}/teams/${game.team_2_id}`,
+      label: `${centerPrefix(game.team_2_center)} - ${game.division}: ${game.team_2 || "TBD"}`
+    };
+  }
+  if (game.team_2_id === teamId && game.team_1_id) {
+    return {
+      href: `${basePath}/teams/${game.team_1_id}`,
+      label: `${centerPrefix(game.team_1_center)} - ${game.division}: ${game.team_1 || "TBD"}`
+    };
+  }
+  return null;
+}
+
+function centerPrefix(center: string | null) {
+  return (center || "Draft").slice(0, 3);
 }
 
 function scoreLabel(game: TeamGame, teamId: number) {
