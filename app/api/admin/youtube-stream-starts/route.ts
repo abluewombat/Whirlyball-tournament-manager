@@ -10,6 +10,7 @@ type Payload = {
   tournament?: string | number | null;
   localDate?: string | null;
   targetLocalTime?: string | null;
+  startsByVideoId?: Record<string, string> | null;
   apply?: boolean | null;
 };
 
@@ -34,6 +35,7 @@ export async function POST(request: Request) {
   const tournament = await currentTournament(payload.tournament || process.env.GOOGLE_SCORES_TOURNAMENT || null);
   const localDate = payload.localDate?.trim() || null;
   const targetLocalTime = payload.targetLocalTime?.trim() || "19:20";
+  const startsByVideoId = payload.startsByVideoId || {};
   const apply = Boolean(payload.apply);
 
   if (localDate && !/^\d{4}-\d{2}-\d{2}$/.test(localDate)) {
@@ -48,7 +50,8 @@ export async function POST(request: Request) {
 
   for (const stream of streams) {
     const youtube = await youtubeStreamDetails(stream.youtube_video_id);
-    const actualStart = youtube.actualStartTime;
+    const overrideStart = normalizedTimestamp(startsByVideoId[stream.youtube_video_id]);
+    const actualStart = overrideStart || youtube.actualStartTime;
     const targetStartsAt = stream.target_starts_at || stream.first_game_starts_at;
     const offsetSeconds = actualStart && targetStartsAt
       ? Math.floor((Date.parse(targetStartsAt) - Date.parse(actualStart)) / 1000)
@@ -61,6 +64,7 @@ export async function POST(request: Request) {
       youtubeVideoId: stream.youtube_video_id,
       youtubeUrl: stream.youtube_url,
       youtubeApi: youtube.diagnostic,
+      overrideStartApplied: Boolean(overrideStart),
       storedStreamStartedAt: stream.stored_stream_started_at,
       youtubeActualStart: actualStart,
       firstGameStartsAt: stream.first_game_starts_at,
@@ -94,6 +98,12 @@ export async function POST(request: Request) {
     streamsUpdated: apply ? results.filter((result) => result.youtubeActualStart).length : 0,
     results
   });
+}
+
+function normalizedTimestamp(value: string | undefined) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 }
 
 async function youtubeStreamDetails(videoId: string) {
