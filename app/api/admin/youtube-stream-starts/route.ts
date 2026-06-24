@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { query } from "@/lib/db";
 import { formatStreamOffset } from "@/lib/stream-links";
-import { youtubeActualStart } from "@/lib/streams";
 import { currentTournament } from "@/lib/tournaments";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +47,8 @@ export async function POST(request: Request) {
   const results = [];
 
   for (const stream of streams) {
-    const actualStart = await youtubeActualStart(stream.youtube_video_id);
+    const youtube = await youtubeStreamDetails(stream.youtube_video_id);
+    const actualStart = youtube.actualStartTime;
     const targetStartsAt = stream.target_starts_at || stream.first_game_starts_at;
     const offsetSeconds = actualStart && targetStartsAt
       ? Math.floor((Date.parse(targetStartsAt) - Date.parse(actualStart)) / 1000)
@@ -60,6 +60,7 @@ export async function POST(request: Request) {
       timezone: stream.timezone,
       youtubeVideoId: stream.youtube_video_id,
       youtubeUrl: stream.youtube_url,
+      youtubeApi: youtube.diagnostic,
       storedStreamStartedAt: stream.stored_stream_started_at,
       youtubeActualStart: actualStart,
       firstGameStartsAt: stream.first_game_starts_at,
@@ -93,6 +94,53 @@ export async function POST(request: Request) {
     streamsUpdated: apply ? results.filter((result) => result.youtubeActualStart).length : 0,
     results
   });
+}
+
+async function youtubeStreamDetails(videoId: string) {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) {
+    return {
+      actualStartTime: null,
+      diagnostic: { apiKeyConfigured: false, ok: false, status: null, itemCount: 0, hasLiveStreamingDetails: false }
+    };
+  }
+
+  try {
+    const response = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}&key=${encodeURIComponent(apiKey)}`,
+      { cache: "no-store" }
+    );
+    const data = (await response.json().catch(() => ({}))) as {
+      items?: Array<{ liveStreamingDetails?: { actualStartTime?: string } }>;
+      error?: { message?: string };
+    };
+    const details = data.items?.[0]?.liveStreamingDetails || null;
+    return {
+      actualStartTime: details?.actualStartTime || null,
+      diagnostic: {
+        apiKeyConfigured: true,
+        ok: response.ok,
+        status: response.status,
+        itemCount: data.items?.length || 0,
+        hasLiveStreamingDetails: Boolean(details),
+        hasActualStartTime: Boolean(details?.actualStartTime),
+        errorMessage: response.ok ? null : data.error?.message || "YouTube API request failed"
+      }
+    };
+  } catch (error) {
+    return {
+      actualStartTime: null,
+      diagnostic: {
+        apiKeyConfigured: true,
+        ok: false,
+        status: null,
+        itemCount: 0,
+        hasLiveStreamingDetails: false,
+        hasActualStartTime: false,
+        errorMessage: error instanceof Error ? error.message : "YouTube API request failed"
+      }
+    };
+  }
 }
 
 async function streamRows(tournamentId: number, localDate: string | null, targetLocalTime: string) {
