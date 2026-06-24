@@ -118,7 +118,7 @@ async function rebuildFromScores(client: PoolClient, tournamentId: number, local
     let nextStart: string | null = stream.stream_started_at;
     for (const game of games.rows) {
       const complete = (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
-      const nextEnd = complete ? game.scored_at : null;
+      const nextEnd = complete ? bestEndTimestamp(nextStart, game.previous_actual_ended_at, game.scored_at) : null;
       const change: Change = {
         ...game,
         stream_id: stream.id,
@@ -155,6 +155,32 @@ function sameTimestamp(left: string | null, right: string | null) {
   const leftMs = Date.parse(left);
   const rightMs = Date.parse(right);
   return Number.isFinite(leftMs) && Number.isFinite(rightMs) ? leftMs === rightMs : left === right;
+}
+
+function bestEndTimestamp(startedAt: string | null, actualEndedAt: string | null, scoredAt: string | null) {
+  if (!actualEndedAt) return scoredAt;
+  if (!scoredAt) return actualEndedAt;
+  if (!startedAt) return earlierTimestamp(actualEndedAt, scoredAt);
+
+  const startMs = Date.parse(startedAt);
+  const actualEndMs = Date.parse(actualEndedAt);
+  const scoredMs = Date.parse(scoredAt);
+  if (![startMs, actualEndMs, scoredMs].every(Number.isFinite)) return earlierTimestamp(actualEndedAt, scoredAt);
+
+  const actualEndAfterStart = actualEndMs >= startMs;
+  const scoredAfterStart = scoredMs >= startMs;
+  if (actualEndAfterStart && scoredAfterStart) return actualEndMs <= scoredMs ? actualEndedAt : scoredAt;
+  if (actualEndAfterStart) return actualEndedAt;
+  if (scoredAfterStart) return scoredAt;
+  return earlierTimestamp(actualEndedAt, scoredAt);
+}
+
+function earlierTimestamp(left: string, right: string) {
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  if (!Number.isFinite(leftMs)) return right;
+  if (!Number.isFinite(rightMs)) return left;
+  return leftMs <= rightMs ? left : right;
 }
 
 function authorized(request: Request) {
