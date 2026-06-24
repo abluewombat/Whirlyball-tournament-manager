@@ -228,17 +228,21 @@ function normalizedStreamStarts(games: StreamTimelineGameRow[]) {
   for (let index = 1; index < games.length; index += 1) {
     const currentStart = starts[index];
     const previousStart = starts[index - 1];
-    if (!currentStart || !previousStart) continue;
+    if (!currentStart) continue;
 
     const currentMs = Date.parse(currentStart);
-    const previousMs = Date.parse(previousStart);
+    const previousMs = previousStart ? Date.parse(previousStart) : NaN;
     const currentScheduleMs = Date.parse(games[index].starts_at);
     const previousScheduleMs = Date.parse(games[index - 1].starts_at);
-    if (![currentMs, previousMs, currentScheduleMs, previousScheduleMs].every(Number.isFinite)) continue;
+    if (![currentMs, currentScheduleMs, previousScheduleMs].every(Number.isFinite)) continue;
 
-    const nonIncreasing = currentMs - previousMs <= 60_000;
-    const backwardsJump = currentMs < previousMs;
-    if (!nonIncreasing && !backwardsJump) continue;
+    const previousKnown = Number.isFinite(previousMs);
+    const nonIncreasing = previousKnown && currentMs - previousMs <= 60_000;
+    const backwardsJump = previousKnown && currentMs < previousMs;
+    const previousFarFromSchedule = previousKnown && Math.abs(previousMs - previousScheduleMs) > 90 * 60_000;
+    const currentNearSchedule = Math.abs(currentMs - currentScheduleMs) <= 90 * 60_000;
+    const missingPrevious = !previousKnown;
+    if (!missingPrevious && !nonIncreasing && !backwardsJump && !(previousFarFromSchedule && currentNearSchedule)) continue;
 
     for (let repairIndex = index - 1; repairIndex >= 0; repairIndex -= 1) {
       const repairGame = games[repairIndex];
@@ -250,7 +254,8 @@ function normalizedStreamStarts(games: StreamTimelineGameRow[]) {
       const nextMs = repairIndex + 1 === index ? currentMs : Date.parse(starts[repairIndex + 1] || "");
       const outOfOrder = Number.isFinite(existingMs) && Number.isFinite(nextMs) && existingMs >= nextMs - 60_000;
       const farFromSchedule = Number.isFinite(existingMs) && Math.abs(existingMs - repairScheduleMs) > 90 * 60_000;
-      if (!outOfOrder && !farFromSchedule) break;
+      const missingStart = !Number.isFinite(existingMs);
+      if (!missingStart && !outOfOrder && !farFromSchedule) break;
 
       const repaired = new Date(repairedMs).toISOString();
       starts[repairIndex] = repaired;
