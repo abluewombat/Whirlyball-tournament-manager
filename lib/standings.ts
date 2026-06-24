@@ -83,40 +83,27 @@ export async function getStandings(tournamentId: number, division?: string) {
   for (const game of games) {
     const team1 = rows.get(game.team_1_id);
     const team2 = rows.get(game.team_2_id);
-    if (!team1 || !team2) continue;
-    team1.games_played += 1;
-    team2.games_played += 1;
+    if (!team1 && !team2) continue;
 
     if (game.result_type === "forfeit") {
       const winner = game.winner_team_id ? rows.get(game.winner_team_id) : null;
       const loser = game.loser_team_id ? rows.get(game.loser_team_id) : null;
-      if (!winner || !loser) continue;
-      winner.wins += 1;
-      winner.standing_points += 2;
-      loser.losses += 1;
-      loser.forfeits += 1;
+      if (winner) {
+        winner.games_played += 1;
+        winner.wins += 1;
+        winner.standing_points += 2;
+      }
+      if (loser) {
+        loser.games_played += 1;
+        loser.losses += 1;
+        loser.forfeits += 1;
+      }
       continue;
     }
 
     if (game.team_1_score === null || game.team_2_score === null) continue;
-    team1.points_for += game.team_1_score;
-    team1.points_against += game.team_2_score;
-    team2.points_for += game.team_2_score;
-    team2.points_against += game.team_1_score;
-    if (game.team_1_score === game.team_2_score) {
-      team1.ties += 1;
-      team2.ties += 1;
-      team1.standing_points += 1;
-      team2.standing_points += 1;
-    } else if (game.team_1_score > game.team_2_score) {
-      team1.wins += 1;
-      team1.standing_points += 2;
-      team2.losses += 1;
-    } else {
-      team2.wins += 1;
-      team2.standing_points += 2;
-      team1.losses += 1;
-    }
+    if (team1) applyScoredResult(team1, game.team_1_score, game.team_2_score);
+    if (team2) applyScoredResult(team2, game.team_2_score, game.team_1_score);
   }
 
   for (const row of rows.values()) row.point_diff = row.points_for - row.points_against;
@@ -137,6 +124,21 @@ export async function seedingCompleteForDivision(tournamentId: number, division:
     [tournamentId, division]
   );
   return Number(row?.remaining || 0) === 0;
+}
+
+function applyScoredResult(row: StandingRow, pointsFor: number, pointsAgainst: number) {
+  row.games_played += 1;
+  row.points_for += pointsFor;
+  row.points_against += pointsAgainst;
+  if (pointsFor === pointsAgainst) {
+    row.ties += 1;
+    row.standing_points += 1;
+  } else if (pointsFor > pointsAgainst) {
+    row.wins += 1;
+    row.standing_points += 2;
+  } else {
+    row.losses += 1;
+  }
 }
 
 function compareStandings(left: StandingRow, right: StandingRow) {

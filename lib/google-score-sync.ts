@@ -192,6 +192,7 @@ const refTeamNameAliases: Record<string, string> = {
   "seat c seattle sea de": "Seattle Sea Devils",
   "seat c whirld war c": "Whirld War C"
 };
+const anonymousSeedingOpponentBaseName = "Anonymous Seeding Opponent";
 
 export async function syncGoogleSheetScores(tournamentId: number): Promise<GoogleScoreSyncSummary> {
   const spreadsheetId = process.env.GOOGLE_SCORES_SPREADSHEET_ID || defaultSpreadsheetId;
@@ -308,8 +309,8 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
     };
 
     for (const row of parsedRows) {
-      const team1 = teamsByName.get(row.team1Name);
-      const team2 = teamsByName.get(row.team2Name);
+      const team1 = await syncTeamForSheetName(client, tournamentId, teamsByName, row.team1Name, row.team2Name);
+      const team2 = await syncTeamForSheetName(client, tournamentId, teamsByName, row.team2Name, row.team1Name);
       if (!team1 || !team2) {
         skip(row, "Unknown team name");
         continue;
@@ -780,6 +781,58 @@ function buildTeamSyncLookup(teams: TeamMatch[]) {
   return lookup;
 }
 
+async function syncTeamForSheetName(
+  client: { query: <T>(sql: string, params?: unknown[]) => Promise<{ rows: T[] }> },
+  tournamentId: number,
+  lookup: Map<string, TeamMatch>,
+  teamName: string,
+  otherTeamName: string
+) {
+  if (!isAnonymousSeedingOpponentName(teamName)) return lookup.get(teamName) || null;
+  const otherTeam = lookup.get(otherTeamName);
+  if (!otherTeam || !["A", "B", "C", "D"].includes(otherTeam.division)) return null;
+  const anonymousTeam = await ensureAnonymousSeedingOpponent(client, tournamentId, otherTeam.division);
+  lookup.set(teamName, anonymousTeam);
+  lookup.set(normalizeTeamName(anonymousTeam.name), anonymousTeam);
+  return anonymousTeam;
+}
+
+async function ensureAnonymousSeedingOpponent(
+  client: { query: <T>(sql: string, params?: unknown[]) => Promise<{ rows: T[] }> },
+  tournamentId: number,
+  division: string
+) {
+  const name = `${anonymousSeedingOpponentBaseName} ${division}`;
+  const existing = await client.query<TeamMatch>(
+    `SELECT id, division, name, name AS normalized_name
+       FROM teams
+      WHERE tournament_id = $1
+        AND division = $2
+        AND name = $3
+      ORDER BY id
+      LIMIT 1`,
+    [tournamentId, division, name]
+  );
+  if (existing.rows[0]) return existing.rows[0];
+
+  const inserted = await client.query<TeamMatch>(
+    `INSERT INTO teams (tournament_id, center_id, division, name, deleted_at)
+     VALUES ($1, NULL, $2, $3, NOW())
+     RETURNING id, division, name, name AS normalized_name`,
+    [tournamentId, division, name]
+  );
+  return inserted.rows[0];
+}
+
+function isAnonymousSeedingOpponentName(value: string) {
+  const normalized = normalizeTeamName(value);
+  return normalized === "for seeding" ||
+    normalized === "seeding" ||
+    normalized === "for seed" ||
+    normalized === "seed game" ||
+    normalized.startsWith("for seeding ");
+}
+
 function normalizeTeamName(value: string) {
   return value
     .trim()
@@ -832,10 +885,16 @@ function matchScheduleGame(games: ScheduleGameMatch[], row: ParsedSheetScore) {
     (game) =>
       game.local_date === row.localDate &&
       game.court === row.court &&
-      normalizeTeamName(game.team_1 || "") === row.team1Name &&
-      normalizeTeamName(game.team_2 || "") === row.team2Name
+      sheetTeamMatchesGameName(row.team1Name, game.team_1) &&
+      sheetTeamMatchesGameName(row.team2Name, game.team_2)
   );
   return candidates.find((game) => possibleTwentyFourHourTimes(row.timeLabel).includes(game.local_time)) || null;
+}
+
+function sheetTeamMatchesGameName(sheetName: string, gameName: string | null) {
+  const normalizedGameName = normalizeTeamName(gameName || "");
+  if (normalizedGameName === sheetName) return true;
+  return isAnonymousSeedingOpponentName(sheetName) && normalizedGameName.startsWith(normalizeTeamName(anonymousSeedingOpponentBaseName));
 }
 
 function possibleTwentyFourHourTimes(timeLabel: string) {
