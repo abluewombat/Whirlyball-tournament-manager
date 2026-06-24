@@ -200,26 +200,19 @@ export async function repairStreamTimelineWithClient(client: PoolClient, tournam
       [stream.id]
     );
     let previousFinish: string | null = null;
-    let waitingForCurrentGameToFinish = false;
 
     for (const game of games.rows) {
       const complete = isCompleteStreamGame(game);
       const fallbackFinish: string | null = complete ? game.actual_ended_at || game.scored_at : null;
-      const nextActualStartedAt: string | null = complete
-        ? previousFinish
-        : !waitingForCurrentGameToFinish && previousFinish
-          ? previousFinish
-          : null;
+      const nextActualStartedAt: string | null = game.actual_started_at || previousFinish;
       const nextActualEndedAt: string | null = complete ? fallbackFinish : null;
 
       await applyStreamTimelineUpdate(client, summary, game, nextActualStartedAt, nextActualEndedAt);
 
       if (complete) {
         previousFinish = nextActualEndedAt;
-        waitingForCurrentGameToFinish = false;
       } else {
         previousFinish = null;
-        waitingForCurrentGameToFinish = Boolean(nextActualStartedAt);
       }
     }
   }

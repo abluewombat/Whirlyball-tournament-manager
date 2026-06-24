@@ -28,10 +28,12 @@ export function publicStreamLinkForGame(game: PublicStreamLinkInput, options: { 
   const live = Boolean(game.actual_started_at && !game.actual_ended_at && !complete);
   if (live) return { url: youtubeWatchUrl(game.youtube_video_id), label: "Live now" };
 
-  if (options.firstStreamGame) return replayLink(game.youtube_video_id, 0);
   if (!complete && !game.actual_ended_at) return { url: "", label: "" };
-  if (!game.actual_started_at || !game.replay_baseline_at) return { url: "", label: "" };
-  return replayLink(game.youtube_video_id, youtubeReplayOffsetSeconds(game.actual_started_at, game.replay_baseline_at));
+  if (game.actual_started_at && game.replay_baseline_at) {
+    return replayLink(game.youtube_video_id, youtubeReplayOffsetSeconds(game.actual_started_at, game.replay_baseline_at));
+  }
+  if (options.firstStreamGame && complete) return replayLink(game.youtube_video_id, 0);
+  return { url: "", label: "" };
 }
 
 function replayLink(videoId: string, offsetSeconds: number) {

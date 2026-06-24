@@ -20,9 +20,9 @@ test("schedule display uses first stream games instead of estimated stream-only 
 
   assert.match(schedulePage, /firstStreamGameIdsByCourtDay/);
   assert.match(schedulePage, /stream_replay\.replay_baseline_at/);
-  assert.doesNotMatch(schedulePage, /court_streams\.stream_started_at/);
+  assert.doesNotMatch(schedulePage, /completed_games\.scored_at/);
   assert.match(teamPage, /stream_replay\.replay_baseline_at/);
-  assert.doesNotMatch(teamPage, /court_streams\.stream_started_at/);
+  assert.doesNotMatch(teamPage, /completed_games\.scored_at/);
   assert.match(teamPage, /first_stream_game/);
   assert.doesNotMatch(schedulePage, /streamOnlyGameIdsByCourtDay/);
   assert.doesNotMatch(teamPage, /stream_only_video_link/);
@@ -45,11 +45,22 @@ test("public stream links show live streams and recorded replay starts", () => {
     label: "Live now"
   });
 
+  assert.deepEqual(publicStreamLinkForGame(baseGame, { firstStreamGame: true }), { url: "", label: "" });
+
   assert.deepEqual(
-    publicStreamLinkForGame(baseGame, { firstStreamGame: true }),
+    publicStreamLinkForGame(
+      {
+        ...baseGame,
+        actual_started_at: "2026-06-23T12:00:00.000Z",
+        actual_ended_at: "2026-06-23T12:10:00.000Z",
+        team_1_score: 7,
+        team_2_score: 4
+      },
+      { firstStreamGame: true }
+    ),
     {
-      url: "https://www.youtube.com/watch?v=YaPfDGqOcnI&t=0s",
-      label: "Replay from 0:00"
+      url: "https://www.youtube.com/watch?v=YaPfDGqOcnI&t=600s",
+      label: "Replay from 10:00"
     }
   );
 
@@ -57,7 +68,7 @@ test("public stream links show live streams and recorded replay starts", () => {
     publicStreamLinkForGame(
       {
         ...baseGame,
-        actual_started_at: "2026-06-23T12:00:00.000Z",
+        replay_baseline_at: null,
         actual_ended_at: "2026-06-23T12:10:00.000Z",
         team_1_score: 7,
         team_2_score: 4

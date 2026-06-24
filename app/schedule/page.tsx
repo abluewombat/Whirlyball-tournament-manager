@@ -149,17 +149,13 @@ export default async function PublicSchedulePage({
      LEFT JOIN centers cr ON cr.id = tr.center_id
      LEFT JOIN court_streams ON court_streams.id = games.stream_id
      LEFT JOIN LATERAL (
-       SELECT completed_games.scored_at as replay_baseline_at
-       FROM games completed_games
-       WHERE completed_games.stream_id = games.stream_id
-         AND completed_games.team_1_id IS NOT NULL
-         AND completed_games.team_2_id IS NOT NULL
-         AND completed_games.scored_at IS NOT NULL
-         AND (
-           (completed_games.team_1_score IS NOT NULL AND completed_games.team_2_score IS NOT NULL)
-           OR completed_games.result_type = 'forfeit'
-         )
-       ORDER BY completed_games.starts_at, completed_games.id
+       SELECT first_stream_game.actual_started_at as replay_baseline_at
+       FROM games first_stream_game
+       WHERE first_stream_game.stream_id = games.stream_id
+         AND first_stream_game.team_1_id IS NOT NULL
+         AND first_stream_game.team_2_id IS NOT NULL
+         AND first_stream_game.actual_started_at IS NOT NULL
+       ORDER BY first_stream_game.starts_at, first_stream_game.id
        LIMIT 1
      ) stream_replay ON TRUE
      WHERE games.tournament_id = $1
