@@ -99,9 +99,19 @@ export async function POST(request: Request) {
 async function youtubeStreamDetails(videoId: string) {
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) {
+    const fallback = await youtubePublicStreamDetails(videoId);
     return {
-      actualStartTime: null,
-      diagnostic: { apiKeyConfigured: false, ok: false, status: null, itemCount: 0, hasLiveStreamingDetails: false }
+      actualStartTime: fallback.startTimestamp,
+      diagnostic: {
+        apiKeyConfigured: false,
+        ok: Boolean(fallback.startTimestamp),
+        status: fallback.status,
+        source: fallback.startTimestamp ? "youtube_public_startTimestamp" : "none",
+        itemCount: 0,
+        hasLiveStreamingDetails: false,
+        hasActualStartTime: Boolean(fallback.startTimestamp),
+        errorMessage: fallback.errorMessage
+      }
     };
   }
 
@@ -121,6 +131,7 @@ async function youtubeStreamDetails(videoId: string) {
         apiKeyConfigured: true,
         ok: response.ok,
         status: response.status,
+        source: details?.actualStartTime ? "youtube_api_actualStartTime" : "youtube_api",
         itemCount: data.items?.length || 0,
         hasLiveStreamingDetails: Boolean(details),
         hasActualStartTime: Boolean(details?.actualStartTime),
@@ -139,6 +150,25 @@ async function youtubeStreamDetails(videoId: string) {
         hasActualStartTime: false,
         errorMessage: error instanceof Error ? error.message : "YouTube API request failed"
       }
+    };
+  }
+}
+
+async function youtubePublicStreamDetails(videoId: string) {
+  try {
+    const response = await fetch(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`, { cache: "no-store" });
+    const text = await response.text();
+    const startTimestamp = text.match(/"startTimestamp"\s*:\s*"([^"]+)"/)?.[1] || null;
+    return {
+      status: response.status,
+      startTimestamp: startTimestamp ? new Date(startTimestamp).toISOString() : null,
+      errorMessage: response.ok ? null : "YouTube public page request failed"
+    };
+  } catch (error) {
+    return {
+      status: null,
+      startTimestamp: null,
+      errorMessage: error instanceof Error ? error.message : "YouTube public page request failed"
     };
   }
 }
