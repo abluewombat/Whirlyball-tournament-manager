@@ -66,11 +66,13 @@ type ScheduleGridRow = {
   court1Scored: boolean;
   court1StreamUrl: string;
   court1StreamLabel: string;
+  court1CourtTime: string;
   court2Game: string;
   court2Division: string;
   court2Scored: boolean;
   court2StreamUrl: string;
   court2StreamLabel: string;
+  court2CourtTime: string;
   court2Ref: string;
   court2RefDivision: string;
 };
@@ -365,11 +367,13 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
         court1Scored: false,
         court1StreamUrl: "",
         court1StreamLabel: "",
+        court1CourtTime: "",
         court2Game: "",
         court2Division: "",
         court2Scored: false,
         court2StreamUrl: "",
         court2StreamLabel: "",
+        court2CourtTime: "",
         court2Ref: "",
         court2RefDivision: ""
       };
@@ -386,12 +390,14 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
       row.court1Scored = scored;
       row.court1StreamUrl = streamLink.url;
       row.court1StreamLabel = streamLink.label;
+      row.court1CourtTime = courtPaceTime(game, timeZone);
     } else if (game.court === 2) {
       row.court2Game = gameText;
       row.court2Division = game.division;
       row.court2Scored = scored;
       row.court2StreamUrl = streamLink.url;
       row.court2StreamLabel = streamLink.label;
+      row.court2CourtTime = courtPaceTime(game, timeZone);
       row.court2Ref = refTeamLabel(game);
       row.court2RefDivision = game.ref_team_division || "";
     }
@@ -446,6 +452,10 @@ function refTeamLabel(game: PublicScheduleGame) {
     division: game.ref_team_division,
     name: game.ref_team
   });
+}
+
+function courtPaceTime(game: PublicScheduleGame, timeZone: string) {
+  return game.actual_started_at ? formatTime(game.actual_started_at, timeZone) : "";
 }
 
 function buildScheduleDetailRows(teams: PublicScheduleTeam[], games: PublicScheduleGame[], timeZone: string): ScheduleDetailRow[] {

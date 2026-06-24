@@ -19,11 +19,13 @@ type ScheduleGridRow = {
   court1Scored: boolean;
   court1StreamUrl: string;
   court1StreamLabel: string;
+  court1CourtTime?: string;
   court2Game: string;
   court2Division: string;
   court2Scored: boolean;
   court2StreamUrl: string;
   court2StreamLabel: string;
+  court2CourtTime?: string;
   court2Ref: string;
   court2RefDivision: string;
 };
@@ -90,7 +92,10 @@ export function ScheduleDayGrid({
             {visibleRows.map((row) => (
               <tr key={`${row.dayKey}-${row.time}`}>
                 <td className="schedule-day">{row.day}</td>
-                <td className="schedule-time">{row.time}</td>
+                <td className="schedule-time">
+                  <span>{row.time}</span>
+                  <AdjustedCourtTimes court1={row.court1CourtTime} court2={row.court2CourtTime} />
+                </td>
                 <td className={refCellClass(row.court1RefDivision)}>{row.court1Ref}</td>
                 <td className={gameCellClass(row.court1Division, row.court1Scored)}>
                   {row.court1Game}
@@ -124,4 +129,15 @@ function gameCellClass(division: string, scored = false) {
 
 function refCellClass(division: string) {
   return `schedule-ref-cell ${divisionClassNames[division] || ""}`.trim();
+}
+
+function AdjustedCourtTimes({ court1 = "", court2 = "" }: { court1?: string; court2?: string }) {
+  if (!court1 && !court2) return null;
+  if (court1 && court1 === court2) return <span className="schedule-adjusted-time">{court1}</span>;
+  return (
+    <span className="schedule-adjusted-time">
+      {court1 ? <span>C1 {court1}</span> : null}
+      {court2 ? <span>C2 {court2}</span> : null}
+    </span>
+  );
 }
