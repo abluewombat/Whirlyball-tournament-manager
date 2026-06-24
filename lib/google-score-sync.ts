@@ -725,7 +725,7 @@ function cellText(value: unknown) {
 function teamNameFromSheetCell(value: unknown) {
   const text = cellText(value).replace(/\s+/g, " ");
   if (!text || /^open play$/i.test(text)) return "";
-  const parts = text.split(/\s+-\s+/);
+  const parts = text.split(/\s+[-–—]\s+/);
   return normalizeTeamName(parts.length > 1 ? parts.slice(1).join(" - ") : text);
 }
 
