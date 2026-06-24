@@ -817,6 +817,8 @@ th {
 
 .schedule-day-control {
   display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
   justify-content: flex-end;
   margin: 0 0 8px;
 }
@@ -832,6 +834,10 @@ th {
 
 .schedule-day-control select {
   min-width: 132px;
+}
+
+.schedule-checkbox-control input {
+  margin: 0;
 }
 
 .schedule-sync-sticky {

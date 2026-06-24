@@ -48,12 +48,17 @@ export function ScheduleDayGrid({
   initialDay: string;
 }) {
   const [selectedDay, setSelectedDay] = useState(initialDay);
+  const [showOldGames, setShowOldGames] = useState(false);
+  const [selectedDivision, setSelectedDivision] = useState("all");
   const selectedDayExists = days.some((day) => day.key === selectedDay);
   const effectiveDay = selectedDayExists ? selectedDay : "all";
-  const visibleRows = useMemo(
-    () => effectiveDay === "all" ? rows : rows.filter((row) => row.dayKey === effectiveDay),
-    [effectiveDay, rows]
-  );
+  const visibleRows = useMemo(() => {
+    return rows
+      .filter((row) => effectiveDay === "all" || row.dayKey === effectiveDay)
+      .map((row) => filterRowByDivision(row, selectedDivision))
+      .filter((row) => showOldGames || hasUnscoredGame(row))
+      .filter(hasVisibleGame);
+  }, [effectiveDay, rows, selectedDivision, showOldGames]);
 
   useEffect(() => setSelectedDay(initialDay), [initialDay]);
 
@@ -74,6 +79,24 @@ export function ScheduleDayGrid({
               <option key={day.key} value={day.key}>{day.label}</option>
             ))}
           </select>
+        </label>
+        <label>
+          Division
+          <select value={selectedDivision} onChange={(event) => setSelectedDivision(event.currentTarget.value)}>
+            <option value="all">All</option>
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+            <option value="D">D</option>
+          </select>
+        </label>
+        <label className="schedule-checkbox-control">
+          <input
+            checked={showOldGames}
+            onChange={(event) => setShowOldGames(event.currentTarget.checked)}
+            type="checkbox"
+          />
+          Show old games
         </label>
       </div>
       <div className="schedule-grid-wrap">
@@ -121,6 +144,40 @@ export function ScheduleDayGrid({
       </div>
     </>
   );
+}
+
+function filterRowByDivision(row: ScheduleGridRow, division: string): ScheduleGridRow {
+  if (division === "all") return row;
+  const next = { ...row };
+  if (next.court1Division !== division) {
+    next.court1Ref = "";
+    next.court1RefDivision = "";
+    next.court1Game = "";
+    next.court1Division = "";
+    next.court1Scored = false;
+    next.court1StreamUrl = "";
+    next.court1StreamLabel = "";
+    next.court1CourtTime = "";
+  }
+  if (next.court2Division !== division) {
+    next.court2Game = "";
+    next.court2Division = "";
+    next.court2Scored = false;
+    next.court2StreamUrl = "";
+    next.court2StreamLabel = "";
+    next.court2CourtTime = "";
+    next.court2Ref = "";
+    next.court2RefDivision = "";
+  }
+  return next;
+}
+
+function hasVisibleGame(row: ScheduleGridRow) {
+  return Boolean(row.court1Game || row.court2Game);
+}
+
+function hasUnscoredGame(row: ScheduleGridRow) {
+  return Boolean((row.court1Game && !row.court1Scored) || (row.court2Game && !row.court2Scored));
 }
 
 function gameCellClass(division: string, scored = false) {
