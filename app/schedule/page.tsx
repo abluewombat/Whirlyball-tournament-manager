@@ -28,6 +28,10 @@ type PublicScheduleGame = {
   ref_team_id: number | null;
   team_1: string | null;
   team_2: string | null;
+  team_1_center: string | null;
+  team_2_center: string | null;
+  team_1_division: string | null;
+  team_2_division: string | null;
   ref_team: string | null;
   ref_team_center: string | null;
   ref_team_division: string | null;
@@ -132,11 +136,15 @@ export default async function PublicSchedulePage({
             games.team_1_id, games.team_2_id, games.ref_team_id, games.team_1_score, games.team_2_score,
             games.result_type, games.forfeit_team_id, games.actual_started_at, games.actual_ended_at,
             t1.name as team_1, t2.name as team_2,
+            COALESCE(c1.name, 'Draft') as team_1_center, COALESCE(c2.name, 'Draft') as team_2_center,
+            t1.division as team_1_division, t2.division as team_2_division,
             tr.name as ref_team, tr.division as ref_team_division, COALESCE(cr.name, 'Draft') as ref_team_center, games.label,
             court_streams.youtube_video_id, stream_replay.replay_baseline_at
       FROM games
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
      LEFT JOIN teams t2 ON t2.id = games.team_2_id
+     LEFT JOIN centers c1 ON c1.id = t1.center_id
+     LEFT JOIN centers c2 ON c2.id = t2.center_id
      LEFT JOIN teams tr ON tr.id = games.ref_team_id
      LEFT JOIN centers cr ON cr.id = tr.center_id
      LEFT JOIN court_streams ON court_streams.id = games.stream_id
@@ -447,9 +455,11 @@ function firstStreamGameIdsByCourtDay(games: PublicScheduleGame[], timeZone: str
 
 function refTeamLabel(game: PublicScheduleGame) {
   if (!game.ref_team) return "";
-  const centerCode = game.ref_team_center ? abbreviatedCenter(game.ref_team_center) : "";
-  const prefix = [centerCode, game.ref_team_division].filter(Boolean).join(" ");
-  return prefix ? `${prefix} - ${game.ref_team}` : game.ref_team;
+  return scheduleTeamLabel({
+    center: game.ref_team_center,
+    division: game.ref_team_division,
+    name: game.ref_team
+  });
 }
 
 function buildScheduleDetailRows(teams: PublicScheduleTeam[], games: PublicScheduleGame[], timeZone: string): ScheduleDetailRow[] {
@@ -527,7 +537,24 @@ function buildRefCountRows(teams: PublicScheduleTeam[], games: PublicScheduleGam
 function scheduleGameText(game: PublicScheduleGame, hiddenDivisionLabels: Set<string>, resultText: string) {
   if (isOpenScheduleSlot(game)) return `${game.label || "Open schedule slot"}${resultText}`;
   const divisionPrefix = hiddenDivisionLabels.has(game.division) ? "" : `${game.division}: `;
-  return game.team_1 && game.team_2 ? `${divisionPrefix}${game.team_1} vs. ${game.team_2}${resultText}` : `${divisionPrefix}${game.label || "Game"}${resultText}`;
+  if (game.team_1 && game.team_2) {
+    return `${scheduleTeamLabel({
+      center: game.team_1_center,
+      division: game.team_1_division || game.division,
+      name: game.team_1
+    })} vs. ${scheduleTeamLabel({
+      center: game.team_2_center,
+      division: game.team_2_division || game.division,
+      name: game.team_2
+    })}${resultText}`;
+  }
+  return `${divisionPrefix}${game.label || "Game"}${resultText}`;
+}
+
+function scheduleTeamLabel(team: { center: string | null; division: string | null; name: string }) {
+  const centerCode = team.center ? abbreviatedCenter(team.center) : "";
+  const prefix = [centerCode, team.division].filter(Boolean).join(" - ");
+  return prefix ? `${prefix}: ${team.name}` : team.name;
 }
 
 function isOpenScheduleSlot(game: PublicScheduleGame) {
@@ -576,5 +603,5 @@ function normalizeLabel(value: string) {
 
 function abbreviatedCenter(value: string) {
   const normalized = normalizeLabel(value);
-  return normalized ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1, 4)}` : "";
+  return normalized ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1, 3)}` : "";
 }
