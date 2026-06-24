@@ -118,7 +118,7 @@ async function rebuildFromScores(client: PoolClient, tournamentId: number, local
     let nextStart: string | null = stream.stream_started_at;
     for (const game of games.rows) {
       const complete = (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
-      const nextEnd = complete ? bestEndTimestamp(nextStart, game.previous_actual_ended_at, game.scored_at) : null;
+      const nextEnd: string | null = complete ? bestEndTimestamp(nextStart, game.previous_actual_ended_at, game.scored_at) : null;
       const change: Change = {
         ...game,
         stream_id: stream.id,
@@ -137,7 +137,7 @@ async function rebuildFromScores(client: PoolClient, tournamentId: number, local
         );
       }
 
-      nextStart = complete && game.scored_at ? game.scored_at : null;
+      nextStart = complete ? nextEnd : null;
     }
   }
 
