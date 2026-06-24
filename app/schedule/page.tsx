@@ -351,6 +351,7 @@ function RefDetails({ rows }: { rows: RefCountRow[] }) {
 function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = new Set<string>(), timeZone: string) {
   const rows = new Map<string, ScheduleGridRow>();
   const firstStreamGameIds = firstStreamGameIdsByCourtDay(games, timeZone);
+  const courtPaceTimes = projectedCourtPaceTimes(games, timeZone);
 
   for (const game of games) {
     const row =
@@ -390,14 +391,14 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
       row.court1Scored = scored;
       row.court1StreamUrl = streamLink.url;
       row.court1StreamLabel = streamLink.label;
-      row.court1CourtTime = courtPaceTime(game, timeZone);
+      row.court1CourtTime = courtPaceTimes.get(game.id) || "";
     } else if (game.court === 2) {
       row.court2Game = gameText;
       row.court2Division = game.division;
       row.court2Scored = scored;
       row.court2StreamUrl = streamLink.url;
       row.court2StreamLabel = streamLink.label;
-      row.court2CourtTime = courtPaceTime(game, timeZone);
+      row.court2CourtTime = courtPaceTimes.get(game.id) || "";
       row.court2Ref = refTeamLabel(game);
       row.court2RefDivision = game.ref_team_division || "";
     }
@@ -406,6 +407,46 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
   }
 
   return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row);
+}
+
+function projectedCourtPaceTimes(games: PublicScheduleGame[], timeZone: string) {
+  const projected = new Map<number, string>();
+  const gamesByCourtStream = new Map<string, PublicScheduleGame[]>();
+
+  for (const game of games) {
+    if (game.team_1_id === null || game.team_2_id === null) continue;
+    const key = [
+      tournamentDateKey(game.starts_at, timeZone),
+      game.court,
+      game.youtube_video_id || "no-stream"
+    ].join("-");
+    const streamGames = gamesByCourtStream.get(key) || [];
+    streamGames.push(game);
+    gamesByCourtStream.set(key, streamGames);
+  }
+
+  for (const streamGames of gamesByCourtStream.values()) {
+    streamGames.sort((left, right) => left.starts_at.localeCompare(right.starts_at) || left.id - right.id);
+    let offsetMs: number | null = null;
+    let projectedRemaining = 0;
+
+    for (const game of streamGames) {
+      if (game.actual_started_at) {
+        offsetMs = Date.parse(game.actual_started_at) - Date.parse(game.starts_at);
+        projectedRemaining = 6;
+        projected.set(game.id, formatTime(game.actual_started_at, timeZone));
+        continue;
+      }
+
+      if (offsetMs === null || projectedRemaining <= 0) continue;
+      const projectedStartMs = Date.parse(game.starts_at) + offsetMs;
+      if (!Number.isFinite(projectedStartMs)) continue;
+      projected.set(game.id, formatTime(new Date(projectedStartMs).toISOString(), timeZone));
+      projectedRemaining -= 1;
+    }
+  }
+
+  return projected;
 }
 
 function buildScheduleDayOptions(rows: ScheduleGridRow[]): ScheduleDayOption[] {
@@ -452,10 +493,6 @@ function refTeamLabel(game: PublicScheduleGame) {
     division: game.ref_team_division,
     name: game.ref_team
   });
-}
-
-function courtPaceTime(game: PublicScheduleGame, timeZone: string) {
-  return game.actual_started_at ? formatTime(game.actual_started_at, timeZone) : "";
 }
 
 function buildScheduleDetailRows(teams: PublicScheduleTeam[], games: PublicScheduleGame[], timeZone: string): ScheduleDetailRow[] {
