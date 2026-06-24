@@ -200,11 +200,12 @@ export async function repairStreamTimelineWithClient(client: PoolClient, tournam
       [stream.id]
     );
     let previousFinish: string | null = null;
+    const normalizedStarts = normalizedStreamStarts(games.rows);
 
     for (const game of games.rows) {
       const complete = isCompleteStreamGame(game);
       const fallbackFinish: string | null = complete ? game.actual_ended_at || game.scored_at : null;
-      const nextActualStartedAt: string | null = game.actual_started_at || previousFinish;
+      const nextActualStartedAt: string | null = normalizedStarts.get(game.id) || game.actual_started_at || previousFinish;
       const nextActualEndedAt: string | null = complete ? fallbackFinish : null;
 
       await applyStreamTimelineUpdate(client, summary, game, nextActualStartedAt, nextActualEndedAt);
@@ -218,6 +219,46 @@ export async function repairStreamTimelineWithClient(client: PoolClient, tournam
   }
 
   return summary;
+}
+
+function normalizedStreamStarts(games: StreamTimelineGameRow[]) {
+  const proposed = new Map<number, string>();
+  const starts = games.map((game) => game.actual_started_at);
+
+  for (let index = 1; index < games.length; index += 1) {
+    const currentStart = starts[index];
+    const previousStart = starts[index - 1];
+    if (!currentStart || !previousStart) continue;
+
+    const currentMs = Date.parse(currentStart);
+    const previousMs = Date.parse(previousStart);
+    const currentScheduleMs = Date.parse(games[index].starts_at);
+    const previousScheduleMs = Date.parse(games[index - 1].starts_at);
+    if (![currentMs, previousMs, currentScheduleMs, previousScheduleMs].every(Number.isFinite)) continue;
+
+    const nonIncreasing = currentMs - previousMs <= 60_000;
+    const backwardsJump = currentMs < previousMs;
+    if (!nonIncreasing && !backwardsJump) continue;
+
+    for (let repairIndex = index - 1; repairIndex >= 0; repairIndex -= 1) {
+      const repairGame = games[repairIndex];
+      const repairScheduleMs = Date.parse(repairGame.starts_at);
+      if (!Number.isFinite(repairScheduleMs)) break;
+
+      const repairedMs = currentMs - Math.max(0, currentScheduleMs - repairScheduleMs);
+      const existingMs = starts[repairIndex] ? Date.parse(starts[repairIndex] as string) : NaN;
+      const nextMs = repairIndex + 1 === index ? currentMs : Date.parse(starts[repairIndex + 1] || "");
+      const outOfOrder = Number.isFinite(existingMs) && Number.isFinite(nextMs) && existingMs >= nextMs - 60_000;
+      const farFromSchedule = Number.isFinite(existingMs) && Math.abs(existingMs - repairScheduleMs) > 90 * 60_000;
+      if (!outOfOrder && !farFromSchedule) break;
+
+      const repaired = new Date(repairedMs).toISOString();
+      starts[repairIndex] = repaired;
+      proposed.set(repairGame.id, repaired);
+    }
+  }
+
+  return proposed;
 }
 
 export async function goLiveCourtStreamGame(tournamentId: number, streamId: number) {
