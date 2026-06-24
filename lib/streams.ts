@@ -78,7 +78,7 @@ function validVideoId(value: string | null | undefined) {
   return value && /^[A-Za-z0-9_-]{11}$/.test(value) ? value : null;
 }
 
-async function youtubeActualStart(videoId: string) {
+export async function youtubeActualStart(videoId: string) {
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) return null;
   try {
