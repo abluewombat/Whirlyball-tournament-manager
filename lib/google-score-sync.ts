@@ -94,6 +94,7 @@ export type GoogleScoreSyncSummary = {
     timeLabel: string;
     team1Name: string;
     team2Name: string;
+    refTeamName?: string | null;
     reason: string;
   }>;
 };
@@ -117,6 +118,7 @@ export type GoogleScheduleSyncSummary = {
     timeLabel: string;
     team1Name: string;
     team2Name: string;
+    refTeamName?: string | null;
     reason: string;
   }>;
 };
@@ -201,6 +203,7 @@ export async function syncGoogleSheetScores(tournamentId: number): Promise<Googl
         timeLabel: row.timeLabel,
         team1Name: row.team1Name,
         team2Name: row.team2Name,
+        refTeamName: row.refTeamName,
         reason
       });
     };
@@ -281,6 +284,7 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
         timeLabel: row.timeLabel,
         team1Name: row.team1Name,
         team2Name: row.team2Name,
+        refTeamName: row.refTeamName,
         reason
       });
     };
