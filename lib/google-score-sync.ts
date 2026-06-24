@@ -830,7 +830,10 @@ function isAnonymousSeedingOpponentName(value: string) {
     normalized === "seeding" ||
     normalized === "for seed" ||
     normalized === "seed game" ||
-    normalized.startsWith("for seeding ");
+    normalized.startsWith("for seeding ") ||
+    normalized.includes(" for seeding") ||
+    normalized.includes("(for seeding") ||
+    normalized.includes("( for seeding");
 }
 
 function normalizeTeamName(value: string) {
