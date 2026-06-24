@@ -1225,6 +1225,24 @@ th {
   font-size: 18px;
 }
 
+.team-next-game-meta {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.team-next-game-meta span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: none;
+}
+
+.team-next-game-meta .team-next-pace-time {
+  color: #f97316;
+}
+
 .team-note-list {
   margin-top: 14px;
 }

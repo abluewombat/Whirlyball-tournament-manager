@@ -42,6 +42,16 @@ type TeamGame = {
   first_stream_game: boolean;
 };
 
+type CourtPaceGame = {
+  id: number;
+  starts_at: string;
+  court: number;
+  team_1_id: number | null;
+  team_2_id: number | null;
+  actual_started_at: string | null;
+  youtube_video_id: string | null;
+};
+
 type DivisionTeam = {
   id: number;
   name: string;
@@ -158,7 +168,7 @@ export default async function TeamPage({
      ORDER BY games.starts_at, games.court`,
     [teamId, tournament.id]
   );
-  const [divisionTeams, divisionGames, standings] = await Promise.all([
+  const [divisionTeams, divisionGames, standings, courtPaceGames] = await Promise.all([
     query<DivisionTeam>(
       `SELECT teams.id, teams.name, COALESCE(centers.name, 'Draft') as center
        FROM teams LEFT JOIN centers ON centers.id = teams.center_id
@@ -177,7 +187,23 @@ export default async function TeamPage({
        ORDER BY starts_at, court`,
       [tournament.id, team.division]
     ),
-    getStandings(tournament.id, team.division)
+    getStandings(tournament.id, team.division),
+    query<CourtPaceGame>(
+      `SELECT games.id,
+              games.starts_at,
+              games.court,
+              games.team_1_id,
+              games.team_2_id,
+              games.actual_started_at,
+              court_streams.youtube_video_id
+         FROM games
+         LEFT JOIN court_streams ON court_streams.id = games.stream_id
+        WHERE games.tournament_id = $1
+          AND games.team_1_id IS NOT NULL
+          AND games.team_2_id IS NOT NULL
+        ORDER BY games.starts_at, games.court`,
+      [tournament.id]
+    )
   ]);
   const teamStandings = standings.filter((row) => row.division === team.division);
   const teamStanding = teamStandings.find((row) => row.team_id === team.id);
@@ -186,6 +212,8 @@ export default async function TeamPage({
   const seedRoadMap = buildSeedRoadMap(team.id, teamStandings, divisionGames, divisionTeams, timeZone);
   const scheduleGroups = groupGamesByDay(games, timeZone);
   const nextGames = games.filter((game) => isPlaying(game, team.id) && !isScored(game)).slice(0, 3);
+  const courtPaceTimes = projectedCourtPaceTimes(courtPaceGames, timeZone);
+  const nextGame = nextGames[0] || null;
   const noMeetingOpponents = opponentReports.filter((row) => row.scheduledGames === 0).map((row) => row.team);
   const leader = teamStandings[0];
   const teamPagePath = `${tournamentPath(tournament) === "/" ? "" : tournamentPath(tournament)}/teams/${team.id}`;
@@ -274,7 +302,14 @@ export default async function TeamPage({
           </div>
           <div className="team-insight">
             <span>Next Up</span>
-            <strong>{nextGames[0] ? opponentLabel(nextGames[0], team.id) : "TBD"}</strong>
+            <strong>{nextGame ? opponentLabel(nextGame, team.id) : "TBD"}</strong>
+            {nextGame ? (
+              <div className="team-next-game-meta">
+                <span>{formatTime(nextGame.starts_at, timeZone)}</span>
+                <span>Court {nextGame.court}</span>
+                {courtPaceTimes.get(nextGame.id) ? <span className="team-next-pace-time">{courtPaceTimes.get(nextGame.id)}</span> : null}
+              </div>
+            ) : null}
           </div>
           <div className="team-insight">
             <span>Division Pace</span>
@@ -657,6 +692,46 @@ function groupGamesByDay(games: TeamGame[], timeZone: string) {
       ...group,
       games: group.games.sort((left, right) => left.starts_at.localeCompare(right.starts_at) || left.court - right.court)
     }));
+}
+
+function projectedCourtPaceTimes(games: CourtPaceGame[], timeZone: string) {
+  const projected = new Map<number, string>();
+  const gamesByCourtStream = new Map<string, CourtPaceGame[]>();
+
+  for (const game of games) {
+    if (game.team_1_id === null || game.team_2_id === null) continue;
+    const key = [
+      dateKey(game.starts_at, timeZone),
+      game.court,
+      game.youtube_video_id || "no-stream"
+    ].join("-");
+    const streamGames = gamesByCourtStream.get(key) || [];
+    streamGames.push(game);
+    gamesByCourtStream.set(key, streamGames);
+  }
+
+  for (const streamGames of gamesByCourtStream.values()) {
+    streamGames.sort((left, right) => left.starts_at.localeCompare(right.starts_at) || left.id - right.id);
+    let offsetMs: number | null = null;
+    let projectedRemaining = 0;
+
+    for (const game of streamGames) {
+      if (game.actual_started_at) {
+        offsetMs = Date.parse(game.actual_started_at) - Date.parse(game.starts_at);
+        projectedRemaining = 6;
+        projected.set(game.id, formatTime(game.actual_started_at, timeZone));
+        continue;
+      }
+
+      if (offsetMs === null || projectedRemaining <= 0) continue;
+      const projectedStartMs = Date.parse(game.starts_at) + offsetMs;
+      if (!Number.isFinite(projectedStartMs)) continue;
+      projected.set(game.id, formatTime(new Date(projectedStartMs).toISOString(), timeZone));
+      projectedRemaining -= 1;
+    }
+  }
+
+  return projected;
 }
 
 function streamLink(game: TeamGame) {
