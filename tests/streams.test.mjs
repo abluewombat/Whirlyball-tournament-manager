@@ -19,9 +19,9 @@ test("schedule display uses first stream games instead of estimated stream-only 
   const teamPage = await readFile(new URL("../app/teams/[id]/page.tsx", import.meta.url), "utf8");
 
   assert.match(schedulePage, /firstStreamGameIdsByCourtDay/);
-  assert.match(schedulePage, /stream_replay\.replay_baseline_at/);
+  assert.match(schedulePage, /court_streams\.stream_started_at as replay_baseline_at/);
   assert.doesNotMatch(schedulePage, /completed_games\.scored_at/);
-  assert.match(teamPage, /stream_replay\.replay_baseline_at/);
+  assert.match(teamPage, /court_streams\.stream_started_at as replay_baseline_at/);
   assert.doesNotMatch(teamPage, /completed_games\.scored_at/);
   assert.match(teamPage, /first_stream_game/);
   assert.doesNotMatch(schedulePage, /streamOnlyGameIdsByCourtDay/);

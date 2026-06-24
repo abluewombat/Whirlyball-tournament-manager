@@ -95,23 +95,13 @@ export default async function BracketsPage({
             games.result_type, games.forfeit_team_id, games.actual_started_at, games.actual_ended_at,
             t1.name as team_1, t2.name as team_2,
             tr.name as ref_team, tr.division as ref_team_division, COALESCE(cr.name, 'Draft') as ref_team_center, games.label,
-            court_streams.youtube_video_id, stream_replay.replay_baseline_at
+            court_streams.youtube_video_id, court_streams.stream_started_at as replay_baseline_at
        FROM games
       LEFT JOIN teams t1 ON t1.id = games.team_1_id
       LEFT JOIN teams t2 ON t2.id = games.team_2_id
       LEFT JOIN teams tr ON tr.id = games.ref_team_id
       LEFT JOIN centers cr ON cr.id = tr.center_id
       LEFT JOIN court_streams ON court_streams.id = games.stream_id
-      LEFT JOIN LATERAL (
-        SELECT first_stream_game.actual_started_at as replay_baseline_at
-        FROM games first_stream_game
-        WHERE first_stream_game.stream_id = games.stream_id
-          AND first_stream_game.team_1_id IS NOT NULL
-          AND first_stream_game.team_2_id IS NOT NULL
-          AND first_stream_game.actual_started_at IS NOT NULL
-        ORDER BY first_stream_game.starts_at, first_stream_game.id
-        LIMIT 1
-      ) stream_replay ON TRUE
       WHERE games.tournament_id = $1
         AND games.phase = 'tournament'
       ORDER BY games.starts_at, games.court`,

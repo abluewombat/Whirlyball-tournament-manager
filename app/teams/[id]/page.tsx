@@ -148,22 +148,12 @@ export default async function TeamPage({
                   AND previous_game.team_2_id IS NOT NULL
                   AND (previous_game.starts_at < games.starts_at OR (previous_game.starts_at = games.starts_at AND previous_game.id < games.id))
               ) as first_stream_game,
-            court_streams.youtube_video_id, stream_replay.replay_baseline_at
+            court_streams.youtube_video_id, court_streams.stream_started_at as replay_baseline_at
      FROM games
      LEFT JOIN teams t1 ON t1.id = games.team_1_id
      LEFT JOIN teams t2 ON t2.id = games.team_2_id
      LEFT JOIN teams tr ON tr.id = games.ref_team_id
      LEFT JOIN court_streams ON court_streams.id = games.stream_id
-     LEFT JOIN LATERAL (
-       SELECT first_stream_game.actual_started_at as replay_baseline_at
-       FROM games first_stream_game
-       WHERE first_stream_game.stream_id = games.stream_id
-         AND first_stream_game.team_1_id IS NOT NULL
-         AND first_stream_game.team_2_id IS NOT NULL
-         AND first_stream_game.actual_started_at IS NOT NULL
-       ORDER BY first_stream_game.starts_at, first_stream_game.id
-       LIMIT 1
-     ) stream_replay ON TRUE
      WHERE games.tournament_id = $2 AND (games.team_1_id = $1 OR games.team_2_id = $1 OR games.ref_team_id = $1)
      ORDER BY games.starts_at, games.court`,
     [teamId, tournament.id]
