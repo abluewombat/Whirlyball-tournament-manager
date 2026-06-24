@@ -234,6 +234,47 @@ export default async function TeamPage({
       </section>
 
       <section className="section card">
+        <h2>Captain Snapshot</h2>
+        <div className="team-insight-grid">
+          <div className="team-insight">
+            <span>Current Seed</span>
+            <strong>{seed ? `#${seed}` : "TBD"}</strong>
+          </div>
+          <div className="team-insight">
+            <span>Seeding Record (W-L-T)</span>
+            <strong>{teamStanding ? recordText(teamStanding.wins, teamStanding.losses, teamStanding.ties) : "0-0-0"}</strong>
+          </div>
+          <div className="team-insight">
+            <span>Point Diff</span>
+            <strong className={diffClass(teamStanding?.point_diff || 0)}>{formatDiff(teamStanding?.point_diff || 0)}</strong>
+          </div>
+          <div className="team-insight">
+            <span>Games Scored</span>
+            <strong>{teamStanding?.games_played || 0}</strong>
+          </div>
+          <div className="team-insight">
+            <span>Next Up</span>
+            <strong>{nextGame ? opponentLabel(nextGame, team.id) : "TBD"}</strong>
+            {nextGame ? (
+              <div className="team-next-game-meta">
+                <span>{formatTime(nextGame.starts_at, timeZone)}</span>
+                <span>Court {nextGame.court}</span>
+                {courtPaceTimes.get(nextGame.id) ? <span className="team-next-pace-time">{courtPaceTimes.get(nextGame.id)}</span> : null}
+              </div>
+            ) : null}
+          </div>
+          <div className="team-insight">
+            <span>Division Pace</span>
+            <strong>{leader ? `${leader.team} ${formatDiff(leader.point_diff)}` : "TBD"}</strong>
+          </div>
+        </div>
+        <div className="team-note-list">
+          {nextGames.length ? <p><strong>Upcoming:</strong> {nextGames.map((game) => `${opponentLabel(game, team.id)} ${formatWeekdayTime(game.starts_at, timeZone)}`).join(" | ")}</p> : null}
+          {noMeetingOpponents.length ? <p><strong>No scheduled meeting yet:</strong> {noMeetingOpponents.join(", ")}</p> : null}
+        </div>
+      </section>
+
+      <section className="section card">
         <h2>Games and Reffing</h2>
         {scheduleGroups.length ? (
           scheduleGroups.map((group) => (
@@ -279,47 +320,6 @@ export default async function TeamPage({
         ) : (
           <p className="muted">No games or reffing assignments are scheduled for this team yet.</p>
         )}
-      </section>
-
-      <section className="section card">
-        <h2>Captain Snapshot</h2>
-        <div className="team-insight-grid">
-          <div className="team-insight">
-            <span>Current Seed</span>
-            <strong>{seed ? `#${seed}` : "TBD"}</strong>
-          </div>
-          <div className="team-insight">
-            <span>Seeding Record (W-L-T)</span>
-            <strong>{teamStanding ? recordText(teamStanding.wins, teamStanding.losses, teamStanding.ties) : "0-0-0"}</strong>
-          </div>
-          <div className="team-insight">
-            <span>Point Diff</span>
-            <strong className={diffClass(teamStanding?.point_diff || 0)}>{formatDiff(teamStanding?.point_diff || 0)}</strong>
-          </div>
-          <div className="team-insight">
-            <span>Games Scored</span>
-            <strong>{teamStanding?.games_played || 0}</strong>
-          </div>
-          <div className="team-insight">
-            <span>Next Up</span>
-            <strong>{nextGame ? opponentLabel(nextGame, team.id) : "TBD"}</strong>
-            {nextGame ? (
-              <div className="team-next-game-meta">
-                <span>{formatTime(nextGame.starts_at, timeZone)}</span>
-                <span>Court {nextGame.court}</span>
-                {courtPaceTimes.get(nextGame.id) ? <span className="team-next-pace-time">{courtPaceTimes.get(nextGame.id)}</span> : null}
-              </div>
-            ) : null}
-          </div>
-          <div className="team-insight">
-            <span>Division Pace</span>
-            <strong>{leader ? `${leader.team} ${formatDiff(leader.point_diff)}` : "TBD"}</strong>
-          </div>
-        </div>
-        <div className="team-note-list">
-          {nextGames.length ? <p><strong>Upcoming:</strong> {nextGames.map((game) => `${opponentLabel(game, team.id)} ${formatWeekdayTime(game.starts_at, timeZone)}`).join(" | ")}</p> : null}
-          {noMeetingOpponents.length ? <p><strong>No scheduled meeting yet:</strong> {noMeetingOpponents.join(", ")}</p> : null}
-        </div>
       </section>
 
       <section className="section card">
