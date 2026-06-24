@@ -9,6 +9,7 @@ export const runtime = "nodejs";
 type RepairPayload = {
   tournament?: string | number | null;
   localDate?: string | null;
+  alignStreamStartToFirstGame?: boolean | null;
   apply?: boolean;
 };
 
@@ -39,6 +40,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "localDate must be YYYY-MM-DD when provided." }, { status: 400 });
   }
 
+  const streamStarts = payload.alignStreamStartToFirstGame
+    ? await alignStreamStartsToFirstGame(tournament.id, localDate, Boolean(payload.apply))
+    : [];
   const games = await repairStreamStartsFromSchedule(tournament.id, localDate, Boolean(payload.apply));
 
   if (payload.apply) {
@@ -53,9 +57,75 @@ export async function POST(request: Request) {
     tournament: tournament.slug,
     apply: Boolean(payload.apply),
     localDate,
+    streamStartsChanged: streamStarts.length,
+    streamStarts,
     gamesChanged: games.length,
     games
   });
+}
+
+async function alignStreamStartsToFirstGame(tournamentId: number, localDate: string | null, apply: boolean) {
+  const params = [tournamentId, localDate];
+  const candidates = `
+    WITH first_games AS (
+      SELECT DISTINCT ON (court_streams.id)
+             court_streams.id,
+             court_streams.court,
+             court_streams.stream_date,
+             court_streams.stream_started_at AS previous_stream_started_at,
+             games.starts_at AS next_stream_started_at
+        FROM court_streams
+        JOIN tournaments ON tournaments.id = court_streams.tournament_id
+        JOIN games ON games.stream_id = court_streams.id
+       WHERE court_streams.tournament_id = $1
+         AND games.team_1_id IS NOT NULL
+         AND games.team_2_id IS NOT NULL
+         AND ($2::text IS NULL OR to_char(games.starts_at AT TIME ZONE tournaments.timezone, 'YYYY-MM-DD') = $2::text)
+       ORDER BY court_streams.id, games.starts_at, games.id
+    ),
+    candidates AS (
+      SELECT *
+        FROM first_games
+       WHERE previous_stream_started_at IS DISTINCT FROM next_stream_started_at
+    )`;
+
+  if (!apply) {
+    return query<{
+      id: number;
+      court: number;
+      stream_date: string;
+      previous_stream_started_at: string;
+      next_stream_started_at: string;
+    }>(
+      `${candidates}
+       SELECT *
+         FROM candidates
+        ORDER BY stream_date, court, id`,
+      params
+    );
+  }
+
+  return query<{
+    id: number;
+    court: number;
+    stream_date: string;
+    previous_stream_started_at: string;
+    next_stream_started_at: string;
+  }>(
+    `${candidates},
+    updated AS (
+      UPDATE court_streams
+         SET stream_started_at = candidates.next_stream_started_at,
+             updated_at = NOW()
+        FROM candidates
+       WHERE court_streams.id = candidates.id
+       RETURNING candidates.*
+    )
+    SELECT *
+      FROM updated
+     ORDER BY stream_date, court, id`,
+    params
+  );
 }
 
 async function repairStreamStartsFromSchedule(tournamentId: number, localDate: string | null, apply: boolean) {
