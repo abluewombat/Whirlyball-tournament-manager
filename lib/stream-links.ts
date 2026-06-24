@@ -26,7 +26,14 @@ export function publicStreamLinkForGame(game: PublicStreamLinkInput, options: { 
   if (!game.youtube_video_id) return { url: "", label: "" };
   const complete = (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
   const live = Boolean(game.actual_started_at && !game.actual_ended_at && !complete);
-  if (live) return { url: youtubeWatchUrl(game.youtube_video_id), label: "Live now" };
+  if (live) {
+    return {
+      url: game.actual_started_at && game.replay_baseline_at
+        ? youtubeReplayUrl(game.youtube_video_id, youtubeReplayOffsetSeconds(game.actual_started_at, game.replay_baseline_at))
+        : youtubeWatchUrl(game.youtube_video_id),
+      label: "Live now"
+    };
+  }
 
   if (!complete && !game.actual_ended_at) return { url: "", label: "" };
   if (game.actual_started_at && game.replay_baseline_at) {

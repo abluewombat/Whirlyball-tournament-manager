@@ -41,7 +41,7 @@ test("public stream links show live streams and recorded replay starts", () => {
   };
 
   assert.deepEqual(publicStreamLinkForGame({ ...baseGame, actual_started_at: "2026-06-23T12:00:00.000Z" }), {
-    url: "https://www.youtube.com/watch?v=YaPfDGqOcnI",
+    url: "https://www.youtube.com/watch?v=YaPfDGqOcnI&t=600s",
     label: "Live now"
   });
 
