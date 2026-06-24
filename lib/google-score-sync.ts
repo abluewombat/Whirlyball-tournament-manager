@@ -174,6 +174,24 @@ const teamSyncDefinitions: Record<string, { division: string; names: string[]; c
   texas_d1: { division: "D", names: ["The 30%ers"], codes: ["TEXAS D1", "TEX D1"] },
   texas_d2: { division: "D", names: ["I Don't Remember"], codes: ["TEXAS D2", "TEX D2"] }
 };
+const refTeamNameAliases: Record<string, string> = {
+  "max effor": "Maximum Effort",
+  "max effort": "Maximum Effort",
+  maximum: "Maximum Effort",
+  southbound: "SouthBound & Down",
+  "whirly blue": "Whirly Blue Balls",
+  "whirld of h": "Whirld of Hurt",
+  "the bwc (b": "The BWC (Buckeye Whirly Club)",
+  "two fams &": "Two Fams & a Weatherman",
+  "cherry peck": "Cherry Peckers",
+  "whirled not": "Whirled Not Stirred",
+  "hey you": "Hey You Guys",
+  "not in the r": "Not In The Realm",
+  "first weld p": "First Weld Problems",
+  "first weld pr": "First Weld Problems",
+  "seat c seattle sea de": "Seattle Sea Devils",
+  "seat c whirld war c": "Whirld War C"
+};
 
 export async function syncGoogleSheetScores(tournamentId: number): Promise<GoogleScoreSyncSummary> {
   const spreadsheetId = process.env.GOOGLE_SCORES_SPREADSHEET_ID || defaultSpreadsheetId;
@@ -729,14 +747,15 @@ function cellText(value: unknown) {
 function teamNameFromSheetCell(value: unknown) {
   const text = cellText(value).replace(/\s+/g, " ");
   if (!text || /^open play$/i.test(text)) return "";
-  const parts = text.split(/\s+[-–—]\s+/);
+  const parts = text.split(/\s+[-\u2013\u2014]\s+/);
   return normalizeTeamName(parts.length > 1 ? parts.slice(1).join(" - ") : text);
 }
 
 function refTeamNameFromSheetCell(value: unknown) {
   const text = cellText(value).replace(/\s+/g, " ");
-  if (!text || /^ref name$/i.test(text)) return "";
-  return teamNameFromSheetCell(text);
+  if (!text || /^ref name$/i.test(text) || text === "?" || /^unlimited ref\b/i.test(text)) return "";
+  const normalized = teamNameFromSheetCell(text);
+  return normalizeTeamName(refTeamNameAliases[normalized] || normalized);
 }
 
 function buildTeamSyncLookup(teams: TeamMatch[]) {
@@ -752,6 +771,10 @@ function buildTeamSyncLookup(teams: TeamMatch[]) {
       lookup.set(normalizeTeamName(alias), team);
     }
   }
+  for (const [alias, canonicalName] of Object.entries(refTeamNameAliases)) {
+    const team = lookup.get(normalizeTeamName(canonicalName));
+    if (team) lookup.set(normalizeTeamName(alias), team);
+  }
 
   return lookup;
 }
@@ -760,7 +783,7 @@ function normalizeTeamName(value: string) {
   return value
     .trim()
     .replace(/\s+/g, " ")
-    .replace(/[’]/g, "'")
+    .replace(/[\u2018\u2019]/g, "'")
     .toLowerCase();
 }
 
