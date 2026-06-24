@@ -753,8 +753,9 @@ function teamNameFromSheetCell(value: unknown) {
 
 function refTeamNameFromSheetCell(value: unknown) {
   const text = cellText(value).replace(/\s+/g, " ");
-  if (!text || /^ref name$/i.test(text) || text === "?" || /^unlimited ref\b/i.test(text)) return "";
+  if (!text || /^ref name$/i.test(text) || /^unlimited ref\b/i.test(text)) return "";
   const normalized = teamNameFromSheetCell(text);
+  if (!normalized || normalized === "?") return "";
   return normalizeTeamName(refTeamNameAliases[normalized] || normalized);
 }
 
