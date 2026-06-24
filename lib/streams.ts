@@ -202,11 +202,17 @@ export async function repairStreamTimelineWithClient(client: PoolClient, tournam
     let previousFinish: string | null = null;
     const normalizedStarts = normalizedStreamStarts(games.rows);
 
-    for (const game of games.rows) {
+    for (let index = 0; index < games.rows.length; index += 1) {
+      const game = games.rows[index];
       const complete = isCompleteStreamGame(game);
       const fallbackFinish: string | null = complete ? game.actual_ended_at || game.scored_at : null;
       const nextActualStartedAt: string | null = normalizedStarts.get(game.id) || game.actual_started_at || previousFinish;
-      const nextActualEndedAt: string | null = complete ? fallbackFinish : null;
+      let nextActualEndedAt: string | null = complete ? fallbackFinish : null;
+      const nextGame = games.rows[index + 1] || null;
+      const followingStart = nextGame ? normalizedStarts.get(nextGame.id) || nextGame.actual_started_at : null;
+      if (complete && nextActualStartedAt && nextActualEndedAt && Date.parse(nextActualEndedAt) < Date.parse(nextActualStartedAt)) {
+        nextActualEndedAt = followingStart || nextActualStartedAt;
+      }
 
       await applyStreamTimelineUpdate(client, summary, game, nextActualStartedAt, nextActualEndedAt);
 
