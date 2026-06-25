@@ -204,7 +204,7 @@ export async function syncGoogleSheetScores(tournamentId: number): Promise<Googl
   });
   const games = await loadScheduleGameMatches(tournamentId);
   const dateByDayName = buildDateByDayName(games);
-  const parsedRows = parseScheduleSheetScores(sheet.values, sheet.sheetName, dateByDayName);
+  const parsedRows = parseScheduleSheetScores(sheet.values, sheet.sheetName, dateByDayName, games);
   const summary: GoogleScoreSyncSummary = {
     sheetName: sheet.sheetName,
     parsedRows: parsedRows.length,
@@ -267,7 +267,7 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
   });
   const games = await loadScheduleGameMatches(tournamentId);
   const dateByDayName = buildDateByDayName(games);
-  const parsedRows = parseScheduleSheetScores(sheet.values, sheet.sheetName, dateByDayName);
+  const parsedRows = parseScheduleSheetScores(sheet.values, sheet.sheetName, dateByDayName, games);
 
   return withTransaction(async (client) => {
     const teamRows = await client.query<TeamMatch>(
@@ -661,7 +661,12 @@ function googleJwtClient() {
   });
 }
 
-function parseScheduleSheetScores(values: string[][], sheetName: string, dateByDayName: Map<string, string>) {
+function parseScheduleSheetScores(
+  values: string[][],
+  sheetName: string,
+  dateByDayName: Map<string, string>,
+  scheduleGames: ScheduleGameMatch[] = []
+) {
   const rows: ParsedSheetScore[] = [];
   let currentDayName: string | null = null;
   let currentDayMinute = 7 * 60;
@@ -672,22 +677,28 @@ function parseScheduleSheetScores(values: string[][], sheetName: string, dateByD
       currentDayName = headerDay;
       currentDayMinute = headerDay === "TUESDAY" ? 13 * 60 : 7 * 60;
     }
-    if (!currentDayName) return;
-    const localDate = dateByDayName.get(currentDayName);
-    if (!localDate) return;
     const sharedRefTeamName = sharedRefTeamNameFromRow(row);
 
     for (const court of [1, 2]) {
       const parsed = parseCourtRow(row, court, sharedRefTeamName);
       if (!parsed) continue;
-      const localMinute = nextLocalMinute(parsed.timeLabel, currentDayMinute);
+      const inferred = inferScheduleDateForSheetRow(scheduleGames, parsed, court);
+      if (inferred && inferred.dayName !== currentDayName) {
+        currentDayName = inferred.dayName;
+        currentDayMinute = inferred.dayName === "TUESDAY" ? 13 * 60 : 7 * 60;
+      }
+      if (!currentDayName) continue;
+      const localDate = dateByDayName.get(currentDayName);
+      if (!localDate && !inferred?.localDate) continue;
+      const effectiveLocalDate = inferred?.localDate || (localDate as string);
+      const localMinute = inferred?.localMinute ?? nextLocalMinute(parsed.timeLabel, currentDayMinute);
       currentDayMinute = Math.max(currentDayMinute, localMinute);
       rows.push({
         sheetName,
         rowNumber: index + 1,
-        localDate,
-        dayName: currentDayName,
-        startsAt: startsAtWithDetroitOffset(localDate, localMinute),
+        localDate: effectiveLocalDate,
+        dayName: inferred?.dayName || currentDayName,
+        startsAt: startsAtWithDetroitOffset(effectiveLocalDate, localMinute),
         court,
         ...parsed
       });
@@ -695,6 +706,27 @@ function parseScheduleSheetScores(values: string[][], sheetName: string, dateByD
   });
 
   return rows;
+}
+
+function inferScheduleDateForSheetRow(scheduleGames: ScheduleGameMatch[], parsed: ReturnType<typeof parseCourtRow>, court: number) {
+  if (!parsed || !scheduleGames.length) return null;
+  const possibleTimes = possibleTwentyFourHourTimes(parsed.timeLabel);
+  const matches = scheduleGames.filter(
+    (game) =>
+      game.court === court &&
+      possibleTimes.includes(game.local_time) &&
+      sheetTeamMatchesGameName(parsed.team1Name, game.team_1) &&
+      sheetTeamMatchesGameName(parsed.team2Name, game.team_2)
+  );
+  const matchedDates = [...new Set(matches.map((game) => game.local_date))];
+  if (matchedDates.length !== 1) return null;
+  const matchedGame = matches.find((game) => game.local_date === matchedDates[0]);
+  if (!matchedGame) return null;
+  return {
+    localDate: matchedGame.local_date,
+    dayName: dayNameFromLocalDate(matchedGame.local_date),
+    localMinute: localTimeToMinute(matchedGame.local_time)
+  };
 }
 
 function parseCourtRow(row: string[], court: number, sharedRefTeamName: string | null) {
@@ -877,10 +909,14 @@ async function loadScheduleGameMatches(tournamentId: number) {
 function buildDateByDayName(games: ScheduleGameMatch[]) {
   const dates = new Map<string, string>();
   for (const game of games) {
-    const dayName = dayNames[new Date(`${game.local_date}T12:00:00`).getDay()];
+    const dayName = dayNameFromLocalDate(game.local_date);
     if (!dates.has(dayName)) dates.set(dayName, game.local_date);
   }
   return dates;
+}
+
+function dayNameFromLocalDate(localDate: string) {
+  return dayNames[new Date(`${localDate}T12:00:00`).getDay()];
 }
 
 function matchScheduleGame(games: ScheduleGameMatch[], row: ParsedSheetScore) {
@@ -919,6 +955,13 @@ function nextLocalMinute(timeLabel: string, currentMinute: number) {
   const candidates = [hour * 60 + minute];
   if (hour >= 1 && hour <= 11) candidates.push((hour + 12) * 60 + minute);
   return candidates.find((candidate) => candidate >= currentMinute) || candidates[candidates.length - 1];
+}
+
+function localTimeToMinute(localTime: string) {
+  const [hourRaw, minuteRaw] = localTime.split(":");
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  return Number.isFinite(hour) && Number.isFinite(minute) ? hour * 60 + minute : 0;
 }
 
 function startsAtWithDetroitOffset(localDate: string, localMinute: number) {
