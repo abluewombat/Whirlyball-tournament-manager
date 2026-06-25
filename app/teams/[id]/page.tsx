@@ -224,9 +224,6 @@ export default async function TeamPage({
   const nextOpponent = nextGame ? opponentLink(nextGame, team.id, tournament) : null;
   const noMeetingOpponents = opponentReports.filter((row) => row.scheduledGames === 0).map((row) => row.team);
   const leader = teamStandings[0];
-  const teamPagePath = `${tournamentPath(tournament) === "/" ? "" : tournamentPath(tournament)}/teams/${team.id}`;
-  const url = `https://whirlyball2026.com${teamPagePath}`;
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(url)}`;
 
   return (
     <main className="content team-page">
@@ -237,7 +234,6 @@ export default async function TeamPage({
             <h1>{team.name}</h1>
             <p className="muted">{hideDivisionLabel ? team.center : `${team.center} - ${team.division} Division`}</p>
           </div>
-          <img alt={`${team.name} QR code`} className="qr-code" src={qrUrl} />
         </div>
       </section>
 

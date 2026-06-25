@@ -192,7 +192,10 @@ export async function repairStreamTimelineWithClient(client: PoolClient, tournam
               games.actual_started_at,
               games.actual_ended_at
          FROM games
+         JOIN court_streams ON court_streams.id = games.stream_id
+         JOIN tournaments ON tournaments.id = games.tournament_id
         WHERE games.stream_id = $1
+          AND (games.starts_at AT TIME ZONE tournaments.timezone)::date = court_streams.stream_date::date
           AND games.team_1_id IS NOT NULL
           AND games.team_2_id IS NOT NULL
         ORDER BY games.starts_at, games.id
@@ -281,17 +284,20 @@ export async function goLiveCourtStreamGame(tournamentId: number, streamId: numb
     if (!streamResult.rows[0]) return null;
 
     const nextGame = await client.query<{ id: number }>(
-      `SELECT id
+      `SELECT games.id
          FROM games
-        WHERE stream_id = $1
-          AND team_1_id IS NOT NULL
-          AND team_2_id IS NOT NULL
-          AND actual_ended_at IS NULL
-          AND (team_1_score IS NULL OR team_2_score IS NULL)
-          AND result_type IS DISTINCT FROM 'forfeit'
-        ORDER BY starts_at, id
+         JOIN court_streams ON court_streams.id = games.stream_id
+         JOIN tournaments ON tournaments.id = games.tournament_id
+        WHERE games.stream_id = $1
+          AND (games.starts_at AT TIME ZONE tournaments.timezone)::date = court_streams.stream_date::date
+          AND games.team_1_id IS NOT NULL
+          AND games.team_2_id IS NOT NULL
+          AND games.actual_ended_at IS NULL
+          AND (games.team_1_score IS NULL OR games.team_2_score IS NULL)
+          AND games.result_type IS DISTINCT FROM 'forfeit'
+        ORDER BY games.starts_at, games.id
         LIMIT 1
-        FOR UPDATE`,
+        FOR UPDATE OF games`,
       [streamId]
     );
     const next = nextGame.rows[0];
@@ -299,14 +305,18 @@ export async function goLiveCourtStreamGame(tournamentId: number, streamId: numb
 
     await client.query(
       `UPDATE games
-          SET actual_started_at = CASE WHEN id = $2 THEN NOW() ELSE NULL END,
+          SET actual_started_at = CASE WHEN games.id = $2 THEN NOW() ELSE NULL END,
               actual_ended_at = NULL
-        WHERE stream_id = $1
-          AND team_1_id IS NOT NULL
-          AND team_2_id IS NOT NULL
-          AND actual_ended_at IS NULL
-          AND (team_1_score IS NULL OR team_2_score IS NULL)
-          AND result_type IS DISTINCT FROM 'forfeit'`,
+         FROM court_streams, tournaments
+        WHERE games.stream_id = $1
+          AND court_streams.id = games.stream_id
+          AND tournaments.id = games.tournament_id
+          AND (games.starts_at AT TIME ZONE tournaments.timezone)::date = court_streams.stream_date::date
+          AND games.team_1_id IS NOT NULL
+          AND games.team_2_id IS NOT NULL
+          AND games.actual_ended_at IS NULL
+          AND (games.team_1_score IS NULL OR games.team_2_score IS NULL)
+          AND games.result_type IS DISTINCT FROM 'forfeit'`,
       [streamId, next.id]
     );
     return next.id;
@@ -383,19 +393,22 @@ export async function completeAndAdvanceCourtGame(gameId: number) {
 
     await client.query("UPDATE games SET actual_ended_at = NOW() WHERE id = $1", [game.id]);
     const nextGame = await client.query<{ id: number }>(
-      `SELECT id
+      `SELECT games.id
        FROM games
-       WHERE stream_id = $1
-         AND id <> $2
-         AND team_1_id IS NOT NULL
-         AND team_2_id IS NOT NULL
-         AND actual_ended_at IS NULL
-         AND (team_1_score IS NULL OR team_2_score IS NULL)
-         AND result_type IS DISTINCT FROM 'forfeit'
-         AND (starts_at > $3 OR (starts_at = $3 AND id > $2))
-       ORDER BY starts_at, id
+       JOIN court_streams ON court_streams.id = games.stream_id
+       JOIN tournaments ON tournaments.id = games.tournament_id
+       WHERE games.stream_id = $1
+         AND (games.starts_at AT TIME ZONE tournaments.timezone)::date = court_streams.stream_date::date
+         AND games.id <> $2
+         AND games.team_1_id IS NOT NULL
+         AND games.team_2_id IS NOT NULL
+         AND games.actual_ended_at IS NULL
+         AND (games.team_1_score IS NULL OR games.team_2_score IS NULL)
+         AND games.result_type IS DISTINCT FROM 'forfeit'
+         AND (games.starts_at > $3 OR (games.starts_at = $3 AND games.id > $2))
+       ORDER BY games.starts_at, games.id
        LIMIT 1
-       FOR UPDATE`,
+       FOR UPDATE OF games`,
       [game.stream_id, game.id, game.starts_at]
     );
     const next = nextGame.rows[0];

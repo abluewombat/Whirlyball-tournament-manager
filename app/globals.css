@@ -1192,14 +1192,6 @@ th {
   white-space: nowrap;
 }
 
-.qr-code {
-  background: white;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  height: 150px;
-  width: 150px;
-}
-
 .team-page {
   max-width: 1440px;
 }

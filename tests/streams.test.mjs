@@ -28,6 +28,17 @@ test("schedule display uses first stream games instead of estimated stream-only 
   assert.doesNotMatch(teamPage, /stream_only_video_link/);
 });
 
+test("stream timeline updates are bounded to the stream date", async () => {
+  const streams = await readFile(new URL("../lib/streams.ts", import.meta.url), "utf8");
+  const rebuild = await readFile(new URL("../app/api/admin/rebuild-stream-timestamps-from-scores/route.ts", import.meta.url), "utf8");
+  const scheduleRepair = await readFile(new URL("../app/api/admin/repair-stream-starts-from-schedule/route.ts", import.meta.url), "utf8");
+  const streamDateGuard = /games\.starts_at AT TIME ZONE tournaments\.timezone\)::date = court_streams\.stream_date::date/;
+
+  assert.match(streams, streamDateGuard);
+  assert.match(rebuild, streamDateGuard);
+  assert.match(scheduleRepair, streamDateGuard);
+});
+
 test("public stream links show live streams and recorded replay starts", () => {
   const baseGame = {
     starts_at: "2026-06-23T12:00:00.000Z",

@@ -165,7 +165,7 @@ export default async function PublicSchedulePage({
   const syncStatus = await readGoogleSheetSyncStatus(tournament.id);
   const gridRows = buildScheduleGrid(games, hiddenDivisionLabels, tournament.timezone);
   const dayOptions = buildScheduleDayOptions(gridRows);
-  const initialDay = initialScheduleDay(params.day, dayOptions);
+  const initialDay = initialScheduleDay(params.day, dayOptions, tournament.timezone);
   const detailRows = buildScheduleDetailRows(teams, games, tournament.timezone);
   const refCountRows = buildRefCountRows(teams, games, tournament.timezone);
   const lastUpdated = games.length ? tournamentDateTimeLabel(new Date(), tournament.timezone) : null;
@@ -462,9 +462,11 @@ function buildScheduleDayOptions(rows: ScheduleGridRow[]): ScheduleDayOption[] {
   ];
 }
 
-function initialScheduleDay(requestedDay: string | undefined, days: ScheduleDayOption[]) {
+function initialScheduleDay(requestedDay: string | undefined, days: ScheduleDayOption[], timeZone: string) {
   if (requestedDay && days.some((day) => day.key === requestedDay)) return requestedDay;
-  return "all";
+  const todayKey = tournamentDateKey(new Date().toISOString(), timeZone);
+  if (days.some((day) => day.key === todayKey)) return todayKey;
+  return days.find((day) => day.key !== "all" && day.key > todayKey)?.key || "all";
 }
 
 function firstStreamGameIdsByCourtDay(games: PublicScheduleGame[], timeZone: string) {

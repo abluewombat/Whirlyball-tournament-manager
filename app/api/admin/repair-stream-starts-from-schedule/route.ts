@@ -80,6 +80,7 @@ async function alignStreamStartsToFirstGame(tournamentId: number, localDate: str
        WHERE court_streams.tournament_id = $1
          AND games.team_1_id IS NOT NULL
          AND games.team_2_id IS NOT NULL
+         AND (games.starts_at AT TIME ZONE tournaments.timezone)::date = court_streams.stream_date::date
          AND ($2::text IS NULL OR to_char(games.starts_at AT TIME ZONE tournaments.timezone, 'YYYY-MM-DD') = $2::text)
        ORDER BY court_streams.id, games.starts_at, games.id
     ),
@@ -151,6 +152,7 @@ async function repairStreamStartsFromSchedule(tournamentId: number, localDate: s
         LEFT JOIN teams t2 ON t2.id = games.team_2_id
        WHERE games.tournament_id = $1
          AND games.stream_id IS NOT NULL
+         AND (games.starts_at AT TIME ZONE tournaments.timezone)::date = court_streams.stream_date::date
          AND games.team_1_id IS NOT NULL
          AND games.team_2_id IS NOT NULL
          AND (

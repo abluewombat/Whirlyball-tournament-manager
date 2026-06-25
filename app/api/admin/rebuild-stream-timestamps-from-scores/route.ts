@@ -105,9 +105,11 @@ async function rebuildFromScores(client: PoolClient, tournamentId: number, local
               games.actual_ended_at::text AS previous_actual_ended_at
          FROM games
          JOIN tournaments ON tournaments.id = games.tournament_id
+         JOIN court_streams ON court_streams.id = games.stream_id
          LEFT JOIN teams t1 ON t1.id = games.team_1_id
          LEFT JOIN teams t2 ON t2.id = games.team_2_id
         WHERE games.stream_id = $1
+          AND (games.starts_at AT TIME ZONE tournaments.timezone)::date = court_streams.stream_date::date
           AND games.team_1_id IS NOT NULL
           AND games.team_2_id IS NOT NULL
         ORDER BY games.starts_at, games.id
