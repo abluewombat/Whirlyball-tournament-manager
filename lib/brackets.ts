@@ -67,6 +67,38 @@ type BracketGamePlan = {
   nextLoserSlot: number | null;
 };
 
+type PreservedBracketResult = {
+  oldGameId: number;
+  oldGameKey: string;
+  scheduleLabel: string | null;
+  startsAt: string | null;
+  court: number | null;
+  team1Id: number;
+  team2Id: number;
+  team1Score: number | null;
+  team2Score: number | null;
+  winnerTeamId: number;
+  loserTeamId: number;
+  resultType: string | null;
+  forfeitTeamId: number | null;
+};
+
+export type BracketSeedLayoutRepairSummary = {
+  division: string;
+  apply: boolean;
+  oldBracketId: number | null;
+  newBracketId: number | null;
+  preservedResults: number;
+  replayedResults: number;
+  unreplayedResults: Array<{
+    oldGameKey: string;
+    scheduleLabel: string | null;
+    team1Id: number;
+    team2Id: number;
+    reason: string;
+  }>;
+};
+
 export async function maybeCreateBracketForDivision(tournamentId: number, division: string) {
   if (!(await seedingCompleteForDivision(tournamentId, division))) return;
   const [existing] = await query<{ id: number }>(
@@ -181,6 +213,73 @@ export async function rebuildBracketForDivision(tournamentId: number, division: 
   return bracketId;
 }
 
+export async function repairDivisionBracketSeedLayout(
+  tournamentId: number,
+  division: string,
+  options: { apply?: boolean } = {}
+): Promise<BracketSeedLayoutRepairSummary> {
+  const apply = Boolean(options.apply);
+  const [activeBracket] = await query<{ id: number }>(
+    "SELECT id FROM brackets WHERE tournament_id = $1 AND division = $2 AND status = 'active' ORDER BY id DESC LIMIT 1",
+    [tournamentId, division]
+  );
+  if (!activeBracket) {
+    return {
+      division,
+      apply,
+      oldBracketId: null,
+      newBracketId: null,
+      preservedResults: 0,
+      replayedResults: 0,
+      unreplayedResults: []
+    };
+  }
+
+  const preservedResults = await preservedCompletedBracketResults(tournamentId, activeBracket.id);
+  if (!apply) {
+    return {
+      division,
+      apply,
+      oldBracketId: activeBracket.id,
+      newBracketId: null,
+      preservedResults: preservedResults.length,
+      replayedResults: 0,
+      unreplayedResults: []
+    };
+  }
+
+  const newBracketId = await rebuildBracketForDivision(tournamentId, division, { force: true });
+  if (!newBracketId) {
+    return {
+      division,
+      apply,
+      oldBracketId: activeBracket.id,
+      newBracketId: null,
+      preservedResults: preservedResults.length,
+      replayedResults: 0,
+      unreplayedResults: preservedResults.map((result) => ({
+        oldGameKey: result.oldGameKey,
+        scheduleLabel: result.scheduleLabel,
+        team1Id: result.team1Id,
+        team2Id: result.team2Id,
+        reason: "Bracket could not be rebuilt"
+      }))
+    };
+  }
+
+  const replay = await replayPreservedBracketResults(newBracketId, preservedResults);
+  await syncBracketToSchedule(newBracketId);
+  return {
+    division,
+    apply,
+    oldBracketId: activeBracket.id,
+    newBracketId,
+    preservedResults: preservedResults.length,
+    replayedResults: replay.replayed,
+    unreplayedResults: replay.unreplayed
+  };
+}
+
 type SeedSnapshot = {
   seed: number;
   teamId: number;
@@ -201,6 +300,106 @@ async function createManagedDoubleEliminationBracket(division: string, seeds: Se
     settings: { grandFinal: "double" }
   });
   return manager.get.stageData(stage.id);
+}
+
+async function preservedCompletedBracketResults(tournamentId: number, bracketId: number): Promise<PreservedBracketResult[]> {
+  const slots = await getActiveBracketScheduleSlots(tournamentId);
+  const games = await query<BracketGameRow>(
+    "SELECT * FROM bracket_games WHERE bracket_id = $1 ORDER BY bracket_side, round, position, id",
+    [bracketId]
+  );
+  return games
+    .filter(
+      (game) =>
+        isCompleteResult(game) &&
+        game.team_1_id !== null &&
+        game.team_2_id !== null &&
+        game.winner_team_id !== null &&
+        game.loser_team_id !== null
+    )
+    .map((game) => {
+      const slot = slots.get(game.id);
+      return {
+        oldGameId: game.id,
+        oldGameKey: game.game_key,
+        scheduleLabel: slot?.schedule_label || null,
+        startsAt: slot?.starts_at || null,
+        court: slot?.court || null,
+        team1Id: game.team_1_id as number,
+        team2Id: game.team_2_id as number,
+        team1Score: game.team_1_score,
+        team2Score: game.team_2_score,
+        winnerTeamId: game.winner_team_id as number,
+        loserTeamId: game.loser_team_id as number,
+        resultType: game.result_type,
+        forfeitTeamId: game.forfeit_team_id
+      };
+    })
+    .sort(comparePreservedResults);
+}
+
+function comparePreservedResults(left: PreservedBracketResult, right: PreservedBracketResult) {
+  if (left.startsAt || right.startsAt) return (left.startsAt || "").localeCompare(right.startsAt || "");
+  return left.oldGameKey.localeCompare(right.oldGameKey);
+}
+
+async function replayPreservedBracketResults(bracketId: number, results: PreservedBracketResult[]) {
+  const pending = [...results];
+  const unreplayed: BracketSeedLayoutRepairSummary["unreplayedResults"] = [];
+  let replayed = 0;
+  let madeProgress = true;
+
+  while (pending.length && madeProgress) {
+    madeProgress = false;
+    const games = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE bracket_id = $1", [bracketId]);
+    const nextIndex = pending.findIndex((result) => Boolean(findReplayTarget(games, result)));
+    if (nextIndex === -1) continue;
+
+    const [result] = pending.splice(nextIndex, 1);
+    const target = findReplayTarget(games, result);
+    if (!target) continue;
+
+    if (result.resultType === "forfeit" && result.forfeitTeamId) {
+      await forfeitBracketGame(target.id, result.forfeitTeamId);
+    } else if (result.team1Score !== null && result.team2Score !== null) {
+      const targetTeam1Score = target.team_1_id === result.team1Id ? result.team1Score : result.team2Score;
+      const targetTeam2Score = target.team_2_id === result.team2Id ? result.team2Score : result.team1Score;
+      await scoreBracketGame(target.id, targetTeam1Score, targetTeam2Score);
+    } else {
+      unreplayed.push(unreplayedResult(result, "Result did not include replayable score details"));
+      madeProgress = true;
+      continue;
+    }
+    replayed += 1;
+    madeProgress = true;
+  }
+
+  for (const result of pending) unreplayed.push(unreplayedResult(result, "Matching corrected bracket game was not available"));
+  return { replayed, unreplayed };
+}
+
+function findReplayTarget(games: BracketGameRow[], result: PreservedBracketResult) {
+  return games.find(
+    (game) =>
+      !isCompleteResult(game) &&
+      game.team_1_id !== null &&
+      game.team_2_id !== null &&
+      sameTeamPair(game.team_1_id, game.team_2_id, result.team1Id, result.team2Id)
+  );
+}
+
+function sameTeamPair(left1: number, left2: number, right1: number, right2: number) {
+  return (left1 === right1 && left2 === right2) || (left1 === right2 && left2 === right1);
+}
+
+function unreplayedResult(result: PreservedBracketResult, reason: string) {
+  return {
+    oldGameKey: result.oldGameKey,
+    scheduleLabel: result.scheduleLabel,
+    team1Id: result.team1Id,
+    team2Id: result.team2Id,
+    reason
+  };
 }
 
 export async function scoreBracketGame(gameId: number, team1Score: number, team2Score: number) {

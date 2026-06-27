@@ -470,6 +470,16 @@ async function upsertTournamentPlaceholderGame(
 
   const alreadySame = primary.phase === "tournament" && primary.division === row.division && primary.label === label;
   if (alreadySame) return "unchanged";
+  if (primary.phase === "tournament" && primary.division === row.division) {
+    await client.query(
+      `UPDATE games
+          SET label = $2,
+              ref_team_id = NULL
+        WHERE id = $1`,
+      [primary.id, label]
+    );
+    return "updated";
+  }
   if (isScored(primary)) return { skipped: "Refusing to overwrite a scored game" };
 
   await client.query(
