@@ -17,12 +17,14 @@ type ScheduleGridRow = {
   court1Game: string;
   court1Division: string;
   court1Scored: boolean;
+  court1Tournament?: boolean;
   court1StreamUrl: string;
   court1StreamLabel: string;
   court1CourtTime?: string;
   court2Game: string;
   court2Division: string;
   court2Scored: boolean;
+  court2Tournament?: boolean;
   court2StreamUrl: string;
   court2StreamLabel: string;
   court2CourtTime?: string;
@@ -120,16 +122,16 @@ export function ScheduleDayGrid({
                   <AdjustedCourtTimes court1={row.court1CourtTime} court2={row.court2CourtTime} />
                 </td>
                 <td className={refCellClass(row.court1RefDivision)}>{row.court1Ref}</td>
-                <td className={gameCellClass(row.court1Division, row.court1Scored)}>
-                  {row.court1Game}
+                <td className={gameCellClass(row.court1Division, row.court1Scored, row.court1Tournament)}>
+                  <GameCellContent text={row.court1Game} tournament={row.court1Tournament} />
                   {row.court1StreamUrl ? (
                     <a className="schedule-stream-link" href={row.court1StreamUrl} target="_blank" rel="noreferrer">
                       {row.court1StreamLabel}
                     </a>
                   ) : null}
                 </td>
-                <td className={gameCellClass(row.court2Division, row.court2Scored)}>
-                  {row.court2Game}
+                <td className={gameCellClass(row.court2Division, row.court2Scored, row.court2Tournament)}>
+                  <GameCellContent text={row.court2Game} tournament={row.court2Tournament} />
                   {row.court2StreamUrl ? (
                     <a className="schedule-stream-link" href={row.court2StreamUrl} target="_blank" rel="noreferrer">
                       {row.court2StreamLabel}
@@ -155,6 +157,7 @@ function filterRowByDivision(row: ScheduleGridRow, division: string): ScheduleGr
     next.court1Game = "";
     next.court1Division = "";
     next.court1Scored = false;
+    next.court1Tournament = false;
     next.court1StreamUrl = "";
     next.court1StreamLabel = "";
     next.court1CourtTime = "";
@@ -163,6 +166,7 @@ function filterRowByDivision(row: ScheduleGridRow, division: string): ScheduleGr
     next.court2Game = "";
     next.court2Division = "";
     next.court2Scored = false;
+    next.court2Tournament = false;
     next.court2StreamUrl = "";
     next.court2StreamLabel = "";
     next.court2CourtTime = "";
@@ -180,8 +184,8 @@ function hasUnscoredGame(row: ScheduleGridRow) {
   return Boolean((row.court1Game && !row.court1Scored) || (row.court2Game && !row.court2Scored));
 }
 
-function gameCellClass(division: string, scored = false) {
-  return `schedule-game-cell ${divisionClassNames[division] || ""} ${scored ? "muted-game-row" : ""}`.trim();
+function gameCellClass(division: string, scored = false, tournament = false) {
+  return `schedule-game-cell ${divisionClassNames[division] || ""} ${scored ? "muted-game-row" : ""} ${tournament ? "tournament-game" : ""}`.trim();
 }
 
 function refCellClass(division: string) {
@@ -195,6 +199,16 @@ function AdjustedCourtTimes({ court1 = "", court2 = "" }: { court1?: string; cou
     <span className="schedule-adjusted-time">
       {court1 ? <span>C1 {court1}</span> : null}
       {court2 ? <span>C2 {court2}</span> : null}
+    </span>
+  );
+}
+
+function GameCellContent({ text, tournament = false }: { text: string; tournament?: boolean }) {
+  if (!text) return null;
+  return (
+    <span className="schedule-game-main">
+      {tournament ? <span className="schedule-tournament-badge" aria-label="Tournament game">T</span> : null}
+      <span>{text}</span>
     </span>
   );
 }

@@ -65,12 +65,14 @@ type ScheduleGridRow = {
   court1Game: string;
   court1Division: string;
   court1Scored: boolean;
+  court1Tournament: boolean;
   court1StreamUrl: string;
   court1StreamLabel: string;
   court1CourtTime: string;
   court2Game: string;
   court2Division: string;
   court2Scored: boolean;
+  court2Tournament: boolean;
   court2StreamUrl: string;
   court2StreamLabel: string;
   court2CourtTime: string;
@@ -373,12 +375,14 @@ function buildScheduleGrid(
         court1Game: "",
         court1Division: "",
         court1Scored: false,
+        court1Tournament: false,
         court1StreamUrl: "",
         court1StreamLabel: "",
         court1CourtTime: "",
         court2Game: "",
         court2Division: "",
         court2Scored: false,
+        court2Tournament: false,
         court2StreamUrl: "",
         court2StreamLabel: "",
         court2CourtTime: "",
@@ -396,6 +400,7 @@ function buildScheduleGrid(
       row.court1Game = gameText;
       row.court1Division = game.division;
       row.court1Scored = scored;
+      row.court1Tournament = game.phase === "tournament";
       row.court1StreamUrl = streamLink.url;
       row.court1StreamLabel = streamLink.label;
       row.court1CourtTime = courtPaceTimes.get(game.id) || "";
@@ -403,6 +408,7 @@ function buildScheduleGrid(
       row.court2Game = gameText;
       row.court2Division = game.division;
       row.court2Scored = scored;
+      row.court2Tournament = game.phase === "tournament";
       row.court2StreamUrl = streamLink.url;
       row.court2StreamLabel = streamLink.label;
       row.court2CourtTime = courtPaceTimes.get(game.id) || "";

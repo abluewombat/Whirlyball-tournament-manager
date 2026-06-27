@@ -57,11 +57,13 @@ type BracketScheduleGridRow = {
   court1Game: string;
   court1Division: string;
   court1Scored: boolean;
+  court1Tournament: boolean;
   court1StreamUrl: string;
   court1StreamLabel: string;
   court2Game: string;
   court2Division: string;
   court2Scored: boolean;
+  court2Tournament: boolean;
   court2StreamUrl: string;
   court2StreamLabel: string;
   court2Ref: string;
@@ -206,11 +208,13 @@ function buildBracketScheduleGrid(games: BracketScheduleGame[], timeZone: string
         court1Game: "",
         court1Division: "",
         court1Scored: false,
+        court1Tournament: false,
         court1StreamUrl: "",
         court1StreamLabel: "",
         court2Game: "",
         court2Division: "",
         court2Scored: false,
+        court2Tournament: false,
         court2StreamUrl: "",
         court2StreamLabel: "",
         court2Ref: "",
@@ -227,12 +231,14 @@ function buildBracketScheduleGrid(games: BracketScheduleGame[], timeZone: string
       row.court1Game = gameText;
       row.court1Division = game.division;
       row.court1Scored = scored;
+      row.court1Tournament = true;
       row.court1StreamUrl = streamLink.url;
       row.court1StreamLabel = streamLink.label;
     } else if (game.court === 2) {
       row.court2Game = gameText;
       row.court2Division = game.division;
       row.court2Scored = scored;
+      row.court2Tournament = true;
       row.court2StreamUrl = streamLink.url;
       row.court2StreamLabel = streamLink.label;
       row.court2Ref = refTeamLabel(game);
