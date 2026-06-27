@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { bracketSchedulePlaceholderText, getActiveBracketScheduleSlots, type BracketScheduleSlot } from "@/lib/brackets";
 import { listTournamentDivisions, query } from "@/lib/db";
 import { getStandings, type StandingRow } from "@/lib/standings";
 import { LiveRefresh } from "@/app/live-refresh";
@@ -75,6 +76,29 @@ type DivisionGame = {
   forfeit_team_id: number | null;
 };
 
+type TeamBracketGame = {
+  id: number;
+  bracket_id: number;
+  game_key: string;
+  bracket_side: string;
+  round: number;
+  position: number;
+  team_1_id: number | null;
+  team_2_id: number | null;
+  team_1: string | null;
+  team_2: string | null;
+  team_1_score: number | null;
+  team_2_score: number | null;
+  winner_team_id: number | null;
+  loser_team_id: number | null;
+  result_type: string | null;
+  forfeit_team_id: number | null;
+  next_winner_game_key: string | null;
+  next_winner_slot: number | null;
+  next_loser_game_key: string | null;
+  next_loser_slot: number | null;
+};
+
 type OpponentReport = {
   teamId: number;
   team: string;
@@ -116,6 +140,24 @@ type SeedPassScenario = {
   label: string;
   finalPoints: number;
   summary: string;
+};
+
+type ChampionshipPath = {
+  status: "active" | "pending" | "champion" | "eliminated" | "not_started";
+  summary: string;
+  gamesNeeded: number;
+  currentPosition: string;
+  steps: ChampionshipPathStep[];
+};
+
+type ChampionshipPathStep = {
+  bracketGameId: number;
+  gameKey: string;
+  label: string;
+  when: string;
+  court: string;
+  opponent: string;
+  note: string;
 };
 
 const divisionClassNames: Record<string, string> = {
@@ -175,7 +217,7 @@ export default async function TeamPage({
      ORDER BY games.starts_at, games.court`,
     [teamId, tournament.id]
   );
-  const [divisionTeams, divisionGames, standings, courtPaceGames] = await Promise.all([
+  const [divisionTeams, divisionGames, standings, courtPaceGames, bracketGames, bracketScheduleSlots] = await Promise.all([
     query<DivisionTeam>(
       `SELECT teams.id, teams.name, COALESCE(centers.name, 'Draft') as center
        FROM teams LEFT JOIN centers ON centers.id = teams.center_id
@@ -210,13 +252,32 @@ export default async function TeamPage({
           AND games.team_2_id IS NOT NULL
         ORDER BY games.starts_at, games.court`,
       [tournament.id]
-    )
+    ),
+    query<TeamBracketGame>(
+      `SELECT bracket_games.*,
+              t1.name AS team_1,
+              t2.name AS team_2
+         FROM bracket_games
+         JOIN brackets ON brackets.id = bracket_games.bracket_id
+         LEFT JOIN teams t1 ON t1.id = bracket_games.team_1_id
+         LEFT JOIN teams t2 ON t2.id = bracket_games.team_2_id
+        WHERE brackets.tournament_id = $1
+          AND brackets.division = $2
+          AND brackets.status = 'active'
+        ORDER BY CASE bracket_games.bracket_side WHEN 'winners' THEN 1 WHEN 'losers' THEN 2 ELSE 3 END,
+                 bracket_games.round,
+                 bracket_games.position,
+                 bracket_games.id`,
+      [tournament.id, team.division]
+    ),
+    getActiveBracketScheduleSlots(tournament.id)
   ]);
   const teamStandings = standings.filter((row) => row.division === team.division);
   const teamStanding = teamStandings.find((row) => row.team_id === team.id);
   const seed = teamStanding ? teamStandings.findIndex((row) => row.team_id === team.id) + 1 : null;
   const opponentReports = buildOpponentReports(team.id, divisionTeams, divisionGames, timeZone);
   const seedRoadMap = buildSeedRoadMap(team.id, teamStandings, divisionGames, divisionTeams, timeZone);
+  const championshipPath = buildChampionshipPath(team.id, team.division, bracketGames, bracketScheduleSlots, divisionTeams.length, timeZone);
   const scheduleGroups = groupGamesByDay(games, timeZone);
   const nextGames = games.filter((game) => isPlaying(game, team.id) && !isScored(game)).slice(0, 3);
   const courtPaceTimes = projectedCourtPaceTimes(courtPaceGames, timeZone);
@@ -278,6 +339,55 @@ export default async function TeamPage({
           {nextGames.length ? <p><strong>Upcoming:</strong> {nextGames.map((game) => `${opponentLabel(game, team.id)} ${formatWeekdayTime(game.starts_at, timeZone)}`).join(" | ")}</p> : null}
           {noMeetingOpponents.length ? <p><strong>No scheduled meeting yet:</strong> {noMeetingOpponents.join(", ")}</p> : null}
         </div>
+      </section>
+
+      <section className="section card">
+        <h2>Path To Championship</h2>
+        <div className="team-insight-grid">
+          <div className="team-insight">
+            <span>Current Position</span>
+            <strong>{championshipPath.currentPosition}</strong>
+          </div>
+          <div className="team-insight">
+            <span>Games Needed</span>
+            <strong>{championshipPath.gamesNeeded}</strong>
+          </div>
+          <div className="team-insight">
+            <span>Status</span>
+            <strong>{championshipPath.status === "active" ? "Win Out" : championshipPath.status === "champion" ? "Champion" : championshipPath.status === "eliminated" ? "Eliminated" : "Pending"}</strong>
+          </div>
+        </div>
+        <div className="team-note-list">
+          <p>{championshipPath.summary}</p>
+        </div>
+        {championshipPath.steps.length ? (
+          <div className="table-wrap">
+            <table className="team-analytics-table">
+              <thead>
+                <tr>
+                  <th>Step</th>
+                  <th>Game</th>
+                  <th>When</th>
+                  <th>Court</th>
+                  <th>Opponent</th>
+                  <th>If You Win</th>
+                </tr>
+              </thead>
+              <tbody>
+                {championshipPath.steps.map((step, index) => (
+                  <tr key={`${step.gameKey}-${index}`}>
+                    <td>{index + 1}</td>
+                    <td>{step.label}</td>
+                    <td>{step.when}</td>
+                    <td>{step.court}</td>
+                    <td>{step.opponent}</td>
+                    <td>{step.note}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </section>
 
       <section className="section card">
@@ -487,6 +597,167 @@ export default async function TeamPage({
       </section>
     </main>
   );
+}
+
+function buildChampionshipPath(
+  teamId: number,
+  division: string,
+  games: TeamBracketGame[],
+  scheduleSlots: Map<number, BracketScheduleSlot>,
+  teamCount: number,
+  timeZone: string
+): ChampionshipPath {
+  if (!games.length) {
+    return {
+      status: "not_started",
+      summary: "The tournament bracket has not started for this division yet.",
+      gamesNeeded: 0,
+      currentPosition: "Bracket pending",
+      steps: []
+    };
+  }
+
+  const byKey = new Map(games.map((game) => [game.game_key, game]));
+  if (isTeamChampion(teamId, byKey)) {
+    return {
+      status: "champion",
+      summary: "This team has already won the division championship.",
+      gamesNeeded: 0,
+      currentPosition: "Champion",
+      steps: []
+    };
+  }
+  if (lossCountForTeam(teamId, games) >= 2) {
+    return {
+      status: "eliminated",
+      summary: "This team has been eliminated from the bracket.",
+      gamesNeeded: 0,
+      currentPosition: "Eliminated",
+      steps: []
+    };
+  }
+
+  const currentGame = nextAssignedBracketGame(teamId, games, scheduleSlots);
+  if (!currentGame) {
+    return {
+      status: "pending",
+      summary: "This team is still alive, but its next bracket game is not assigned yet.",
+      gamesNeeded: 0,
+      currentPosition: "Waiting",
+      steps: []
+    };
+  }
+
+  const steps: ChampionshipPathStep[] = [];
+  let cursor: TeamBracketGame | null = currentGame;
+  let cameThroughLosers = currentGame.bracket_side === "losers" || (currentGame.game_key === "F1" && currentGame.team_2_id === teamId);
+  const seen = new Set<string>();
+
+  while (cursor && !seen.has(cursor.game_key)) {
+    seen.add(cursor.game_key);
+    if (cursor.bracket_side === "losers") cameThroughLosers = true;
+    steps.push(championshipPathStep(teamId, division, cursor, scheduleSlots.get(cursor.id) || null, teamCount, timeZone, cameThroughLosers));
+
+    if (cursor.game_key === "F2") break;
+    if (cursor.game_key === "F1") {
+      cursor = cameThroughLosers ? byKey.get("F2") || null : null;
+      continue;
+    }
+    cursor = cursor.next_winner_game_key ? byKey.get(cursor.next_winner_game_key) || null : null;
+  }
+
+  return {
+    status: "active",
+    summary:
+      steps.length === 1
+        ? "Win this game to become champion."
+        : `Win these ${steps.length} games in order to become champion.`,
+    gamesNeeded: steps.length,
+    currentPosition: bracketPositionLabel(currentGame, teamId),
+    steps
+  };
+}
+
+function championshipPathStep(
+  teamId: number,
+  division: string,
+  game: TeamBracketGame,
+  slot: BracketScheduleSlot | null,
+  teamCount: number,
+  timeZone: string,
+  cameThroughLosers: boolean
+): ChampionshipPathStep {
+  return {
+    bracketGameId: game.id,
+    gameKey: game.game_key,
+    label: pathGameLabel(division, game, slot, teamCount),
+    when: slot?.starts_at ? formatWeekdayTime(slot.starts_at, timeZone) : "TBD",
+    court: slot?.court ? `Court ${slot.court}` : "TBD",
+    opponent: bracketOpponentLabel(game, teamId),
+    note: pathStepWinNote(game, cameThroughLosers)
+  };
+}
+
+function pathGameLabel(division: string, game: TeamBracketGame, slot: BracketScheduleSlot | null, teamCount: number) {
+  const placeholder = bracketSchedulePlaceholderText(division, teamCount, slot?.schedule_label || null);
+  if (placeholder) return placeholder;
+  if (game.game_key === "F1") return `${division} - Playoffs (CHAMPIONSHIP)`;
+  if (game.game_key === "F2") return `${division} - Playoffs (IF NEEDED CHAMPIONSHIP)`;
+  return `${division} - ${game.bracket_side === "losers" ? "Losers" : "Winners"} Round ${game.round} Game ${game.position}`;
+}
+
+function pathStepWinNote(game: TeamBracketGame, cameThroughLosers: boolean) {
+  if (game.game_key === "F2") return "Champion";
+  if (game.game_key === "F1") return cameThroughLosers ? "Forces if-needed championship" : "Champion";
+  if (game.next_winner_game_key === "F1") return "Moves to championship";
+  return "Moves to next bracket game";
+}
+
+function bracketOpponentLabel(game: TeamBracketGame, teamId: number) {
+  if (game.team_1_id === teamId) return game.team_2 || "TBD";
+  if (game.team_2_id === teamId) return game.team_1 || "TBD";
+  return "TBD";
+}
+
+function bracketPositionLabel(game: TeamBracketGame, teamId: number) {
+  if (game.game_key === "F2") return "If-needed final";
+  if (game.game_key === "F1") return game.team_2_id === teamId ? "Losers champion" : "Winners champion";
+  return game.bracket_side === "losers" ? "Losers bracket" : "Winners bracket";
+}
+
+function nextAssignedBracketGame(teamId: number, games: TeamBracketGame[], scheduleSlots: Map<number, BracketScheduleSlot>) {
+  return games
+    .filter((game) => (game.team_1_id === teamId || game.team_2_id === teamId) && !isBracketGameScored(game))
+    .sort((left, right) => {
+      const leftSlot = scheduleSlots.get(left.id);
+      const rightSlot = scheduleSlots.get(right.id);
+      const leftTime = leftSlot?.starts_at || "";
+      const rightTime = rightSlot?.starts_at || "";
+      if (leftTime || rightTime) return leftTime.localeCompare(rightTime);
+      return bracketGameOrder(left) - bracketGameOrder(right);
+    })[0] || null;
+}
+
+function bracketGameOrder(game: TeamBracketGame) {
+  if (game.game_key === "F1") return 10_000;
+  if (game.game_key === "F2") return 10_001;
+  const sideOffset = game.bracket_side === "losers" ? 5_000 : 0;
+  return sideOffset + game.round * 100 + game.position;
+}
+
+function isTeamChampion(teamId: number, byKey: Map<string, TeamBracketGame>) {
+  const reset = byKey.get("F2");
+  if (reset?.winner_team_id) return reset.winner_team_id === teamId;
+  const final = byKey.get("F1");
+  return Boolean(final?.winner_team_id === teamId && final.team_1_id === teamId);
+}
+
+function lossCountForTeam(teamId: number, games: TeamBracketGame[]) {
+  return games.filter((game) => game.loser_team_id === teamId).length;
+}
+
+function isBracketGameScored(game: TeamBracketGame) {
+  return (game.team_1_score !== null && game.team_2_score !== null) || game.result_type === "forfeit";
 }
 
 function buildSeedRoadMap(teamId: number, standings: StandingRow[], games: DivisionGame[], teams: DivisionTeam[], timeZone: string): SeedRoadMap | null {
