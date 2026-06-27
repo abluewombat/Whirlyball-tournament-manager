@@ -1,5 +1,4 @@
 import {
-  activeBracketExistsForDivision,
   getActiveBracketScheduleSlots,
   scoreBracketGame
 } from "./brackets";
@@ -59,9 +58,6 @@ export async function scoreCourtGameFromSync(input: {
   }
 
   if (game.phase !== "seeding") return { ok: false, reason: `Unsupported game phase: ${game.phase}` };
-  if (await activeBracketExistsForDivision(game.tournament_id, game.division)) {
-    return { ok: false, reason: "Seeding score is locked because an active bracket exists for this division" };
-  }
 
   const winnerId = input.team1Score === input.team2Score ? null : input.team1Score > input.team2Score ? game.team_1_id : game.team_2_id;
   const loserId = winnerId === null ? null : winnerId === game.team_1_id ? game.team_2_id : game.team_1_id;
