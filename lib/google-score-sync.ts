@@ -439,7 +439,7 @@ async function upsertTournamentPlaceholderGame(
 ): Promise<"inserted" | "updated" | "unchanged" | { skipped: string }> {
   if (!row.division) return { skipped: "Missing tournament placeholder details" };
   const teamCount = teamCountsByDivision.get(row.division) || 0;
-  const label = row.label || (row.bracketGameNumber ? bracketScheduleLabelForGameNumber(teamCount, row.bracketGameNumber) : null);
+  const label = row.label || (row.bracketGameNumber ? bracketScheduleLabelForGameNumber(teamCount, row.bracketGameNumber, row.division) : null);
   if (!label) return { skipped: `No bracket label for ${row.division} game ${row.bracketGameNumber || "unknown"}` };
 
   const existingResult = await client.query<DbGameRow>(

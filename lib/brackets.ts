@@ -515,6 +515,7 @@ function nextPowerOfTwo(value: number) {
 }
 
 function seedOrder(size: number): number[] {
+  if (size === 16) return [2, 15, 7, 10, 6, 11, 3, 14, 4, 13, 5, 12, 8, 9, 1, 16];
   if (size === 1) return [1];
   const previous = seedOrder(size / 2);
   return previous.flatMap((seed) => [seed, size + 1 - seed]);
@@ -581,7 +582,9 @@ export async function syncBracketToSchedule(bracketId: number) {
   }
 }
 
-export function bracketScheduleLabelForGameNumber(teamCount: number, gameNumber: number) {
+export function bracketScheduleLabelForGameNumber(teamCount: number, gameNumber: number, division?: string | null) {
+  const printedLabel = printedBracketScheduleLabelForGameNumber(teamCount, gameNumber, division);
+  if (printedLabel) return printedLabel;
   return bracketScheduleLabelsForTeamCount(teamCount)[gameNumber - 1] || null;
 }
 
@@ -639,6 +642,38 @@ function loserStageName(teamCount: number, loserIndex: number) {
 
 function bracketScheduleLabelsForTeamCount(teamCount: number) {
   return bracketScheduleEntriesForTeamCount(teamCount).map((entry) => entry.label);
+}
+
+function printedBracketScheduleLabelForGameNumber(teamCount: number, gameNumber: number, division?: string | null) {
+  if (division !== "C" || teamCount !== 13) return null;
+  const labels = new Map<number, string>([
+    [1, "Winners R1 Game 4"],
+    [2, "Winners R1 Game 5"],
+    [3, "Winners R1 Game 1"],
+    [4, "Winners R1 Game 2"],
+    [5, "Winners R1 Game 3"],
+    [6, "Winners bracket Game 6"],
+    [7, "Winners bracket Game 7"],
+    [8, "Winners bracket Game 9"],
+    [9, "Winners bracket Game 8"],
+    [10, "Losers bracket Game 1"],
+    [11, "Losers bracket Game 2"],
+    [12, "Losers bracket Game 3"],
+    [13, "Losers bracket Game 4"],
+    [14, "Losers bracket Game 5"],
+    [15, "Winners bracket Game 10"],
+    [16, "Winners bracket Game 11"],
+    [17, "Losers bracket Game 6"],
+    [18, "Losers bracket Game 7"],
+    [19, "Losers bracket Game 8"],
+    [20, "Losers bracket Game 9"],
+    [21, "Winners bracket Game 12"],
+    [22, "Losers bracket Game 10"],
+    [23, "Losers bracket Game 11"],
+    [24, "Championship"],
+    [25, "If-needed Championship"]
+  ]);
+  return labels.get(gameNumber) || null;
 }
 
 function bracketScheduleEntriesForTeamCount(teamCount: number): BracketScheduleEntry[] {
