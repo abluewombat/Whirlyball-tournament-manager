@@ -585,6 +585,58 @@ export function bracketScheduleLabelForGameNumber(teamCount: number, gameNumber:
   return bracketScheduleLabelsForTeamCount(teamCount)[gameNumber - 1] || null;
 }
 
+export function bracketSchedulePlaceholderText(division: string, teamCount: number, label: string | null) {
+  const stage = bracketScheduleDisplayNameForLabel(teamCount, label);
+  return stage ? `${division} - Playoffs (${stage})` : null;
+}
+
+function bracketScheduleDisplayNameForLabel(teamCount: number, label: string | null) {
+  if (!label) return null;
+  if (label === "Championship") return "CHAMPIONSHIP";
+  if (label === "If-needed Championship") return "IF NEEDED CHAMPIONSHIP";
+
+  const winnerMatch = label.match(/^Winners (?:R1 Game|bracket Game) (\d+)$/);
+  if (winnerMatch) return winnerStageName(teamCount, Number(winnerMatch[1]));
+
+  const loserMatch = label.match(/^Losers bracket Game (\d+)$/);
+  if (loserMatch) return loserStageName(teamCount, Number(loserMatch[1]));
+
+  return null;
+}
+
+function winnerStageName(teamCount: number, winnerIndex: number) {
+  if (teamCount <= 1 || winnerIndex < 1) return null;
+  const size = nextPowerOfTwo(teamCount);
+  const firstRoundGames = teamCount === size ? size / 2 : teamCount - size / 2;
+  const roundCounts = [firstRoundGames].filter((count) => count > 0);
+  for (let gameCount = size / 4; gameCount >= 1; gameCount = Math.floor(gameCount / 2)) {
+    roundCounts.push(gameCount);
+  }
+
+  let cursor = 0;
+  for (let index = 0; index < roundCounts.length; index++) {
+    const gameCount = roundCounts[index];
+    cursor += gameCount;
+    if (winnerIndex > cursor) continue;
+    if (gameCount === 4) return "QUARTERFINALS";
+    if (gameCount === 2) return "SEMIFINALS";
+    if (gameCount === 1) return "W FINALS";
+    if (index === 0 && firstRoundGames !== size / 2) return "PLAY-IN";
+    return `W ROUND ${index + 1}`;
+  }
+  return null;
+}
+
+function loserStageName(teamCount: number, loserIndex: number) {
+  const loserGameTotal = Math.max(0, teamCount - 2);
+  if (loserIndex < 1 || loserIndex > loserGameTotal) return null;
+  const remainingAfterGame = loserGameTotal - loserIndex;
+  if (remainingAfterGame === 0) return "L FINALS";
+  if (remainingAfterGame <= 2) return "L SEMIS";
+  if (remainingAfterGame <= 4) return "L QUARTERS";
+  return "L PLAYOFFS";
+}
+
 function bracketScheduleLabelsForTeamCount(teamCount: number) {
   return bracketScheduleEntriesForTeamCount(teamCount).map((entry) => entry.label);
 }

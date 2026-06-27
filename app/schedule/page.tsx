@@ -2,6 +2,7 @@ import { listTournamentDivisions, query } from "@/lib/db";
 import { currentTournament } from "@/lib/tournaments";
 import { LiveNow } from "@/app/live-now";
 import { ViewTabs } from "@/app/view-tabs";
+import { bracketSchedulePlaceholderText } from "@/lib/brackets";
 import { readGoogleSheetSyncStatus, type SyncStatus } from "@/lib/sync-status";
 import { ScheduleDayGrid, type ScheduleDayOption } from "@/app/schedule/schedule-day-grid";
 import { ScheduleGridDisplayRefresh } from "@/app/schedule/schedule-grid-display-refresh";
@@ -163,7 +164,8 @@ export default async function PublicSchedulePage({
     [tournament.id]
   );
   const syncStatus = await readGoogleSheetSyncStatus(tournament.id);
-  const gridRows = buildScheduleGrid(games, hiddenDivisionLabels, tournament.timezone);
+  const teamCountsByDivision = buildPublicTeamCountsByDivision(teams);
+  const gridRows = buildScheduleGrid(games, hiddenDivisionLabels, tournament.timezone, teamCountsByDivision);
   const dayOptions = buildScheduleDayOptions(gridRows);
   const initialDay = initialScheduleDay(params.day, dayOptions, tournament.timezone);
   const detailRows = buildScheduleDetailRows(teams, games, tournament.timezone);
@@ -348,7 +350,12 @@ function RefDetails({ rows }: { rows: RefCountRow[] }) {
   );
 }
 
-function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = new Set<string>(), timeZone: string) {
+function buildScheduleGrid(
+  games: PublicScheduleGame[],
+  hiddenDivisionLabels = new Set<string>(),
+  timeZone: string,
+  teamCountsByDivision = new Map<string, number>()
+) {
   const rows = new Map<string, ScheduleGridRow>();
   const firstStreamGameIds = firstStreamGameIdsByCourtDay(games, timeZone);
   const courtPaceTimes = projectedCourtPaceTimes(games, timeZone);
@@ -379,7 +386,7 @@ function buildScheduleGrid(games: PublicScheduleGame[], hiddenDivisionLabels = n
         court2RefDivision: ""
       };
     const resultText = publicResultText(game);
-    const gameText = scheduleGameText(game, hiddenDivisionLabels, resultText);
+    const gameText = scheduleGameText(game, hiddenDivisionLabels, resultText, teamCountsByDivision);
     const scored = isCompleteResult(game);
     const streamLink = publicStreamLinkForGame(game, { firstStreamGame: firstStreamGameIds.has(game.id) });
 
@@ -569,7 +576,12 @@ function buildRefCountRows(teams: PublicScheduleTeam[], games: PublicScheduleGam
   });
 }
 
-function scheduleGameText(game: PublicScheduleGame, hiddenDivisionLabels: Set<string>, resultText: string) {
+function scheduleGameText(
+  game: PublicScheduleGame,
+  hiddenDivisionLabels: Set<string>,
+  resultText: string,
+  teamCountsByDivision: Map<string, number>
+) {
   if (isOpenScheduleSlot(game)) return `${game.label || "Open schedule slot"}${resultText}`;
   const divisionPrefix = hiddenDivisionLabels.has(game.division) ? "" : `${game.division}: `;
   if (game.team_1 && game.team_2) {
@@ -583,7 +595,18 @@ function scheduleGameText(game: PublicScheduleGame, hiddenDivisionLabels: Set<st
       name: game.team_2
     })}${resultText}`;
   }
+  const tournamentPlaceholder = bracketSchedulePlaceholderText(game.division, teamCountsByDivision.get(game.division) || 0, game.label);
+  if (game.phase === "tournament" && tournamentPlaceholder) return `${tournamentPlaceholder}${resultText}`;
   return `${divisionPrefix}${game.label || "Game"}${resultText}`;
+}
+
+function buildPublicTeamCountsByDivision(teams: PublicScheduleTeam[]) {
+  const counts = new Map<string, number>();
+  for (const team of teams) {
+    if (team.deleted_at) continue;
+    counts.set(team.division, (counts.get(team.division) || 0) + 1);
+  }
+  return counts;
 }
 
 function scheduleTeamLabel(team: { center: string | null; division: string | null; name: string }) {

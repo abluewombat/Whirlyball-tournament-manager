@@ -437,10 +437,10 @@ async function upsertTournamentPlaceholderGame(
   row: ParsedSheetGame,
   teamCountsByDivision: Map<string, number>
 ): Promise<"inserted" | "updated" | "unchanged" | { skipped: string }> {
-  if (!row.division || !row.bracketGameNumber) return { skipped: "Missing tournament placeholder details" };
+  if (!row.division) return { skipped: "Missing tournament placeholder details" };
   const teamCount = teamCountsByDivision.get(row.division) || 0;
-  const label = bracketScheduleLabelForGameNumber(teamCount, row.bracketGameNumber);
-  if (!label) return { skipped: `No bracket label for ${row.division} game ${row.bracketGameNumber}` };
+  const label = row.label || (row.bracketGameNumber ? bracketScheduleLabelForGameNumber(teamCount, row.bracketGameNumber) : null);
+  if (!label) return { skipped: `No bracket label for ${row.division} game ${row.bracketGameNumber || "unknown"}` };
 
   const existingResult = await client.query<DbGameRow>(
     `SELECT id, phase, division, team_1_id, team_2_id, ref_team_id, label,
@@ -818,7 +818,7 @@ function parseCourtRow(row: string[], court: number, sharedRefTeamName: string |
     return {
       phase: "tournament" as const,
       division: tournamentPlaceholder.division,
-      label: null,
+      label: tournamentPlaceholder.label,
       bracketGameNumber: tournamentPlaceholder.gameNumber,
       timeLabel,
       team1Name: "",
@@ -852,7 +852,8 @@ function parseTournamentPlaceholder(...values: unknown[]) {
   const combined = texts.join(" ");
   const division = texts.map(playoffDivisionFromText).find(Boolean) || playoffDivisionFromText(combined);
   const gameNumber = texts.map(playoffGameNumberFromText).find(Boolean) || playoffGameNumberFromText(combined);
-  return division && gameNumber ? { division, gameNumber } : null;
+  const label = texts.map(playoffLabelFromText).find(Boolean) || playoffLabelFromText(combined);
+  return division && (gameNumber || label) ? { division, gameNumber, label } : null;
 }
 
 function playoffDivisionFromText(value: string) {
@@ -862,6 +863,12 @@ function playoffDivisionFromText(value: string) {
 function playoffGameNumberFromText(value: string) {
   const gameNumber = Number(value.match(/\(?\s*game\s*(\d+)\s*\)?/i)?.[1]);
   return Number.isInteger(gameNumber) && gameNumber > 0 ? gameNumber : null;
+}
+
+function playoffLabelFromText(value: string) {
+  if (!/\bchampionship\b/i.test(value)) return null;
+  if (/\bif\s*(?:needed|necessary)\b/i.test(value)) return "If-needed Championship";
+  return "Championship";
 }
 
 function sharedRefTeamNameFromRow(row: string[]) {
