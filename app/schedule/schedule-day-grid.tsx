@@ -62,7 +62,7 @@ export function ScheduleDayGrid({
     return rows
       .filter((row) => effectiveDay === "all" || row.dayKey === effectiveDay)
       .map((row) => filterRowByDivision(row, selectedDivision))
-      .filter((row) => showOldGames || hasUnscoredGame(row))
+      .filter((row) => showOldGames || hasUnscoredGame(row) || hasTournamentGame(row))
       .filter(hasVisibleGame);
   }, [effectiveDay, rows, selectedDivision, showOldGames]);
 
@@ -190,6 +190,10 @@ function hasVisibleGame(row: ScheduleGridRow) {
 
 function hasUnscoredGame(row: ScheduleGridRow) {
   return Boolean((row.court1Game && !row.court1Scored) || (row.court2Game && !row.court2Scored));
+}
+
+function hasTournamentGame(row: ScheduleGridRow) {
+  return Boolean((row.court1Game && row.court1Tournament) || (row.court2Game && row.court2Tournament));
 }
 
 function gameCellClass(division: string, scored = false, tournamentTeamCount = 0) {
