@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
 import { recalculateBracketOddsForTournament } from "@/lib/bracket-odds";
-import { syncCompletedDivisionBracketsToSchedule, type TournamentBracketSyncSummary } from "@/lib/brackets";
+import { repairDivisionBracketSeedLayout, syncCompletedDivisionBracketsToSchedule, type TournamentBracketSyncSummary } from "@/lib/brackets";
 import { syncGoogleSheetSchedule, syncGoogleSheetScores, type GoogleScheduleSyncSummary } from "@/lib/google-score-sync";
 import { saveCourtStream } from "@/lib/streams";
 import { readGoogleSheetSyncPause, recordGoogleSheetSyncStatus } from "@/lib/sync-status";
@@ -53,18 +53,22 @@ async function runSync(request: NextRequest) {
       ? await syncGoogleSheetSchedule(tournament.id)
       : disabledScheduleSummary();
     const summary = await syncGoogleSheetScores(tournament.id);
+    const cBracketRepair = await repairDivisionBracketSeedLayout(tournament.id, "C", { apply: true });
     const tournamentBracketSync = await syncCompletedDivisionBracketsToSchedule(tournament.id);
-    const oddsResults = tournamentBracketSync.bracketsSynced ? await recalculateBracketOddsForTournament(tournament.id) : [];
+    const oddsResults = tournamentBracketSync.bracketsSynced || cBracketRepair.replayedResults
+      ? await recalculateBracketOddsForTournament(tournament.id)
+      : [];
     const courtStreamSync = await syncKnownCourtStreams(tournament.id);
-    const changedCount = googleSheetChangedCount(scheduleSync, summary, tournamentBracketSync);
+    const changedCount = googleSheetChangedCount(scheduleSync, summary, tournamentBracketSync, cBracketRepair);
     await recordGoogleSheetSyncStatus({
       tournamentId: tournament.id,
       status: "success",
-      summary: googleSheetSyncSummaryText(scheduleSync, summary, tournamentBracketSync),
+      summary: googleSheetSyncSummaryText(scheduleSync, summary, tournamentBracketSync, cBracketRepair),
       changedCount,
       detail: {
         scheduleSync,
         scoreSync: summary,
+        cBracketRepair,
         tournamentBracketSync,
         bracketOdds: oddsResults,
         courtStreamSync
@@ -80,6 +84,7 @@ async function runSync(request: NextRequest) {
       tournament: tournament.slug,
       scheduleSync,
       scoreSync: summary,
+      cBracketRepair,
       tournamentBracketSync,
       bracketOdds: oddsResults,
       courtStreamSync
@@ -164,7 +169,8 @@ function knownCourtStreamsForToday() {
 function googleSheetChangedCount(
   scheduleSync: GoogleScheduleSyncSummary,
   scoreSync: { updated: number },
-  tournamentBracketSync: TournamentBracketSyncSummary
+  tournamentBracketSync: TournamentBracketSyncSummary,
+  cBracketRepair: { newBracketId: number | null; oldBracketId: number | null; alreadyCorrect: boolean; replayedResults: number }
 ) {
   return scheduleSync.gamesInserted +
     scheduleSync.gamesUpdated +
@@ -172,13 +178,16 @@ function googleSheetChangedCount(
     scheduleSync.refsUpdated +
     scheduleSync.refsRemoved +
     scoreSync.updated +
-    tournamentBracketSync.bracketsGenerated;
+    tournamentBracketSync.bracketsGenerated +
+    (cBracketRepair.newBracketId && cBracketRepair.oldBracketId !== cBracketRepair.newBracketId ? 1 : 0) +
+    cBracketRepair.replayedResults;
 }
 
 function googleSheetSyncSummaryText(
   scheduleSync: GoogleScheduleSyncSummary,
   scoreSync: { updated: number },
-  tournamentBracketSync: TournamentBracketSyncSummary
+  tournamentBracketSync: TournamentBracketSyncSummary,
+  cBracketRepair: { newBracketId: number | null; oldBracketId: number | null; alreadyCorrect: boolean; replayedResults: number }
 ) {
   const parts = [
     countText(scoreSync.updated, "game scored", "games scored"),
@@ -187,7 +196,9 @@ function googleSheetSyncSummaryText(
     countText(scheduleSync.gamesDeleted, "game removed", "games removed"),
     countText(scheduleSync.refsUpdated, "ref updated", "refs updated"),
     countText(scheduleSync.refsRemoved, "ref removed", "refs removed"),
-    countText(tournamentBracketSync.bracketsGenerated, "bracket generated", "brackets generated")
+    countText(tournamentBracketSync.bracketsGenerated, "bracket generated", "brackets generated"),
+    cBracketRepair.newBracketId && cBracketRepair.oldBracketId !== cBracketRepair.newBracketId ? "C bracket repaired" : "",
+    countText(cBracketRepair.replayedResults, "C result replayed", "C results replayed")
   ].filter(Boolean);
   return parts.join(", ") || "No changes";
 }

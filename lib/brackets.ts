@@ -86,6 +86,7 @@ type PreservedBracketResult = {
 export type BracketSeedLayoutRepairSummary = {
   division: string;
   apply: boolean;
+  alreadyCorrect: boolean;
   oldBracketId: number | null;
   newBracketId: number | null;
   preservedResults: number;
@@ -227,6 +228,7 @@ export async function repairDivisionBracketSeedLayout(
     return {
       division,
       apply,
+      alreadyCorrect: false,
       oldBracketId: null,
       newBracketId: null,
       preservedResults: 0,
@@ -236,10 +238,25 @@ export async function repairDivisionBracketSeedLayout(
   }
 
   const preservedResults = await preservedCompletedBracketResults(tournamentId, activeBracket.id);
+  const alreadyCorrect = !(await bracketSeedLayoutNeedsRepair(tournamentId, division, activeBracket.id));
+  if (alreadyCorrect) {
+    return {
+      division,
+      apply,
+      alreadyCorrect: true,
+      oldBracketId: activeBracket.id,
+      newBracketId: activeBracket.id,
+      preservedResults: preservedResults.length,
+      replayedResults: 0,
+      unreplayedResults: []
+    };
+  }
+
   if (!apply) {
     return {
       division,
       apply,
+      alreadyCorrect: false,
       oldBracketId: activeBracket.id,
       newBracketId: null,
       preservedResults: preservedResults.length,
@@ -253,6 +270,7 @@ export async function repairDivisionBracketSeedLayout(
     return {
       division,
       apply,
+      alreadyCorrect: false,
       oldBracketId: activeBracket.id,
       newBracketId: null,
       preservedResults: preservedResults.length,
@@ -272,6 +290,7 @@ export async function repairDivisionBracketSeedLayout(
   return {
     division,
     apply,
+    alreadyCorrect: false,
     oldBracketId: activeBracket.id,
     newBracketId,
     preservedResults: preservedResults.length,
@@ -400,6 +419,28 @@ function unreplayedResult(result: PreservedBracketResult, reason: string) {
     team2Id: result.team2Id,
     reason
   };
+}
+
+async function bracketSeedLayoutNeedsRepair(tournamentId: number, division: string, bracketId: number) {
+  const standings = (await getStandings(tournamentId, division)).filter((row) => row.division === division);
+  if (standings.length < 2) return false;
+  const expected = buildDoubleEliminationPlan(
+    standings.map((row) => row.team_id),
+    nextPowerOfTwo(standings.length)
+  )
+    .filter((plan) => plan.side === "winners" && plan.round === 1)
+    .map((plan) => [plan.team1Id, plan.team2Id]);
+  const actual = await query<{ team_1_id: number | null; team_2_id: number | null }>(
+    `SELECT team_1_id, team_2_id
+       FROM bracket_games
+      WHERE bracket_id = $1
+        AND bracket_side = 'winners'
+        AND round = 1
+      ORDER BY position`,
+    [bracketId]
+  );
+  if (actual.length !== expected.length) return true;
+  return actual.some((game, index) => game.team_1_id !== expected[index][0] || game.team_2_id !== expected[index][1]);
 }
 
 export async function scoreBracketGame(gameId: number, team1Score: number, team2Score: number) {
