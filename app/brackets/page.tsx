@@ -1,6 +1,6 @@
 import { BracketDivisionTabs, type PublicBracketDivision } from "./bracket-division-tabs";
 import { listTournamentDivisions, query } from "@/lib/db";
-import { bracketSchedulePlaceholderText } from "@/lib/brackets";
+import { bracketSchedulePlaceholderText, getActiveTournamentScheduleSources, type BracketScheduleSources } from "@/lib/brackets";
 import { currentTournament } from "@/lib/tournaments";
 import { ScheduleDayGrid, type ScheduleDayOption } from "@/app/schedule/schedule-day-grid";
 import { ScheduleGridDisplayRefresh } from "@/app/schedule/schedule-grid-display-refresh";
@@ -136,7 +136,8 @@ export default async function BracketsPage({
     return weekday === "Saturday" || weekday === "Sunday";
   });
   const teamCountsByDivision = new Map(teamCounts.map((row) => [row.division, row.team_count]));
-  const gridRows = buildBracketScheduleGrid(weekendTournamentGames, tournament.timezone, teamCountsByDivision);
+  const bracketScheduleSources = await getActiveTournamentScheduleSources(tournament.id);
+  const gridRows = buildBracketScheduleGrid(weekendTournamentGames, tournament.timezone, teamCountsByDivision, bracketScheduleSources);
   const dayOptions = buildBracketDayOptions(gridRows);
   const initialDay = initialBracketDay(params.day, dayOptions);
   const lastUpdated = gridRows.length ? tournamentDateTimeLabel(new Date(), tournament.timezone) : null;
@@ -193,7 +194,12 @@ export default async function BracketsPage({
   );
 }
 
-function buildBracketScheduleGrid(games: BracketScheduleGame[], timeZone: string, teamCountsByDivision: Map<string, number>) {
+function buildBracketScheduleGrid(
+  games: BracketScheduleGame[],
+  timeZone: string,
+  teamCountsByDivision: Map<string, number>,
+  bracketScheduleSources = new Map<number, BracketScheduleSources>()
+) {
   const rows = new Map<string, BracketScheduleGridRow>();
   const firstStreamGameIds = firstStreamGameIdsByCourtDay(games, timeZone);
 
@@ -225,7 +231,7 @@ function buildBracketScheduleGrid(games: BracketScheduleGame[], timeZone: string
         court2RefDivision: ""
       };
     const resultText = publicResultText(game);
-    const gameText = scheduleGameText(game, resultText, teamCountsByDivision);
+    const gameText = scheduleGameText(game, resultText, teamCountsByDivision, bracketScheduleSources.get(game.id) || null);
     const scored = isCompleteResult(game);
     const streamLink = publicStreamLinkForGame(game, { firstStreamGame: firstStreamGameIds.has(game.id) });
 
@@ -305,11 +311,26 @@ function refTeamLabel(game: BracketScheduleGame) {
   return prefix ? `${prefix} - ${game.ref_team}` : game.ref_team;
 }
 
-function scheduleGameText(game: BracketScheduleGame, resultText: string, teamCountsByDivision: Map<string, number>) {
+function scheduleGameText(
+  game: BracketScheduleGame,
+  resultText: string,
+  teamCountsByDivision: Map<string, number>,
+  bracketSources: BracketScheduleSources | null
+) {
   const divisionPrefix = game.division ? `${game.division}: ` : "";
   if (game.team_1 && game.team_2) return `${divisionPrefix}${game.team_1} vs. ${game.team_2}${resultText}`;
+  const sourceText = tournamentSourceGameText(game, bracketSources);
+  if (sourceText) return `${sourceText}${resultText}`;
   const tournamentPlaceholder = bracketSchedulePlaceholderText(game.division, teamCountsByDivision.get(game.division) || 0, game.label);
   return `${tournamentPlaceholder || `${divisionPrefix}${game.label || "Game"}`}${resultText}`;
+}
+
+function tournamentSourceGameText(game: BracketScheduleGame, bracketSources: BracketScheduleSources | null) {
+  if (game.phase !== "tournament" || !bracketSources) return null;
+  const team1Text = game.team_1 || bracketSources.team1SourceLabel || null;
+  const team2Text = game.team_2 || bracketSources.team2SourceLabel || null;
+  if (!team1Text && !team2Text) return null;
+  return `${team1Text || "TBD"} vs. ${team2Text || "TBD"}`;
 }
 
 function isCompleteResult(game: BracketScheduleGame) {

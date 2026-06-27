@@ -2,7 +2,7 @@ import { listTournamentDivisions, query } from "@/lib/db";
 import { currentTournament } from "@/lib/tournaments";
 import { LiveNow } from "@/app/live-now";
 import { ViewTabs } from "@/app/view-tabs";
-import { bracketSchedulePlaceholderText } from "@/lib/brackets";
+import { bracketSchedulePlaceholderText, getActiveTournamentScheduleSources, type BracketScheduleSources } from "@/lib/brackets";
 import { readGoogleSheetSyncStatus, type SyncStatus } from "@/lib/sync-status";
 import { ScheduleDayGrid, type ScheduleDayOption } from "@/app/schedule/schedule-day-grid";
 import { ScheduleGridDisplayRefresh } from "@/app/schedule/schedule-grid-display-refresh";
@@ -169,7 +169,8 @@ export default async function PublicSchedulePage({
   );
   const syncStatus = await readGoogleSheetSyncStatus(tournament.id);
   const teamCountsByDivision = buildPublicTeamCountsByDivision(teams);
-  const gridRows = buildScheduleGrid(games, hiddenDivisionLabels, tournament.timezone, teamCountsByDivision);
+  const bracketScheduleSources = await getActiveTournamentScheduleSources(tournament.id);
+  const gridRows = buildScheduleGrid(games, hiddenDivisionLabels, tournament.timezone, teamCountsByDivision, bracketScheduleSources);
   const dayOptions = buildScheduleDayOptions(gridRows);
   const initialDay = initialScheduleDay(params.day, dayOptions, tournament.timezone);
   const detailRows = buildScheduleDetailRows(teams, games, tournament.timezone);
@@ -358,7 +359,8 @@ function buildScheduleGrid(
   games: PublicScheduleGame[],
   hiddenDivisionLabels = new Set<string>(),
   timeZone: string,
-  teamCountsByDivision = new Map<string, number>()
+  teamCountsByDivision = new Map<string, number>(),
+  bracketScheduleSources = new Map<number, BracketScheduleSources>()
 ) {
   const rows = new Map<string, ScheduleGridRow>();
   const firstStreamGameIds = firstStreamGameIdsByCourtDay(games, timeZone);
@@ -394,7 +396,13 @@ function buildScheduleGrid(
         court2RefDivision: ""
       };
     const resultText = publicResultText(game);
-    const gameText = scheduleGameText(game, hiddenDivisionLabels, resultText, teamCountsByDivision);
+    const gameText = scheduleGameText(
+      game,
+      hiddenDivisionLabels,
+      resultText,
+      teamCountsByDivision,
+      bracketScheduleSources.get(game.id) || null
+    );
     const scored = isCompleteResult(game);
     const streamLink = publicStreamLinkForGame(game, { firstStreamGame: firstStreamGameIds.has(game.id) });
 
@@ -596,7 +604,8 @@ function scheduleGameText(
   game: PublicScheduleGame,
   hiddenDivisionLabels: Set<string>,
   resultText: string,
-  teamCountsByDivision: Map<string, number>
+  teamCountsByDivision: Map<string, number>,
+  bracketSources: BracketScheduleSources | null
 ) {
   if (isOpenScheduleSlot(game)) return `${game.label || "Open schedule slot"}${resultText}`;
   const divisionPrefix = hiddenDivisionLabels.has(game.division) ? "" : `${game.division}: `;
@@ -611,9 +620,39 @@ function scheduleGameText(
       name: game.team_2
     })}${resultText}`;
   }
+  const sourceText = tournamentSourceGameText(game, bracketSources);
+  if (sourceText) return `${sourceText}${resultText}`;
   const tournamentPlaceholder = bracketSchedulePlaceholderText(game.division, teamCountsByDivision.get(game.division) || 0, game.label);
   if (game.phase === "tournament" && tournamentPlaceholder) return `${tournamentPlaceholder}${resultText}`;
   return `${divisionPrefix}${game.label || "Game"}${resultText}`;
+}
+
+function tournamentSourceGameText(game: PublicScheduleGame, bracketSources: BracketScheduleSources | null) {
+  if (game.phase !== "tournament" || !bracketSources) return null;
+  const team1Text =
+    game.team_1 ||
+    bracketSources.team1SourceLabel ||
+    null;
+  const team2Text =
+    game.team_2 ||
+    bracketSources.team2SourceLabel ||
+    null;
+  if (!team1Text && !team2Text) return null;
+  const team1Label = game.team_1
+    ? scheduleTeamLabel({
+        center: game.team_1_center,
+        division: game.team_1_division || game.division,
+        name: game.team_1
+      })
+    : team1Text || "TBD";
+  const team2Label = game.team_2
+    ? scheduleTeamLabel({
+        center: game.team_2_center,
+        division: game.team_2_division || game.division,
+        name: game.team_2
+      })
+    : team2Text || "TBD";
+  return `${team1Label} vs. ${team2Label}`;
 }
 
 function buildPublicTeamCountsByDivision(teams: PublicScheduleTeam[]) {

@@ -42,6 +42,11 @@ export type BracketScheduleSlot = {
   actual_ended_at: string | null;
 };
 
+export type BracketScheduleSources = {
+  team1SourceLabel: string | null;
+  team2SourceLabel: string | null;
+};
+
 type BracketScheduleEntry = {
   label: string;
   side: "winners" | "losers" | "finals";
@@ -580,6 +585,40 @@ export async function getActiveBracketScheduleSlots(tournamentId: number) {
   return slots;
 }
 
+export async function getActiveTournamentScheduleSources(tournamentId: number) {
+  const brackets = await query<{ id: number; division: string }>(
+    "SELECT id, division FROM brackets WHERE tournament_id = $1 AND status = 'active' ORDER BY division, id",
+    [tournamentId]
+  );
+  const sources = new Map<number, BracketScheduleSources>();
+
+  for (const bracket of brackets) {
+    const bracketGames = await query<BracketGameRow>("SELECT * FROM bracket_games WHERE bracket_id = $1", [bracket.id]);
+    const labels = bracketScheduleLabels(bracketGames);
+    const scheduleGames = await query<{ id: number; label: string | null }>(
+      `SELECT id, label
+       FROM games
+       WHERE tournament_id = $1 AND phase = 'tournament' AND division = $2`,
+      [tournamentId, bracket.division]
+    );
+    const scheduleByLabel = new Map(scheduleGames.filter((game) => game.label).map((game) => [game.label as string, game]));
+    const teamCount = bracketTeamCount(bracketGames);
+    const sourceByTargetSlot = bracketSourceLabelsByTargetSlot(bracketGames, labels, teamCount, bracket.division);
+
+    for (const game of bracketGames) {
+      const scheduleLabel = labels.get(game.id) || null;
+      const scheduleGame = scheduleLabel ? scheduleByLabel.get(scheduleLabel) : null;
+      if (!scheduleGame) continue;
+      sources.set(scheduleGame.id, {
+        team1SourceLabel: game.team_1_id === null ? sourceByTargetSlot.get(`${game.game_key}|1`) || null : null,
+        team2SourceLabel: game.team_2_id === null ? sourceByTargetSlot.get(`${game.game_key}|2`) || null : null
+      });
+    }
+  }
+
+  return sources;
+}
+
 export async function activeBracketExistsForDivision(tournamentId: number, division: string) {
   const [row] = await query<{ count: string }>(
     "SELECT COUNT(*) as count FROM brackets WHERE tournament_id = $1 AND division = $2 AND status = 'active'",
@@ -884,6 +923,38 @@ function bracketScheduleLabelsForTeamCount(teamCount: number) {
   return bracketScheduleEntriesForTeamCount(teamCount).map((entry) => entry.label);
 }
 
+function bracketSourceLabelsByTargetSlot(
+  games: BracketGameRow[],
+  labels: Map<number, string>,
+  teamCount: number,
+  division: string
+) {
+  const sources = new Map<string, string>();
+  for (const game of games) {
+    const sourceLabel = labels.get(game.id) || null;
+    const sourceNumber = sourceLabel ? bracketScheduleGameNumberForLabel(teamCount, sourceLabel, division) : null;
+    if (!sourceNumber) continue;
+    if (game.next_winner_game_key && game.next_winner_slot) {
+      sources.set(`${game.next_winner_game_key}|${game.next_winner_slot}`, `Winner game ${sourceNumber}`);
+    }
+    if (game.next_loser_game_key && game.next_loser_slot) {
+      sources.set(`${game.next_loser_game_key}|${game.next_loser_slot}`, `Loser game ${sourceNumber}`);
+    }
+    if (game.game_key === "F1") {
+      sources.set("F2|1", `Winner game ${sourceNumber}`);
+      sources.set("F2|2", `Loser game ${sourceNumber}`);
+    }
+  }
+  return sources;
+}
+
+function bracketScheduleGameNumberForLabel(teamCount: number, label: string, division?: string | null) {
+  const printedNumber = printedBracketScheduleGameNumberForLabel(teamCount, label, division);
+  if (printedNumber) return printedNumber;
+  const index = bracketScheduleLabelsForTeamCount(teamCount).indexOf(label);
+  return index === -1 ? null : index + 1;
+}
+
 function printedBracketScheduleLabelForGameNumber(teamCount: number, gameNumber: number, division?: string | null) {
   if (division !== "C" || teamCount !== 13) return null;
   const labels = new Map<number, string>([
@@ -914,6 +985,14 @@ function printedBracketScheduleLabelForGameNumber(teamCount: number, gameNumber:
     [25, "If-needed Championship"]
   ]);
   return labels.get(gameNumber) || null;
+}
+
+function printedBracketScheduleGameNumberForLabel(teamCount: number, label: string, division?: string | null) {
+  if (division !== "C" || teamCount !== 13) return null;
+  for (let gameNumber = 1; gameNumber <= 25; gameNumber++) {
+    if (printedBracketScheduleLabelForGameNumber(teamCount, gameNumber, division) === label) return gameNumber;
+  }
+  return null;
 }
 
 function bracketScheduleEntriesForTeamCount(teamCount: number): BracketScheduleEntry[] {
@@ -947,12 +1026,7 @@ function bracketScheduleEntriesForTeamCount(teamCount: number): BracketScheduleE
 
 function bracketScheduleLabels(games: BracketGameRow[]) {
   const labels = new Map<number, string>();
-  const teamIds = new Set<number>();
-  for (const game of games.filter((candidate) => candidate.bracket_side === "winners" && candidate.round === 1)) {
-    if (game.team_1_id !== null) teamIds.add(game.team_1_id);
-    if (game.team_2_id !== null) teamIds.add(game.team_2_id);
-  }
-  const teamCount = teamIds.size;
+  const teamCount = bracketTeamCount(games);
   const loserGameTotal = Math.max(0, teamCount - 2);
   const firstRoundGames = games
     .filter((candidate) => candidate.bracket_side === "winners" && candidate.round === 1 && !isFirstRoundBye(candidate))
@@ -988,6 +1062,15 @@ function bracketScheduleLabels(games: BracketGameRow[]) {
     if (game.game_key === "F2") labels.set(game.id, "If-needed Championship");
   }
   return labels;
+}
+
+function bracketTeamCount(games: BracketGameRow[]) {
+  const teamIds = new Set<number>();
+  for (const game of games.filter((candidate) => candidate.bracket_side === "winners" && candidate.round === 1)) {
+    if (game.team_1_id !== null) teamIds.add(game.team_1_id);
+    if (game.team_2_id !== null) teamIds.add(game.team_2_id);
+  }
+  return teamIds.size;
 }
 
 async function refreshBracketViewerData(bracketId: number) {
