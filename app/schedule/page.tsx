@@ -2,7 +2,12 @@ import { listTournamentDivisions, query } from "@/lib/db";
 import { currentTournament } from "@/lib/tournaments";
 import { LiveNow } from "@/app/live-now";
 import { ViewTabs } from "@/app/view-tabs";
-import { bracketSchedulePlaceholderText, getActiveTournamentScheduleSources, type BracketScheduleSources } from "@/lib/brackets";
+import {
+  bracketScheduleGameNumberText,
+  bracketSchedulePlaceholderText,
+  getActiveTournamentScheduleSources,
+  type BracketScheduleSources
+} from "@/lib/brackets";
 import { readGoogleSheetSyncStatus, type SyncStatus } from "@/lib/sync-status";
 import { ScheduleDayGrid, type ScheduleDayOption } from "@/app/schedule/schedule-day-grid";
 import { ScheduleGridDisplayRefresh } from "@/app/schedule/schedule-grid-display-refresh";
@@ -66,6 +71,7 @@ type ScheduleGridRow = {
   court1Division: string;
   court1Scored: boolean;
   court1Tournament: boolean;
+  court1TournamentLabel: string;
   court1TournamentTeamCount: number;
   court1StreamUrl: string;
   court1StreamLabel: string;
@@ -74,6 +80,7 @@ type ScheduleGridRow = {
   court2Division: string;
   court2Scored: boolean;
   court2Tournament: boolean;
+  court2TournamentLabel: string;
   court2TournamentTeamCount: number;
   court2StreamUrl: string;
   court2StreamLabel: string;
@@ -380,6 +387,7 @@ function buildScheduleGrid(
         court1Division: "",
         court1Scored: false,
         court1Tournament: false,
+        court1TournamentLabel: "",
         court1TournamentTeamCount: 0,
         court1StreamUrl: "",
         court1StreamLabel: "",
@@ -388,6 +396,7 @@ function buildScheduleGrid(
         court2Division: "",
         court2Scored: false,
         court2Tournament: false,
+        court2TournamentLabel: "",
         court2TournamentTeamCount: 0,
         court2StreamUrl: "",
         court2StreamLabel: "",
@@ -396,12 +405,13 @@ function buildScheduleGrid(
         court2RefDivision: ""
       };
     const resultText = publicResultText(game);
+    const bracketSources = bracketScheduleSources.get(game.id) || null;
     const gameText = scheduleGameText(
       game,
       hiddenDivisionLabels,
       resultText,
       teamCountsByDivision,
-      bracketScheduleSources.get(game.id) || null
+      bracketSources
     );
     const scored = isCompleteResult(game);
     const streamLink = publicStreamLinkForGame(game, { firstStreamGame: firstStreamGameIds.has(game.id) });
@@ -413,6 +423,7 @@ function buildScheduleGrid(
       row.court1Division = game.division;
       row.court1Scored = scored;
       row.court1Tournament = game.phase === "tournament";
+      row.court1TournamentLabel = tournamentBadgeLabel(game, teamCountsByDivision, bracketSources);
       row.court1TournamentTeamCount = game.phase === "tournament" ? tournamentTeamCount(game) : 0;
       row.court1StreamUrl = streamLink.url;
       row.court1StreamLabel = streamLink.label;
@@ -422,6 +433,7 @@ function buildScheduleGrid(
       row.court2Division = game.division;
       row.court2Scored = scored;
       row.court2Tournament = game.phase === "tournament";
+      row.court2TournamentLabel = tournamentBadgeLabel(game, teamCountsByDivision, bracketSources);
       row.court2TournamentTeamCount = game.phase === "tournament" ? tournamentTeamCount(game) : 0;
       row.court2StreamUrl = streamLink.url;
       row.court2StreamLabel = streamLink.label;
@@ -478,6 +490,19 @@ function projectedCourtPaceTimes(games: PublicScheduleGame[], timeZone: string) 
 
 function tournamentTeamCount(game: Pick<PublicScheduleGame, "team_1_id" | "team_2_id">) {
   return Number(game.team_1_id !== null) + Number(game.team_2_id !== null);
+}
+
+function tournamentBadgeLabel(
+  game: Pick<PublicScheduleGame, "phase" | "division" | "label">,
+  teamCountsByDivision: Map<string, number>,
+  bracketSources: BracketScheduleSources | null
+) {
+  if (game.phase !== "tournament") return "";
+  return (
+    (bracketSources?.scheduleGameNumber ? `T-${bracketSources.scheduleGameNumber}` : null) ||
+    bracketScheduleGameNumberText(game.division, teamCountsByDivision.get(game.division) || 0, game.label) ||
+    "T"
+  );
 }
 
 function buildScheduleDayOptions(rows: ScheduleGridRow[]): ScheduleDayOption[] {

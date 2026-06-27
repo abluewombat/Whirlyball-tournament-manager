@@ -43,6 +43,7 @@ export type BracketScheduleSlot = {
 };
 
 export type BracketScheduleSources = {
+  scheduleGameNumber: number | null;
   team1SourceLabel: string | null;
   team2SourceLabel: string | null;
 };
@@ -610,6 +611,7 @@ export async function getActiveTournamentScheduleSources(tournamentId: number) {
       const scheduleGame = scheduleLabel ? scheduleByLabel.get(scheduleLabel) : null;
       if (!scheduleGame) continue;
       sources.set(scheduleGame.id, {
+        scheduleGameNumber: scheduleLabel ? bracketScheduleGameNumberForLabel(teamCount, scheduleLabel, bracket.division) : null,
         team1SourceLabel: game.team_1_id === null ? sourceByTargetSlot.get(`${game.game_key}|1`) || null : null,
         team2SourceLabel: game.team_2_id === null ? sourceByTargetSlot.get(`${game.game_key}|2`) || null : null
       });
@@ -870,6 +872,12 @@ export function bracketScheduleLabelForGameNumber(teamCount: number, gameNumber:
 export function bracketSchedulePlaceholderText(division: string, teamCount: number, label: string | null) {
   const stage = bracketScheduleDisplayNameForLabel(teamCount, label);
   return stage ? `${division} - Playoffs (${stage})` : null;
+}
+
+export function bracketScheduleGameNumberText(division: string, teamCount: number, label: string | null) {
+  if (!label) return null;
+  const gameNumber = bracketScheduleGameNumberForLabel(teamCount, label, division);
+  return gameNumber ? `T-${gameNumber}` : null;
 }
 
 function bracketScheduleDisplayNameForLabel(teamCount: number, label: string | null) {
