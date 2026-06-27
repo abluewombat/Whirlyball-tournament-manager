@@ -36,6 +36,11 @@ type TeamRow = {
   division: string;
 };
 
+type HeadToHeadRecord = {
+  standingPoints: number;
+  pointDiff: number;
+};
+
 export async function getStandings(tournamentId: number, division?: string) {
   const teams = await query<TeamRow>(
     `SELECT teams.id, teams.name, COALESCE(centers.name, 'Draft') as center, teams.division
@@ -60,6 +65,7 @@ export async function getStandings(tournamentId: number, division?: string) {
     division ? [tournamentId, division] : [tournamentId]
   );
   const rows = new Map<number, StandingRow>();
+  const headToHead = new Map<string, HeadToHeadRecord>();
 
   for (const team of teams) {
     rows.set(team.id, {
@@ -98,16 +104,18 @@ export async function getStandings(tournamentId: number, division?: string) {
         loser.losses += 1;
         loser.forfeits += 1;
       }
+      if (winner && loser) recordHeadToHeadForfeit(headToHead, winner.team_id, loser.team_id);
       continue;
     }
 
     if (game.team_1_score === null || game.team_2_score === null) continue;
     if (team1) applyScoredResult(team1, game.team_1_score, game.team_2_score);
     if (team2) applyScoredResult(team2, game.team_2_score, game.team_1_score);
+    if (team1 && team2) recordHeadToHeadScore(headToHead, team1.team_id, team2.team_id, game.team_1_score, game.team_2_score);
   }
 
   for (const row of rows.values()) row.point_diff = row.points_for - row.points_against;
-  return [...rows.values()].sort(compareStandings);
+  return [...rows.values()].sort((left, right) => compareStandings(left, right, headToHead));
 }
 
 export async function seedingCompleteForDivision(tournamentId: number, division: string) {
@@ -141,10 +149,39 @@ function applyScoredResult(row: StandingRow, pointsFor: number, pointsAgainst: n
   }
 }
 
-function compareStandings(left: StandingRow, right: StandingRow) {
+function recordHeadToHeadScore(headToHead: Map<string, HeadToHeadRecord>, team1Id: number, team2Id: number, team1Score: number, team2Score: number) {
+  const team1Points = team1Score === team2Score ? 1 : team1Score > team2Score ? 2 : 0;
+  const team2Points = team1Score === team2Score ? 1 : team2Score > team1Score ? 2 : 0;
+  addHeadToHeadResult(headToHead, team1Id, team2Id, team1Points, team1Score - team2Score);
+  addHeadToHeadResult(headToHead, team2Id, team1Id, team2Points, team2Score - team1Score);
+}
+
+function recordHeadToHeadForfeit(headToHead: Map<string, HeadToHeadRecord>, winnerId: number, loserId: number) {
+  addHeadToHeadResult(headToHead, winnerId, loserId, 2, 0);
+  addHeadToHeadResult(headToHead, loserId, winnerId, 0, 0);
+}
+
+function addHeadToHeadResult(headToHead: Map<string, HeadToHeadRecord>, teamId: number, opponentId: number, standingPoints: number, pointDiff: number) {
+  const key = headToHeadKey(teamId, opponentId);
+  const record = headToHead.get(key) || { standingPoints: 0, pointDiff: 0 };
+  record.standingPoints += standingPoints;
+  record.pointDiff += pointDiff;
+  headToHead.set(key, record);
+}
+
+function headToHeadKey(teamId: number, opponentId: number) {
+  return `${teamId}:${opponentId}`;
+}
+
+export function compareStandings(left: StandingRow, right: StandingRow, headToHead = new Map<string, HeadToHeadRecord>()) {
   if (left.division !== right.division) return left.division.localeCompare(right.division);
   if (left.standing_points !== right.standing_points) return right.standing_points - left.standing_points;
-  if (left.wins !== right.wins) return right.wins - left.wins;
+  const leftHeadToHead = headToHead.get(headToHeadKey(left.team_id, right.team_id)) || { standingPoints: 0, pointDiff: 0 };
+  const rightHeadToHead = headToHead.get(headToHeadKey(right.team_id, left.team_id)) || { standingPoints: 0, pointDiff: 0 };
+  if (leftHeadToHead.standingPoints !== rightHeadToHead.standingPoints) {
+    return rightHeadToHead.standingPoints - leftHeadToHead.standingPoints;
+  }
+  if (leftHeadToHead.pointDiff !== rightHeadToHead.pointDiff) return rightHeadToHead.pointDiff - leftHeadToHead.pointDiff;
   if (left.point_diff !== right.point_diff) return right.point_diff - left.point_diff;
   if (left.points_against !== right.points_against) return left.points_against - right.points_against;
   if (left.coin !== right.coin) return right.coin - left.coin;

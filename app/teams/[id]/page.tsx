@@ -563,7 +563,7 @@ export default async function TeamPage({
               {seedRoadMap.remainingGameLabels.length ? <p><strong>Your remaining games:</strong> {seedRoadMap.remainingGameLabels.join(" | ")}</p> : null}
               {seedRoadMap.atRiskTeams.length ? <p><strong>Teams that can still catch you on points:</strong> {seedRoadMap.atRiskTeams.join(", ")}</p> : null}
               <p className="muted">
-                This is the quick version: it models wins, ties, and losses using standings points. If teams finish tied on points, the current tiebreakers are wins,
+                This is the quick version: it models wins, ties, and losses using standings points. If teams finish tied on points, the current tiebreakers are head-to-head,
                 point differential, points against, then coin.
               </p>
             </div>
