@@ -481,7 +481,18 @@ async function upsertTournamentPlaceholderGame(
     );
     return "updated";
   }
-  if (isScored(primary)) return { skipped: "Refusing to overwrite a scored game" };
+  if (isScored(primary)) {
+    await client.query(
+      `UPDATE games
+          SET phase = 'tournament',
+              division = $2,
+              ref_team_id = NULL,
+              label = $3
+        WHERE id = $1`,
+      [primary.id, row.division, label]
+    );
+    return "updated";
+  }
 
   await client.query(
     `UPDATE games
@@ -506,16 +517,18 @@ async function upsertTournamentPlaceholderGame(
 }
 
 function recoverTournamentRowFromBracketReference(row: ParsedSheetGame): ParsedSheetGame | null {
+  const referenceGameNumber = bracketGameNumberFromReference(row.refTeamName);
   const bracketGameNumber =
+    referenceGameNumber ||
     row.bracketGameNumber ||
-    bracketGameNumberFromReference(row.refTeamName) ||
     bracketGameNumberFromSourceText(row.team1Name, row.team2Name);
   if (!bracketGameNumber) return null;
+  const referenceDivision = divisionFromBracketReference(row.refTeamName);
   const division =
+    referenceDivision ||
     row.division ||
     divisionForKnownSheetTeamName(row.team1Name) ||
-    divisionForKnownSheetTeamName(row.team2Name) ||
-    divisionFromBracketReference(row.refTeamName);
+    divisionForKnownSheetTeamName(row.team2Name);
   if (!division) return null;
   return {
     ...row,
