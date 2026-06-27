@@ -42,6 +42,11 @@ export type BracketScheduleSlot = {
   actual_ended_at: string | null;
 };
 
+type BracketScheduleEntry = {
+  label: string;
+  side: "winners" | "losers" | "finals";
+};
+
 type BracketRow = {
   id: number;
   division: string;
@@ -574,6 +579,43 @@ export async function syncBracketToSchedule(bracketId: number) {
       ]
     );
   }
+}
+
+export function bracketScheduleLabelForGameNumber(teamCount: number, gameNumber: number) {
+  return bracketScheduleLabelsForTeamCount(teamCount)[gameNumber - 1] || null;
+}
+
+function bracketScheduleLabelsForTeamCount(teamCount: number) {
+  return bracketScheduleEntriesForTeamCount(teamCount).map((entry) => entry.label);
+}
+
+function bracketScheduleEntriesForTeamCount(teamCount: number): BracketScheduleEntry[] {
+  if (teamCount <= 1) return [];
+  const size = nextPowerOfTwo(teamCount);
+  const entries: BracketScheduleEntry[] = [];
+  let winnerIndex = 0;
+  let loserIndex = 0;
+  const firstRoundGames = teamCount === size ? size / 2 : teamCount - size / 2;
+  const winnerGameTotal = teamCount - 1;
+  const loserGameTotal = Math.max(0, teamCount - 2);
+
+  for (let position = 1; position <= firstRoundGames; position++) {
+    winnerIndex += 1;
+    entries.push({ label: `Winners R1 Game ${winnerIndex}`, side: "winners" });
+  }
+  while (loserIndex < loserGameTotal || winnerIndex < winnerGameTotal) {
+    if (loserIndex < loserGameTotal) {
+      loserIndex += 1;
+      entries.push({ label: `Losers bracket Game ${loserIndex}`, side: "losers" });
+    }
+    if (winnerIndex < winnerGameTotal) {
+      winnerIndex += 1;
+      entries.push({ label: `Winners bracket Game ${winnerIndex}`, side: "winners" });
+    }
+  }
+  entries.push({ label: "Championship", side: "finals" });
+  entries.push({ label: "If-needed Championship", side: "finals" });
+  return entries;
 }
 
 function bracketScheduleLabels(games: BracketGameRow[]) {

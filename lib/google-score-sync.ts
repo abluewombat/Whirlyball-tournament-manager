@@ -1,5 +1,6 @@
 import { JWT } from "google-auth-library";
 import * as xlsx from "xlsx";
+import { bracketScheduleLabelForGameNumber } from "./brackets";
 import { query, withTransaction } from "./db";
 import { scoreCourtGameFromSync } from "./score-sync";
 import { linkGamesToExistingCourtStreams } from "./streams";
@@ -31,6 +32,10 @@ type ParsedSheetScore = {
   timeLabel: string;
   startsAt: string;
   court: number;
+  phase: "seeding" | "tournament";
+  division: string | null;
+  label: string | null;
+  bracketGameNumber: number | null;
   team1Name: string;
   team2Name: string;
   refTeamName: string | null;
@@ -278,6 +283,7 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
       [tournamentId]
     );
     const teamsByName = buildTeamSyncLookup(teamRows.rows);
+    const teamCountsByDivision = buildTeamCountsByDivision(teamRows.rows);
     const summary: GoogleScheduleSyncSummary = {
       enabled: true,
       sheetName: sheet.sheetName,
@@ -309,6 +315,15 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
     };
 
     for (const row of parsedRows) {
+      if (row.phase === "tournament") {
+        const result = await upsertTournamentPlaceholderGame(client, tournamentId, row, teamCountsByDivision);
+        if (result === "inserted") summary.gamesInserted += 1;
+        else if (result === "updated") summary.gamesUpdated += 1;
+        else if (result === "unchanged") summary.gamesUnchanged += 1;
+        else skip(row, result.skipped);
+        continue;
+      }
+
       const team1 = await syncTeamForSheetName(client, tournamentId, teamsByName, row.team1Name, row.team2Name);
       const team2 = await syncTeamForSheetName(client, tournamentId, teamsByName, row.team2Name, row.team1Name);
       if (!team1 || !team2) {
@@ -414,6 +429,69 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
     summary.streamsLinked = await linkGamesToExistingCourtStreams(client, tournamentId);
     return summary;
   });
+}
+
+async function upsertTournamentPlaceholderGame(
+  client: { query: <T>(sql: string, params?: unknown[]) => Promise<{ rows: T[]; rowCount?: number }> },
+  tournamentId: number,
+  row: ParsedSheetGame,
+  teamCountsByDivision: Map<string, number>
+): Promise<"inserted" | "updated" | "unchanged" | { skipped: string }> {
+  if (!row.division || !row.bracketGameNumber) return { skipped: "Missing tournament placeholder details" };
+  const teamCount = teamCountsByDivision.get(row.division) || 0;
+  const label = bracketScheduleLabelForGameNumber(teamCount, row.bracketGameNumber);
+  if (!label) return { skipped: `No bracket label for ${row.division} game ${row.bracketGameNumber}` };
+
+  const existingResult = await client.query<DbGameRow>(
+    `SELECT id, phase, division, team_1_id, team_2_id, ref_team_id, label,
+            team_1_score, team_2_score, winner_team_id, loser_team_id,
+            result_type, forfeit_team_id, scored_at
+       FROM games
+      WHERE tournament_id = $1
+        AND court = $2
+        AND starts_at = $3::timestamptz
+      ORDER BY CASE WHEN phase = 'tournament' AND label = $4 THEN 0
+                    WHEN phase = 'tournament' THEN 1
+                    ELSE 2
+               END,
+               id`,
+    [tournamentId, row.court, row.startsAt, label]
+  );
+  const primary = existingResult.rows[0];
+
+  if (!primary) {
+    await client.query(
+      `INSERT INTO games (tournament_id, phase, division, court, starts_at, team_1_id, team_2_id, ref_team_id, label)
+       VALUES ($1, 'tournament', $2, $3, $4::timestamptz, NULL, NULL, NULL, $5)`,
+      [tournamentId, row.division, row.court, row.startsAt, label]
+    );
+    return "inserted";
+  }
+
+  const alreadySame = primary.phase === "tournament" && primary.division === row.division && primary.label === label;
+  if (alreadySame) return "unchanged";
+  if (isScored(primary)) return { skipped: "Refusing to overwrite a scored game" };
+
+  await client.query(
+    `UPDATE games
+        SET phase = 'tournament',
+            division = $2,
+            team_1_id = NULL,
+            team_2_id = NULL,
+            ref_team_id = NULL,
+            label = $3,
+            team_1_score = NULL,
+            team_2_score = NULL,
+            winner_team_id = NULL,
+            loser_team_id = NULL,
+            result_type = NULL,
+            forfeit_team_id = NULL,
+            scored_by = NULL,
+            scored_at = NULL
+      WHERE id = $1`,
+    [primary.id, row.division, label]
+  );
+  return "updated";
 }
 
 async function deleteMissingSheetGames(
@@ -710,6 +788,7 @@ function parseScheduleSheetScores(
 
 function inferScheduleDateForSheetRow(scheduleGames: ScheduleGameMatch[], parsed: ReturnType<typeof parseCourtRow>, court: number) {
   if (!parsed || !scheduleGames.length) return null;
+  if (parsed.phase !== "seeding") return null;
   const possibleTimes = possibleTwentyFourHourTimes(parsed.timeLabel);
   const matches = scheduleGames.filter(
     (game) =>
@@ -732,11 +811,33 @@ function inferScheduleDateForSheetRow(scheduleGames: ScheduleGameMatch[], parsed
 function parseCourtRow(row: string[], court: number, sharedRefTeamName: string | null) {
   const offset = court === 1 ? 2 : 8;
   const timeLabel = cellText(row[offset]);
+  if (!isTimeLabel(timeLabel)) return null;
+
+  const tournamentPlaceholder = parseTournamentPlaceholder(row[offset + 1], row[offset + 5]);
+  if (tournamentPlaceholder) {
+    return {
+      phase: "tournament" as const,
+      division: tournamentPlaceholder.division,
+      label: null,
+      bracketGameNumber: tournamentPlaceholder.gameNumber,
+      timeLabel,
+      team1Name: "",
+      team2Name: "",
+      refTeamName: sharedRefTeamName || refTeamNameFromSheetCell(row[court === 1 ? 0 : 14]) || null,
+      team1Score: null,
+      team2Score: null
+    };
+  }
+
   const team1Name = teamNameFromSheetCell(row[offset + 1]);
   const team2Name = teamNameFromSheetCell(row[offset + 5]);
-  if (!isTimeLabel(timeLabel) || !team1Name || !team2Name) return null;
+  if (!team1Name || !team2Name) return null;
 
   return {
+    phase: "seeding" as const,
+    division: null,
+    label: null,
+    bracketGameNumber: null,
     timeLabel,
     team1Name,
     team2Name,
@@ -744,6 +845,23 @@ function parseCourtRow(row: string[], court: number, sharedRefTeamName: string |
     team1Score: parseScore(row[offset + 2]),
     team2Score: parseScore(row[offset + 4])
   };
+}
+
+function parseTournamentPlaceholder(...values: unknown[]) {
+  const texts = values.map(cellText).filter(Boolean);
+  const combined = texts.join(" ");
+  const division = texts.map(playoffDivisionFromText).find(Boolean) || playoffDivisionFromText(combined);
+  const gameNumber = texts.map(playoffGameNumberFromText).find(Boolean) || playoffGameNumberFromText(combined);
+  return division && gameNumber ? { division, gameNumber } : null;
+}
+
+function playoffDivisionFromText(value: string) {
+  return value.match(/\b([ABCD])\s*[-\u2013\u2014]\s*Playoffs\b/i)?.[1].toUpperCase() || null;
+}
+
+function playoffGameNumberFromText(value: string) {
+  const gameNumber = Number(value.match(/\(?\s*game\s*(\d+)\s*\)?/i)?.[1]);
+  return Number.isInteger(gameNumber) && gameNumber > 0 ? gameNumber : null;
 }
 
 function sharedRefTeamNameFromRow(row: string[]) {
@@ -811,6 +929,15 @@ function buildTeamSyncLookup(teams: TeamMatch[]) {
   }
 
   return lookup;
+}
+
+function buildTeamCountsByDivision(teams: TeamMatch[]) {
+  const counts = new Map<string, number>();
+  for (const team of teams) {
+    if (!["A", "B", "C", "D"].includes(team.division)) continue;
+    counts.set(team.division, (counts.get(team.division) || 0) + 1);
+  }
+  return counts;
 }
 
 async function syncTeamForSheetName(
