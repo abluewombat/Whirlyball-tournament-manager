@@ -1,6 +1,9 @@
 import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
+import { recalculateBracketOddsForTournament } from "@/lib/bracket-odds";
+import { syncCompletedDivisionBracketsToSchedule, type TournamentBracketSyncSummary } from "@/lib/brackets";
 import { syncGoogleSheetSchedule, syncGoogleSheetScores, type GoogleScheduleSyncSummary } from "@/lib/google-score-sync";
+import { saveCourtStream } from "@/lib/streams";
 import { readGoogleSheetSyncPause, recordGoogleSheetSyncStatus } from "@/lib/sync-status";
 import { currentTournament } from "@/lib/tournaments";
 
@@ -50,15 +53,21 @@ async function runSync(request: NextRequest) {
       ? await syncGoogleSheetSchedule(tournament.id)
       : disabledScheduleSummary();
     const summary = await syncGoogleSheetScores(tournament.id);
-    const changedCount = googleSheetChangedCount(scheduleSync, summary);
+    const tournamentBracketSync = await syncCompletedDivisionBracketsToSchedule(tournament.id);
+    const oddsResults = tournamentBracketSync.bracketsSynced ? await recalculateBracketOddsForTournament(tournament.id) : [];
+    const courtStreamSync = await syncKnownCourtStreams(tournament.id);
+    const changedCount = googleSheetChangedCount(scheduleSync, summary, tournamentBracketSync);
     await recordGoogleSheetSyncStatus({
       tournamentId: tournament.id,
       status: "success",
-      summary: googleSheetSyncSummaryText(scheduleSync, summary),
+      summary: googleSheetSyncSummaryText(scheduleSync, summary, tournamentBracketSync),
       changedCount,
       detail: {
         scheduleSync,
-        scoreSync: summary
+        scoreSync: summary,
+        tournamentBracketSync,
+        bracketOdds: oddsResults,
+        courtStreamSync
       }
     });
     revalidatePath("/");
@@ -70,7 +79,10 @@ async function runSync(request: NextRequest) {
       ok: true,
       tournament: tournament.slug,
       scheduleSync,
-      scoreSync: summary
+      scoreSync: summary,
+      tournamentBracketSync,
+      bracketOdds: oddsResults,
+      courtStreamSync
     });
   } catch (error) {
     await recordGoogleSheetSyncStatus({
@@ -112,16 +124,61 @@ function disabledScheduleSummary(): GoogleScheduleSyncSummary {
   };
 }
 
+async function syncKnownCourtStreams(tournamentId: number) {
+  const streams = knownCourtStreamsForToday();
+  const saved = [];
+  for (const stream of streams) {
+    const streamId = await saveCourtStream({
+      tournamentId,
+      court: stream.court,
+      streamDate: stream.streamDate,
+      youtubeUrl: stream.youtubeUrl
+    });
+    if (streamId) saved.push({ court: stream.court, streamDate: stream.streamDate, streamId });
+  }
+  return { streamsChecked: streams.length, streamsSaved: saved.length, saved };
+}
+
+function knownCourtStreamsForToday() {
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Detroit",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+  if (today !== "2026-06-27") return [];
+  return [
+    {
+      court: 1,
+      streamDate: "2026-06-27",
+      youtubeUrl: "https://www.youtube.com/live/4WAx2EiZzg0?is=wuw7xRXhIni4FrLZ"
+    },
+    {
+      court: 2,
+      streamDate: "2026-06-27",
+      youtubeUrl: "https://www.youtube.com/live/i8dZ-ioRkBw?is=qRW2_m3grJG4fcre"
+    }
+  ];
+}
+
 function googleSheetChangedCount(
   scheduleSync: GoogleScheduleSyncSummary,
-  scoreSync: { updated: number }
+  scoreSync: { updated: number },
+  tournamentBracketSync: TournamentBracketSyncSummary
 ) {
-  return scheduleSync.gamesInserted + scheduleSync.gamesUpdated + scheduleSync.gamesDeleted + scheduleSync.refsUpdated + scheduleSync.refsRemoved + scoreSync.updated;
+  return scheduleSync.gamesInserted +
+    scheduleSync.gamesUpdated +
+    scheduleSync.gamesDeleted +
+    scheduleSync.refsUpdated +
+    scheduleSync.refsRemoved +
+    scoreSync.updated +
+    tournamentBracketSync.bracketsGenerated;
 }
 
 function googleSheetSyncSummaryText(
   scheduleSync: GoogleScheduleSyncSummary,
-  scoreSync: { updated: number }
+  scoreSync: { updated: number },
+  tournamentBracketSync: TournamentBracketSyncSummary
 ) {
   const parts = [
     countText(scoreSync.updated, "game scored", "games scored"),
@@ -129,7 +186,8 @@ function googleSheetSyncSummaryText(
     countText(scheduleSync.gamesUpdated, "game updated", "games updated"),
     countText(scheduleSync.gamesDeleted, "game removed", "games removed"),
     countText(scheduleSync.refsUpdated, "ref updated", "refs updated"),
-    countText(scheduleSync.refsRemoved, "ref removed", "refs removed")
+    countText(scheduleSync.refsRemoved, "ref removed", "refs removed"),
+    countText(tournamentBracketSync.bracketsGenerated, "bracket generated", "brackets generated")
   ].filter(Boolean);
   return parts.join(", ") || "No changes";
 }

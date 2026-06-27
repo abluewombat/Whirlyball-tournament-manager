@@ -71,6 +71,61 @@ export async function maybeCreateBracketForDivision(tournamentId: number, divisi
   if (!existing) await rebuildBracketForDivision(tournamentId, division);
 }
 
+export type TournamentBracketSyncSummary = {
+  divisionsChecked: number;
+  divisionsReady: number;
+  bracketsGenerated: number;
+  bracketsSynced: number;
+  skipped: Array<{ division: string; reason: string }>;
+};
+
+export async function syncCompletedDivisionBracketsToSchedule(tournamentId: number): Promise<TournamentBracketSyncSummary> {
+  const divisions = await query<{ division: string }>(
+    `SELECT DISTINCT division
+       FROM games
+      WHERE tournament_id = $1
+        AND phase = 'seeding'
+        AND division = ANY($2::text[])
+      ORDER BY division`,
+    [tournamentId, ["A", "B", "C", "D"]]
+  );
+  const summary: TournamentBracketSyncSummary = {
+    divisionsChecked: divisions.length,
+    divisionsReady: 0,
+    bracketsGenerated: 0,
+    bracketsSynced: 0,
+    skipped: []
+  };
+
+  for (const { division } of divisions) {
+    if (!(await seedingCompleteForDivision(tournamentId, division))) {
+      summary.skipped.push({ division, reason: "Seeding games still open" });
+      continue;
+    }
+    summary.divisionsReady += 1;
+
+    const [existing] = await query<{ id: number }>(
+      "SELECT id FROM brackets WHERE tournament_id = $1 AND division = $2 AND status = 'active' ORDER BY id DESC LIMIT 1",
+      [tournamentId, division]
+    );
+    if (existing) {
+      await syncBracketToSchedule(existing.id);
+      summary.bracketsSynced += 1;
+      continue;
+    }
+
+    const bracketId = await rebuildBracketForDivision(tournamentId, division);
+    if (bracketId) {
+      summary.bracketsGenerated += 1;
+      summary.bracketsSynced += 1;
+    } else {
+      summary.skipped.push({ division, reason: "Bracket could not be generated" });
+    }
+  }
+
+  return summary;
+}
+
 export async function rebuildBracketForDivision(tournamentId: number, division: string, options: { force?: boolean } = {}) {
   if (!options.force && (await scoredTournamentResultCountForDivision(tournamentId, division)) > 0) return null;
   const standings = (await getStandings(tournamentId, division)).filter((row) => row.division === division);
