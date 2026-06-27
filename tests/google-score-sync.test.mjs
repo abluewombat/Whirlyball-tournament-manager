@@ -7,5 +7,7 @@ test("Google schedule sync recognizes bracket game rows with assigned teams", as
   assert.match(sync, /parseTournamentPlaceholder\(rawTeam1, rawTeam2, refTeamName, inferredTournamentDivision\)/);
   assert.match(sync, /function findTournamentDivisionHeader/);
   assert.match(sync, /function inferTournamentDivisionFromTeamCells/);
+  assert.match(sync, /recoverTournamentRowFromBracketReference/);
+  assert.match(sync, /bracketGameNumberFromReference/);
   assert.match(sync, /playoffGameNumberFromText/);
 });

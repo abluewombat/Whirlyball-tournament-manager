@@ -315,12 +315,13 @@ export async function syncGoogleSheetSchedule(tournamentId: number): Promise<Goo
     };
 
     for (const row of parsedRows) {
-      if (row.phase === "tournament") {
-        const result = await upsertTournamentPlaceholderGame(client, tournamentId, row, teamCountsByDivision);
+      const tournamentRow = row.phase === "tournament" ? row : recoverTournamentRowFromBracketReference(row);
+      if (tournamentRow) {
+        const result = await upsertTournamentPlaceholderGame(client, tournamentId, tournamentRow, teamCountsByDivision);
         if (result === "inserted") summary.gamesInserted += 1;
         else if (result === "updated") summary.gamesUpdated += 1;
         else if (result === "unchanged") summary.gamesUnchanged += 1;
-        else skip(row, result.skipped);
+        else skip(tournamentRow, result.skipped);
         continue;
       }
 
@@ -502,6 +503,51 @@ async function upsertTournamentPlaceholderGame(
     [primary.id, row.division, label]
   );
   return "updated";
+}
+
+function recoverTournamentRowFromBracketReference(row: ParsedSheetGame): ParsedSheetGame | null {
+  const bracketGameNumber =
+    row.bracketGameNumber ||
+    bracketGameNumberFromReference(row.refTeamName) ||
+    bracketGameNumberFromSourceText(row.team1Name, row.team2Name);
+  if (!bracketGameNumber) return null;
+  const division =
+    row.division ||
+    divisionForKnownSheetTeamName(row.team1Name) ||
+    divisionForKnownSheetTeamName(row.team2Name) ||
+    divisionFromBracketReference(row.refTeamName);
+  if (!division) return null;
+  return {
+    ...row,
+    phase: "tournament",
+    division,
+    bracketGameNumber
+  };
+}
+
+function bracketGameNumberFromReference(value: string | null) {
+  const text = cellText(value);
+  const gameMatch = text.match(/^game\s*(\d+)$/i);
+  if (gameMatch) return Number(gameMatch[1]);
+  const divisionMatch = text.match(/^[ABCD]\s*(\d+)$/i);
+  if (divisionMatch) return Number(divisionMatch[1]);
+  return null;
+}
+
+function bracketGameNumberFromSourceText(...values: string[]) {
+  for (const value of values) {
+    const match = cellText(value).match(/^(?:winner|loser)\s+(?:game|[ABCD])\s*(\d+)$/i);
+    if (match) return Number(match[1]);
+  }
+  return null;
+}
+
+function divisionFromBracketReference(value: string | null) {
+  const text = cellText(value);
+  const divisionMatch = text.match(/^([ABCD])\s*\d+$/i);
+  if (divisionMatch) return divisionMatch[1].toUpperCase();
+  if (/^game\s*\d+$/i.test(text)) return "C";
+  return null;
 }
 
 async function deleteMissingSheetGames(
