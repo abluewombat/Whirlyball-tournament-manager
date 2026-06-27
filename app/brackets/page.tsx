@@ -58,12 +58,14 @@ type BracketScheduleGridRow = {
   court1Division: string;
   court1Scored: boolean;
   court1Tournament: boolean;
+  court1TournamentTeamCount: number;
   court1StreamUrl: string;
   court1StreamLabel: string;
   court2Game: string;
   court2Division: string;
   court2Scored: boolean;
   court2Tournament: boolean;
+  court2TournamentTeamCount: number;
   court2StreamUrl: string;
   court2StreamLabel: string;
   court2Ref: string;
@@ -209,12 +211,14 @@ function buildBracketScheduleGrid(games: BracketScheduleGame[], timeZone: string
         court1Division: "",
         court1Scored: false,
         court1Tournament: false,
+        court1TournamentTeamCount: 0,
         court1StreamUrl: "",
         court1StreamLabel: "",
         court2Game: "",
         court2Division: "",
         court2Scored: false,
         court2Tournament: false,
+        court2TournamentTeamCount: 0,
         court2StreamUrl: "",
         court2StreamLabel: "",
         court2Ref: "",
@@ -232,6 +236,7 @@ function buildBracketScheduleGrid(games: BracketScheduleGame[], timeZone: string
       row.court1Division = game.division;
       row.court1Scored = scored;
       row.court1Tournament = true;
+      row.court1TournamentTeamCount = tournamentTeamCount(game);
       row.court1StreamUrl = streamLink.url;
       row.court1StreamLabel = streamLink.label;
     } else if (game.court === 2) {
@@ -239,6 +244,7 @@ function buildBracketScheduleGrid(games: BracketScheduleGame[], timeZone: string
       row.court2Division = game.division;
       row.court2Scored = scored;
       row.court2Tournament = true;
+      row.court2TournamentTeamCount = tournamentTeamCount(game);
       row.court2StreamUrl = streamLink.url;
       row.court2StreamLabel = streamLink.label;
       row.court2Ref = refTeamLabel(game);
@@ -286,6 +292,10 @@ function firstStreamGameIdsByCourtDay(games: BracketScheduleGame[], timeZone: st
     if (firstGame) firstStreamGameIds.add(firstGame.id);
   }
   return firstStreamGameIds;
+}
+
+function tournamentTeamCount(game: Pick<BracketScheduleGame, "team_1_id" | "team_2_id">) {
+  return Number(game.team_1_id !== null) + Number(game.team_2_id !== null);
 }
 
 function refTeamLabel(game: BracketScheduleGame) {

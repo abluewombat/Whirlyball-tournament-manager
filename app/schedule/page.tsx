@@ -66,6 +66,7 @@ type ScheduleGridRow = {
   court1Division: string;
   court1Scored: boolean;
   court1Tournament: boolean;
+  court1TournamentTeamCount: number;
   court1StreamUrl: string;
   court1StreamLabel: string;
   court1CourtTime: string;
@@ -73,6 +74,7 @@ type ScheduleGridRow = {
   court2Division: string;
   court2Scored: boolean;
   court2Tournament: boolean;
+  court2TournamentTeamCount: number;
   court2StreamUrl: string;
   court2StreamLabel: string;
   court2CourtTime: string;
@@ -376,6 +378,7 @@ function buildScheduleGrid(
         court1Division: "",
         court1Scored: false,
         court1Tournament: false,
+        court1TournamentTeamCount: 0,
         court1StreamUrl: "",
         court1StreamLabel: "",
         court1CourtTime: "",
@@ -383,6 +386,7 @@ function buildScheduleGrid(
         court2Division: "",
         court2Scored: false,
         court2Tournament: false,
+        court2TournamentTeamCount: 0,
         court2StreamUrl: "",
         court2StreamLabel: "",
         court2CourtTime: "",
@@ -401,6 +405,7 @@ function buildScheduleGrid(
       row.court1Division = game.division;
       row.court1Scored = scored;
       row.court1Tournament = game.phase === "tournament";
+      row.court1TournamentTeamCount = game.phase === "tournament" ? tournamentTeamCount(game) : 0;
       row.court1StreamUrl = streamLink.url;
       row.court1StreamLabel = streamLink.label;
       row.court1CourtTime = courtPaceTimes.get(game.id) || "";
@@ -409,6 +414,7 @@ function buildScheduleGrid(
       row.court2Division = game.division;
       row.court2Scored = scored;
       row.court2Tournament = game.phase === "tournament";
+      row.court2TournamentTeamCount = game.phase === "tournament" ? tournamentTeamCount(game) : 0;
       row.court2StreamUrl = streamLink.url;
       row.court2StreamLabel = streamLink.label;
       row.court2CourtTime = courtPaceTimes.get(game.id) || "";
@@ -460,6 +466,10 @@ function projectedCourtPaceTimes(games: PublicScheduleGame[], timeZone: string) 
   }
 
   return projected;
+}
+
+function tournamentTeamCount(game: Pick<PublicScheduleGame, "team_1_id" | "team_2_id">) {
+  return Number(game.team_1_id !== null) + Number(game.team_2_id !== null);
 }
 
 function buildScheduleDayOptions(rows: ScheduleGridRow[]): ScheduleDayOption[] {
