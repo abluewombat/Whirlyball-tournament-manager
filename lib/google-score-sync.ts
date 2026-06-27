@@ -758,6 +758,7 @@ function parseScheduleSheetScores(
   const rows: ParsedSheetScore[] = [];
   let currentDayName: string | null = null;
   let currentDayMinute = 7 * 60;
+  const currentTournamentDivisionByCourt = new Map<number, string>();
 
   values.forEach((row, index) => {
     const headerDay = findDayName(row);
@@ -765,10 +766,14 @@ function parseScheduleSheetScores(
       currentDayName = headerDay;
       currentDayMinute = headerDay === "TUESDAY" ? 13 * 60 : 7 * 60;
     }
+    for (const court of [1, 2]) {
+      const tournamentDivision = findTournamentDivisionHeader(row, court);
+      if (tournamentDivision) currentTournamentDivisionByCourt.set(court, tournamentDivision);
+    }
     const sharedRefTeamName = sharedRefTeamNameFromRow(row);
 
     for (const court of [1, 2]) {
-      const parsed = parseCourtRow(row, court, sharedRefTeamName);
+      const parsed = parseCourtRow(row, court, sharedRefTeamName, currentTournamentDivisionByCourt.get(court) || null);
       if (!parsed) continue;
       const inferred = inferScheduleDateForSheetRow(scheduleGames, parsed, court);
       if (inferred && inferred.dayName !== currentDayName) {
@@ -818,29 +823,34 @@ function inferScheduleDateForSheetRow(scheduleGames: ScheduleGameMatch[], parsed
   };
 }
 
-function parseCourtRow(row: string[], court: number, sharedRefTeamName: string | null) {
+function parseCourtRow(row: string[], court: number, sharedRefTeamName: string | null, tournamentDivision: string | null) {
   const offset = court === 1 ? 2 : 8;
   const timeLabel = cellText(row[offset]);
   if (!isTimeLabel(timeLabel)) return null;
 
-  const tournamentPlaceholder = parseTournamentPlaceholder(row[offset + 1], row[offset + 5]);
-  if (tournamentPlaceholder) {
+  const rawTeam1 = row[offset + 1];
+  const rawTeam2 = row[offset + 5];
+  const refTeamName = sharedRefTeamName || refTeamNameFromSheetCell(row[court === 1 ? 0 : 14]) || null;
+  const inferredTournamentDivision = inferTournamentDivisionFromTeamCells(rawTeam1, rawTeam2) || tournamentDivision;
+  const tournamentPlaceholder = parseTournamentPlaceholder(rawTeam1, rawTeam2, refTeamName, inferredTournamentDivision);
+  const team1Name = teamNameFromSheetCell(rawTeam1);
+  const team2Name = teamNameFromSheetCell(rawTeam2);
+
+  if (tournamentPlaceholder && (team1Name || team2Name)) {
     return {
       phase: "tournament" as const,
       division: tournamentPlaceholder.division,
       label: tournamentPlaceholder.label,
       bracketGameNumber: tournamentPlaceholder.gameNumber,
       timeLabel,
-      team1Name: "",
-      team2Name: "",
-      refTeamName: sharedRefTeamName || refTeamNameFromSheetCell(row[court === 1 ? 0 : 14]) || null,
-      team1Score: null,
-      team2Score: null
+      team1Name,
+      team2Name,
+      refTeamName,
+      team1Score: parseScore(row[offset + 2]),
+      team2Score: parseScore(row[offset + 4])
     };
   }
 
-  const team1Name = teamNameFromSheetCell(row[offset + 1]);
-  const team2Name = teamNameFromSheetCell(row[offset + 5]);
   if (!team1Name || !team2Name) return null;
 
   return {
@@ -851,19 +861,48 @@ function parseCourtRow(row: string[], court: number, sharedRefTeamName: string |
     timeLabel,
     team1Name,
     team2Name,
-    refTeamName: sharedRefTeamName || refTeamNameFromSheetCell(row[court === 1 ? 0 : 14]) || null,
+    refTeamName,
     team1Score: parseScore(row[offset + 2]),
     team2Score: parseScore(row[offset + 4])
   };
 }
 
-function parseTournamentPlaceholder(...values: unknown[]) {
+function parseTournamentPlaceholder(team1Value: unknown, team2Value: unknown, refValue: unknown, fallbackDivision: string | null) {
+  const values = [team1Value, team2Value, refValue];
   const texts = values.map(cellText).filter(Boolean);
   const combined = texts.join(" ");
-  const division = texts.map(playoffDivisionFromText).find(Boolean) || playoffDivisionFromText(combined);
+  const division = texts.map(playoffDivisionFromText).find(Boolean) || playoffDivisionFromText(combined) || fallbackDivision;
   const gameNumber = texts.map(playoffGameNumberFromText).find(Boolean) || playoffGameNumberFromText(combined);
   const label = texts.map(playoffLabelFromText).find(Boolean) || playoffLabelFromText(combined);
   return division && (gameNumber || label) ? { division, gameNumber, label } : null;
+}
+
+function findTournamentDivisionHeader(row: string[], court: number) {
+  const start = court === 1 ? 0 : 7;
+  const end = court === 1 ? 8 : 15;
+  return row.slice(start, end).map(tournamentDivisionFromHeaderText).find(Boolean) || null;
+}
+
+function tournamentDivisionFromHeaderText(value: unknown) {
+  return cellText(value).match(/\b([ABCD])\s+DIVISION\s+TOURNAMENT\b/i)?.[1].toUpperCase() || null;
+}
+
+function inferTournamentDivisionFromTeamCells(...values: unknown[]) {
+  for (const value of values) {
+    const teamName = teamNameFromSheetCell(value);
+    const division = divisionForKnownSheetTeamName(teamName);
+    if (division) return division;
+  }
+  return null;
+}
+
+function divisionForKnownSheetTeamName(value: string) {
+  if (!value || /^winner game \d+$/i.test(value) || /^loser game \d+$/i.test(value)) return null;
+  const normalized = normalizeTeamName(value);
+  for (const definition of Object.values(teamSyncDefinitions)) {
+    if ([...definition.names, ...definition.codes].some((candidate) => normalizeTeamName(candidate) === normalized)) return definition.division;
+  }
+  return null;
 }
 
 function playoffDivisionFromText(value: string) {
