@@ -178,7 +178,7 @@ export default async function PublicSchedulePage({
   const teamCountsByDivision = buildPublicTeamCountsByDivision(teams);
   const bracketScheduleSources = await getActiveTournamentScheduleSources(tournament.id);
   const gridRows = buildScheduleGrid(games, hiddenDivisionLabels, tournament.timezone, teamCountsByDivision, bracketScheduleSources);
-  const dayOptions = buildScheduleDayOptions(gridRows);
+  const dayOptions = buildScheduleDayOptions(gridRows, tournament.starts_on, tournament.ends_on);
   const initialDay = initialScheduleDay(params.day, dayOptions, tournament.timezone);
   const detailRows = buildScheduleDetailRows(teams, games, tournament.timezone);
   const refCountRows = buildRefCountRows(teams, games, tournament.timezone);
@@ -505,17 +505,36 @@ function tournamentBadgeLabel(
   );
 }
 
-function buildScheduleDayOptions(rows: ScheduleGridRow[]): ScheduleDayOption[] {
+function buildScheduleDayOptions(rows: ScheduleGridRow[], startsOn: string, endsOn: string): ScheduleDayOption[] {
   const allowedDays = ["Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
   const dayByName = new Map<string, ScheduleDayOption>();
   for (const row of rows) {
     if (!allowedDays.includes(row.dayName) || dayByName.has(row.dayName)) continue;
     dayByName.set(row.dayName, { key: row.dayKey, label: row.dayName });
   }
+  for (const dayKey of tournamentDateRange(startsOn, endsOn)) {
+    const dayName = tournamentWeekdayLabel(dayKey);
+    if (!allowedDays.includes(dayName) || dayByName.has(dayName)) continue;
+    dayByName.set(dayName, { key: dayKey, label: dayName });
+  }
   return [
     { key: "all", label: "All" },
     ...allowedDays.flatMap((dayName) => dayByName.get(dayName) || [])
   ];
+}
+
+function tournamentDateRange(startsOn: string, endsOn: string) {
+  const start = startsOn.slice(0, 10);
+  const end = endsOn.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return [];
+  const days: string[] = [];
+  const cursor = new Date(`${start}T00:00:00Z`);
+  const last = new Date(`${end}T00:00:00Z`);
+  while (cursor <= last) {
+    days.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return days;
 }
 
 function initialScheduleDay(requestedDay: string | undefined, days: ScheduleDayOption[], timeZone: string) {
